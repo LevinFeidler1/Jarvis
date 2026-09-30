@@ -29,6 +29,8 @@ export class LlmUnavailableError extends Error {
 
 export interface AnthropicLlmOptions {
   apiKey?: string;
+  /** Sent as anthropic-workspace-id (required for keys not scoped to a workspace). */
+  workspaceId?: string;
   model: string;
   enableWebSearch?: boolean;
 }
@@ -41,7 +43,11 @@ export class AnthropicLlm implements LlmClient {
 
   constructor(opts: AnthropicLlmOptions) {
     this.model = opts.model;
-    this.client = new Anthropic({ apiKey: opts.apiKey, maxRetries: 2 });
+    this.client = new Anthropic({
+      apiKey: opts.apiKey,
+      maxRetries: 2,
+      defaultHeaders: opts.workspaceId ? { "anthropic-workspace-id": opts.workspaceId } : undefined,
+    });
     this.enableWebSearch = opts.enableWebSearch ?? true;
   }
 
@@ -68,6 +74,12 @@ export class AnthropicLlm implements LlmClient {
       }
       if (err instanceof Anthropic.RateLimitError) {
         throw new LlmUnavailableError("Das Sprachmodell ist gerade ausgelastet (Rate-Limit). Bitte gleich erneut versuchen.", true);
+      }
+      if (err instanceof Anthropic.BadRequestError && /workspace/i.test(err.message)) {
+        throw new LlmUnavailableError(
+          "Der Claude-API-Schlüssel ist keinem Workspace zugeordnet. ANTHROPIC_WORKSPACE_ID setzen (Console → Settings → Workspaces) oder einen Key innerhalb eines Workspaces erstellen.",
+          false,
+        );
       }
       if (err instanceof Anthropic.BadRequestError) {
         throw new LlmUnavailableError(`Anfrage an das Sprachmodell abgelehnt: ${err.message}`, false);
