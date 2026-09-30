@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Db } from "../../db/database.js";
 import { nowIso } from "../../db/database.js";
 import { ToolError } from "../../core/types.js";
+import type { PushService } from "../push.js";
 import type { NotificationProvider, Reminder, Task, TaskPriority, TaskProvider, TaskStatus } from "../types.js";
 
 const TASK_SELECT = `SELECT id, title, notes, due, priority, status, project, created_at AS "createdAt",
@@ -131,12 +132,15 @@ export interface AppNotification {
   createdAt: string;
 }
 
-/** In-app notifications shown in the UI. Push/e-mail/voice channels come later. */
+/** In-app notifications shown in the UI, mirrored as Web Push to the user's devices. */
 export class InAppNotificationProvider implements NotificationProvider {
-  readonly name = "In-App";
-  constructor(private readonly db: Db) {}
+  readonly name = "In-App + Push";
+  constructor(
+    private readonly db: Db,
+    private readonly push?: PushService,
+  ) {}
 
-  async notify(title: string, body?: string): Promise<{ id: string }> {
+  async notify(title: string, body?: string, opts: { url?: string; tag?: string } = {}): Promise<{ id: string; pushed?: number }> {
     const id = randomUUID();
     await this.db.run("INSERT INTO notifications (id, title, body, read, created_at) VALUES ($1, $2, $3, FALSE, $4)", [
       id,
@@ -144,7 +148,9 @@ export class InAppNotificationProvider implements NotificationProvider {
       body ?? null,
       nowIso(),
     ]);
-    return { id };
+    // Push is best effort: the in-app notification is already stored.
+    const pushed = this.push ? (await this.push.send({ title, body, url: opts.url, tag: opts.tag }).catch(() => ({ sent: 0 }))).sent : undefined;
+    return { id, pushed };
   }
 
   list(unreadOnly = false, limit = 50): Promise<AppNotification[]> {

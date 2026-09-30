@@ -213,5 +213,5 @@ export interface Reminder {
 
 export interface NotificationProvider {
   readonly name: string;
-  notify(title: string, body?: string): Promise<{ id: string }>;
+  notify(title: string, body?: string, opts?: { url?: string; tag?: string }): Promise<{ id: string; pushed?: number }>;
 }

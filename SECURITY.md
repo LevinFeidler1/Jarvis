@@ -122,6 +122,32 @@ STATUS: SUCCESS   USER_CONFIRMATION: YES   RISK: 2
 * Retries nur für idempotente Lesezugriffe und bei 429/5xx mit Backoff; sendende
   Aktionen werden **nicht** automatisch wiederholt (keine Doppelsendungen).
 
+## 7b. Automationen & Push
+
+* Automationen laufen **durch denselben Agent und dasselbe Permission-System** wie der Chat.
+  Stufe-2/3-Aktionen werden in einer Automation nur **vorbereitet**; der Benutzer bestätigt
+  sie später (Push-Link öffnet die Unterhaltung). Eine Automation sendet also nie selbst E-Mails.
+* Automationen per Chat anlegen, pausieren oder löschen ist **Stufe 2** (Bestätigung) — eine
+  manipulierte E-Mail kann keine dauerhafte Hintergrundaufgabe einrichten. In der UI legt der
+  Benutzer sie direkt an.
+* E-Mail-Auslöser reagieren nur auf Mails, die **nach** dem Anlegen eingehen; jede Mail nur einmal.
+  Der Mailinhalt bleibt `external_data` (Injection-Scan, Taint wie im Chat).
+* Parallele Cron-Aufrufe können eine Automation nicht doppelt starten (atomarer Claim in der DB).
+* Web Push: Inhalte sind Ende-zu-Ende verschlüsselt (RFC 8291). Der VAPID-Schlüssel wird einmalig
+  erzeugt und AES-256-GCM-verschlüsselt gespeichert. Push-Endpunkte werden nur für bekannte
+  Push-Dienste (Google, Mozilla, Apple, Microsoft) akzeptiert — keine beliebigen URLs (SSRF-Schutz).
+  Abgelaufene Abos (404/410) werden automatisch entfernt.
+* Achtung: Push-Texte erscheinen je nach Handy-Einstellung auf dem Sperrbildschirm.
+
+## 7c. Verlauf & Modell-API
+
+* System-Prompt und Verlauf sind **append-only**: Gedächtnis und Uhrzeit stehen in den
+  Benutzer-Nachrichten, nicht im System-Prompt. Das hält den Prompt-Cache warm und erfüllt die
+  „preserved thinking"-Prüfung der Claude API (Denkblöcke gelten nur für unveränderte Verläufe).
+* Lange Unterhaltungen werden **serverseitig zusammengefasst** (Compaction ab
+  `JARVIS_COMPACT_AT_TOKENS`, Standard 60 000); die Zusammenfassung behält offene Aktionen,
+  IDs und Sicherheitshinweise.
+
 ## 8. Bekannte Grenzen / offene Punkte
 
 * Die Injection-Heuristik ist eine Zusatzschicht, keine Garantie. Die eigentliche

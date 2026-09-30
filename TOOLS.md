@@ -91,6 +91,19 @@ Treffer plus eine ehrliche Warnung.
 | `get_integration_status` | 0 | Welche Konten sind verbunden |
 | `web_search` | 0 | Server-Tool der Claude API (`web_search_20260209`); abschaltbar mit `JARVIS_WEB_SEARCH=false` |
 
+## Automationen & Rückblick (`src/tools/automation.ts`)
+
+Automationen laufen ohne Zutun des Benutzers (Zeitplan oder neue E-Mail) durch
+denselben Agent und dasselbe Permission-System; das Ergebnis kommt als Push.
+
+| Tool | Stufe | Beschreibung |
+|---|---|---|
+| `list_automations` | 0 | Eingerichtete Automationen mit Status |
+| `create_automation` | 2 | Neue Automation (Zeitplan: Uhrzeit + Wochentage; E-Mail: Absender/Betreff enthält) — immer mit Bestätigung |
+| `set_automation_enabled` | 2 | Pausieren/aktivieren |
+| `delete_automation` | 2 | Löschen |
+| `get_week_review` | 0 | Wochenrückblick: Erledigtes, Offenes, nächste Woche, geschätzte API-Kosten |
+
 ## Geplant (siehe ROADMAP.md)
 
 `open_page`, `navigate`, `click`, `type`, `extract_information`, `download_file`

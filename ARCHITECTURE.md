@@ -164,6 +164,23 @@ Kategorien: `preference`, `person`, `project`, `rule`, `fact`. Jeder Eintrag hat
 löschbar. `inferred`-Einträge werden im Prompt als unsicher markiert; der Agent
 darf auf ihrer Grundlage keine externen Aktionen ohne Rückfrage durchführen.
 
+## 7b. Automationen, Push & Kosten
+
+- **Automationen** (`src/core/automations.ts`): Zeitplan (Uhrzeit + Wochentage, Zeitzone
+  `JARVIS_TIMEZONE`, sommerzeitfest) oder E-Mail-Auslöser (Absender/Betreff enthält; alle
+  Postfächer, alle 5 Min.). Der `Scheduler` beansprucht fällige Läufe atomar
+  (`claimDue`) und ruft `Agent.handleUserMessage` mit einem `<automation>`-Block auf.
+  Ergebnis → In-App-Benachrichtigung + Web Push mit Link in die Unterhaltung.
+- **Takt:** lokal alle 30 s im Prozess; auf Vercel über `/api/cron/tick` (externer Cron alle
+  5 Min.). Erinnerungen werden sofort ausgelöst, Automationen laufen per `waitUntil`
+  nach der Antwort weiter (max. 300 s).
+- **Push** (`src/providers/push.ts`): Web Push mit VAPID (`web-push`), Service Worker
+  `public/sw.js` (nur Push, kein Offline-Cache). iPhone: ab iOS 16.4 als Home-Bildschirm-App.
+- **Kosten:** jede Modellanfrage wird mit Tokens und geschätztem Preis in `llm_usage`
+  protokolliert (inkl. Compaction-Iterationen und Websuchen) → Wochenrückblick.
+- **Wochenrückblick** (`src/core/review.ts`): Aktivität, erledigte Aufgaben, Ausblick,
+  Kosten; als Seite, als Tool `get_week_review` und als Automation-Vorlage.
+
 ## 8. Voice (Sprach-Chat)
 
 Voice ist nur ein weiterer Client: Speech-to-Text → `POST /api/chat/stream` →

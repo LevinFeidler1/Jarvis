@@ -184,6 +184,59 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX contacts_name_idx ON contacts (lower(name));
   `,
+  // 4 — push notifications, automations, token usage (cost), memory snapshot per conversation.
+  `
+  ALTER TABLE conversations ADD COLUMN memory_hash TEXT;
+  ALTER TABLE conversations ADD COLUMN origin TEXT;
+
+  CREATE TABLE push_subscriptions (
+    id TEXT PRIMARY KEY,
+    endpoint TEXT NOT NULL UNIQUE,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    label TEXT,
+    created_at TEXT NOT NULL,
+    last_success_at TEXT
+  );
+
+  CREATE TABLE automations (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    trigger_type TEXT NOT NULL,
+    schedule_time TEXT,
+    schedule_days TEXT,
+    email_from TEXT,
+    email_subject TEXT,
+    email_since TEXT,
+    email_seen TEXT NOT NULL DEFAULT '[]',
+    enabled BOOLEAN NOT NULL,
+    next_run_at TEXT,
+    running_since TEXT,
+    last_run_at TEXT,
+    last_status TEXT,
+    last_result TEXT,
+    last_conversation_id TEXT,
+    run_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE llm_usage (
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    ts TEXT NOT NULL,
+    model TEXT NOT NULL,
+    conversation_id TEXT,
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    cache_read_tokens INTEGER NOT NULL,
+    cache_write_tokens INTEGER NOT NULL,
+    web_searches INTEGER NOT NULL DEFAULT 0,
+    compacted BOOLEAN NOT NULL DEFAULT FALSE,
+    cost_usd DOUBLE PRECISION NOT NULL
+  );
+  CREATE INDEX llm_usage_ts_idx ON llm_usage (ts);
+  `,
 ];
 
 async function migrate(db: Db): Promise<void> {

@@ -57,7 +57,13 @@ describe("permission engine", () => {
 
   it("no registered tool can modify permissions or integrations", () => {
     const names = registry.all().map((t) => t.name).join(" ");
-    expect(names).not.toMatch(/permission|setting|integration_connect|grant|scope|automation/);
+    expect(names).not.toMatch(/permission|setting|integration_connect|grant|scope/);
+  });
+
+  it("every tool that changes automations needs the user's confirmation", () => {
+    const writers = registry.all().filter((t) => t.name.includes("automation") && t.name !== "list_automations");
+    expect(writers.map((t) => t.name).sort()).toEqual(["create_automation", "delete_automation", "set_automation_enabled"]);
+    for (const t of writers) expect(t.risk).toBeGreaterThanOrEqual(RiskLevel.EXTERNAL);
   });
 
   it("the registry is frozen", () => {

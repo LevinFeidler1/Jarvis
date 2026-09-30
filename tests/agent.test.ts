@@ -35,9 +35,37 @@ describe("agent loop — reading", () => {
     await h.memory.upsert({ category: "preference", key: "Meetingdauer", value: "30 Minuten", source: "user" });
     await h.agent.handleUserMessage(undefined, "Hallo");
     const req = h.llm.requests[0]!;
-    expect(req.system.map((s) => s.text).join("\n")).toContain("Meetingdauer: 30 Minuten");
+    expect(JSON.stringify(req.messages[0]!.content)).toContain("Meetingdauer: 30 Minuten");
     expect(JSON.stringify(req.messages[0]!.content)).toContain("<context>");
     expect(JSON.stringify(req.messages[0]!.content)).toContain("Europe/Berlin");
+  });
+
+  it("keeps system prompt and history append-only; memory is resent only when it changed", async () => {
+    const h = await harness([message([text("eins")]), message([text("zwei")]), message([text("drei")])]);
+    await h.memory.upsert({ category: "preference", key: "Meetingdauer", value: "30 Minuten", source: "user" });
+    const r = await h.agent.handleUserMessage(undefined, "Hallo");
+    await h.agent.handleUserMessage(r.conversationId, "Und?");
+    await h.memory.upsert({ category: "preference", key: "Puffer", value: "10 Minuten", source: "user" });
+    await h.agent.handleUserMessage(r.conversationId, "Noch was?");
+    const [a, b, c] = h.llm.requests;
+    // identical system prompt, and every request extends the previous one unchanged
+    expect(JSON.stringify(b!.system)).toBe(JSON.stringify(a!.system));
+    expect(JSON.stringify(c!.system)).toBe(JSON.stringify(a!.system));
+    expect(JSON.stringify(b!.messages.slice(0, a!.messages.length))).toBe(JSON.stringify(a!.messages));
+    expect(JSON.stringify(c!.messages.slice(0, b!.messages.length))).toBe(JSON.stringify(b!.messages));
+    const memBlocks = (req: typeof a) => JSON.stringify(req!.messages.at(-1)!.content).includes("<memory>");
+    expect(memBlocks(a)).toBe(true);
+    expect(memBlocks(b)).toBe(false);
+    expect(memBlocks(c)).toBe(true);
+    expect(JSON.stringify(c!.messages.at(-1)!.content)).toContain("Puffer: 10 Minuten");
+  });
+
+  it("records token usage and estimated cost per model request", async () => {
+    const h = await harness([message([text("ok")])]);
+    await h.agent.handleUserMessage(undefined, "Hallo");
+    const t = await h.agent.usage.totals("2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z");
+    expect(t.requests).toBe(1);
+    expect(t.inputTokens + t.outputTokens).toBe(2);
   });
 
   it("keeps the conversation history across turns (context for 'ihm')", async () => {

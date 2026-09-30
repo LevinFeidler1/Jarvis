@@ -33,6 +33,7 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     language: "de",
     maxAgentSteps: 8,
     confirmationTtlMinutes: 30,
+    compactAtTokens: 60_000,
     ...overrides,
   };
 }
@@ -42,7 +43,7 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 let shared: Promise<Db> | undefined;
 const TABLES = [
   "messages", "conversations", "pending_actions", "activity", "audit_log", "memory", "tasks",
-  "reminders", "notifications", "oauth_tokens", "oauth_states", "settings", "sessions", "email_accounts", "contacts",
+  "reminders", "notifications", "oauth_tokens", "oauth_states", "settings", "sessions", "email_accounts", "contacts", "push_subscriptions", "automations", "llm_usage",
 ];
 
 /** One in-process Postgres (PGlite) per test worker, emptied for every test. */

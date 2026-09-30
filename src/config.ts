@@ -28,6 +28,7 @@ const EnvSchema = z.object({
   JARVIS_LANGUAGE: z.string().default("de"),
   JARVIS_USER_NAME: optionalString,
   JARVIS_MAX_AGENT_STEPS: z.coerce.number().int().min(1).max(50).default(12),
+  JARVIS_COMPACT_AT_TOKENS: z.coerce.number().int().min(50_000).max(900_000).default(60_000),
   JARVIS_CONFIRMATION_TTL_MINUTES: z.coerce.number().int().min(1).max(1440).default(30),
   GOOGLE_CLIENT_ID: optionalString,
   GOOGLE_CLIENT_SECRET: optionalString,
@@ -53,6 +54,8 @@ export interface AppConfig {
   userName?: string;
   maxAgentSteps: number;
   confirmationTtlMinutes: number;
+  /** Conversations longer than this (input tokens) are summarized server-side. */
+  compactAtTokens: number;
   google?: { clientId: string; clientSecret: string };
 }
 
@@ -88,6 +91,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     userName: e.JARVIS_USER_NAME,
     maxAgentSteps: e.JARVIS_MAX_AGENT_STEPS,
     confirmationTtlMinutes: e.JARVIS_CONFIRMATION_TTL_MINUTES,
+    compactAtTokens: e.JARVIS_COMPACT_AT_TOKENS,
     google:
       e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET
         ? { clientId: e.GOOGLE_CLIENT_ID, clientSecret: e.GOOGLE_CLIENT_SECRET }

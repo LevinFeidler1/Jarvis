@@ -69,6 +69,7 @@ const ICONS = {
   dot: '<circle cx="12" cy="12" r="3"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
   pin: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/>',
+  chart: '<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>',
   users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/>',
   upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>',
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
@@ -304,6 +305,8 @@ const NAV = [
   ["email", "E-Mail", "mail"],
   ["tasks", "Aufgaben", "tasks"],
   ["contacts", "Kontakte", "users"],
+  ["automations", "Automationen", "bolt"],
+  ["review", "Rückblick", "chart"],
   ["memory", "Gedächtnis", "memory"],
   ["settings", "Einstellungen", "settings"],
 ];
@@ -700,7 +703,8 @@ function startChat(text, { send = true, newConversation = true } = {}) {
   if (state.view === "chat") route(); else go("chat");
 }
 
-async function viewChat(main) {
+async function viewChat(main, params = new URLSearchParams()) {
+  if (params.get("c")) { state.conversationId = params.get("c"); history.replaceState(null, "", "#chat"); }
   const thread = h("div", { class: "thread", id: "thread" });
   const scroll = h("div", { class: "chat-scroll", id: "chat-scroll" }, thread);
   const input = h("textarea", { id: "chat-input", rows: 1, placeholder: isMobile() ? "Nachricht an JARVIS …" : "Frag JARVIS oder gib einen Auftrag …", enterkeyhint: "send", maxlength: 8000, "aria-label": "Nachricht" });
@@ -1321,6 +1325,241 @@ async function viewContacts(main) {
   renderList("");
 }
 
+// ─── Push-Benachrichtigungen ───────────────────────────────────────────────
+const push = {
+  supported: "serviceWorker" in navigator && "PushManager" in window && "Notification" in window,
+  ios: /iphone|ipad|ipod/i.test(navigator.userAgent),
+  standalone: matchMedia("(display-mode: standalone)").matches || navigator.standalone === true,
+  async register() {
+    if (!("serviceWorker" in navigator)) return null;
+    try { return await navigator.serviceWorker.register("/sw.js", { scope: "/" }); } catch { return null; }
+  },
+  async subscription() {
+    if (!this.supported) return null;
+    const reg = await navigator.serviceWorker.getRegistration("/");
+    return reg ? reg.pushManager.getSubscription() : null;
+  },
+  deviceLabel() {
+    const ua = navigator.userAgent;
+    const dev = /iphone/i.test(ua) ? "iPhone" : /ipad/i.test(ua) ? "iPad" : /android/i.test(ua) ? "Android" : /mac os/i.test(ua) ? "Mac" : /windows/i.test(ua) ? "Windows" : "Gerät";
+    const br = /edg\//i.test(ua) ? "Edge" : /firefox/i.test(ua) ? "Firefox" : /chrome|crios/i.test(ua) ? "Chrome" : /safari/i.test(ua) ? "Safari" : "Browser";
+    return `${dev} · ${br}`;
+  },
+  async enable() {
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") throw new Error(perm === "denied" ? "Benachrichtigungen sind blockiert. Bitte in den Einstellungen des Geräts für JARVIS erlauben." : "Keine Erlaubnis erteilt.");
+    const reg = (await navigator.serviceWorker.getRegistration("/")) ?? (await this.register());
+    if (!reg) throw new Error("Service Worker konnte nicht registriert werden.");
+    await navigator.serviceWorker.ready;
+    const { publicKey } = await api("/api/push");
+    const key = Uint8Array.from(atob(publicKey.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (publicKey.length % 4)) % 4)), (c) => c.charCodeAt(0));
+    const sub = (await reg.pushManager.getSubscription()) ?? (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }));
+    const json = sub.toJSON();
+    await api("/api/push/subscribe", { method: "POST", body: { subscription: { endpoint: json.endpoint, keys: json.keys }, label: this.deviceLabel() } });
+  },
+  async disable() {
+    const sub = await this.subscription();
+    if (!sub) return;
+    await api("/api/push/unsubscribe", { method: "POST", body: { endpoint: sub.endpoint } }).catch(() => {});
+    await sub.unsubscribe().catch(() => {});
+  },
+};
+
+function pushCard(onChange) {
+  const card = h("div", { class: "card" }, h("div", { class: "card-body", style: "padding:18px" }, h("div", { class: "spinner" })));
+  const render = async () => {
+    const [info, sub] = await Promise.all([api("/api/push").catch(() => ({ devices: [] })), push.subscription().catch(() => null)]);
+    const perm = push.supported ? Notification.permission : "unsupported";
+    const busy = (btn, fn) => async () => { btn.disabled = true; try { await fn(); } catch (e) { fail(e); } finally { btn.disabled = false; render(); onChange?.(); } };
+    let head;
+    if (!push.supported) {
+      head = h("div", { class: "banner warn", style: "max-width:none;margin:0" }, icon("alert"), h("div", {},
+        push.ios && !push.standalone
+          ? [h("b", {}, "Auf dem iPhone: "), "JARVIS zuerst installieren — in Safari auf Teilen ", h("b", {}, "↑"), " → „Zum Home-Bildschirm“, dann JARVIS über das neue Symbol öffnen und hier aktivieren (ab iOS 16.4)."]
+          : "Dieser Browser unterstützt keine Push-Nachrichten. Chrome, Edge, Firefox oder Safari (Mac/iPhone) verwenden."));
+    } else if (perm === "denied") {
+      head = h("div", { class: "banner warn", style: "max-width:none;margin:0" }, icon("alert"), h("div", {}, "Benachrichtigungen sind für JARVIS blockiert. In den Einstellungen des Geräts/Browsers erlauben und die Seite neu laden."));
+    } else if (sub) {
+      const test = h("button", { class: "btn" }, icon("bell"), h("span", {}, "Test senden"));
+      test.onclick = busy(test, async () => { const r = await api("/api/push/test", { method: "POST" }); toast(r.pushed ? `Test an ${r.pushed} Gerät(e) gesendet.` : "Kein Gerät erreicht.", r.pushed ? "ok" : "err"); });
+      const off = h("button", { class: "btn ghost" }, "Auf diesem Gerät ausschalten");
+      off.onclick = busy(off, () => push.disable());
+      head = h("div", { class: "push-head" }, h("span", { class: "badge ok" }, icon("check"), "Aktiv auf diesem Gerät"), h("div", { class: "push-actions" }, test, off));
+    } else {
+      const on = h("button", { class: "btn primary" }, icon("bell"), h("span", {}, "Auf diesem Gerät aktivieren"));
+      on.onclick = busy(on, async () => { await push.enable(); toast("Push-Benachrichtigungen aktiviert.", "ok"); });
+      head = h("div", { class: "push-head" }, h("div", { class: "muted small", style: "flex:1;min-width:200px" }, "Erinnerungen, Automationen und wartende Bestätigungen kommen als Nachricht aufs Handy — auch wenn JARVIS geschlossen ist."), on);
+    }
+    set(card,
+      h("div", { class: "card-body", style: "padding:18px;display:grid;gap:12px" }, head),
+      info.devices.map((d) => h("div", { class: "integration" }, h("div", { class: "logo" }, icon("bell")),
+        h("div", { class: "main" }, h("div", { class: "title" }, d.label ?? d.host), h("div", { class: "sub" }, d.lastSuccessAt ? `zuletzt zugestellt ${fmt.rel(d.lastSuccessAt)}` : `eingerichtet ${fmt.rel(d.createdAt)}`)),
+        h("button", { class: "btn ghost icon sm", "aria-label": "Gerät entfernen", onclick: async () => { await api(`/api/push/devices/${d.id}`, { method: "DELETE" }).catch(fail); render(); } }, icon("trash")))));
+  };
+  render().catch((e) => set(card, h("div", { class: "card-body" }, h("div", { class: "empty" }, e.message))));
+  return card;
+}
+
+// ─── View: Automationen ─────────────────────────────────────────────────────
+const WEEKDAYS = [[1, "Mo"], [2, "Di"], [3, "Mi"], [4, "Do"], [5, "Fr"], [6, "Sa"], [7, "So"]];
+const AUTO_STATUS = { ok: ["erledigt", "ok"], waiting: ["wartet auf dich", "warn"], nothing: ["nichts Neues", ""], error: ["Fehler", "err"] };
+
+function automationEditor(a) {
+  return new Promise((resolve) => {
+    const t = a?.trigger ?? { type: "schedule", time: "07:00", days: [1, 2, 3, 4, 5] };
+    let type = t.type;
+    const days = new Set(t.type === "schedule" ? t.days : [1, 2, 3, 4, 5]);
+    const f = {
+      name: h("input", { class: "field", id: "au-name", maxlength: 80, required: true, placeholder: "z.B. Morgen-Briefing", value: a?.name ?? "" }),
+      prompt: h("textarea", { class: "field", id: "au-prompt", rows: 5, maxlength: 2000, required: true, style: "height:auto;padding:10px 12px", placeholder: "Was soll JARVIS jedes Mal tun? z.B. „Fasse meine Termine und wichtigen E-Mails für heute zusammen.“" }, a?.prompt ?? ""),
+      time: h("input", { class: "field", id: "au-time", type: "time", value: t.type === "schedule" ? t.time : "07:00" }),
+      from: h("input", { class: "field", id: "au-from", maxlength: 200, placeholder: "Absender enthält … (optional)", value: t.type === "email" ? t.from ?? "" : "" }),
+      subject: h("input", { class: "field", id: "au-subject", maxlength: 200, placeholder: "Betreff enthält … (optional)", value: t.type === "email" ? t.subject ?? "" : "" }),
+    };
+    const dayChips = h("div", { class: "filters day-chips" }, WEEKDAYS.map(([n, l]) =>
+      h("button", { type: "button", class: `chip ${days.has(n) ? "active" : ""}`, "aria-pressed": String(days.has(n)), onclick: (e) => {
+        days.has(n) ? days.delete(n) : days.add(n);
+        e.currentTarget.classList.toggle("active", days.has(n));
+        e.currentTarget.setAttribute("aria-pressed", String(days.has(n)));
+      } }, l)));
+    const scheduleBox = h("div", { style: "display:grid;gap:8px" }, h("label", { class: "small muted", for: "au-time" }, "Uhrzeit"), f.time, h("div", { class: "small muted" }, "Wochentage"), dayChips);
+    const emailBox = h("div", { style: "display:grid;gap:8px" }, h("div", { class: "small muted" }, "Läuft, sobald eine neue passende E-Mail eingeht (Prüfung alle 5 Minuten, in allen Postfächern)."), f.from, f.subject);
+    const seg = h("div", { class: "filters" });
+    const renderType = () => {
+      set(seg, [["schedule", "Zeitplan"], ["email", "Neue E-Mail"]].map(([k, l]) => h("button", { type: "button", class: `chip ${type === k ? "active" : ""}`, onclick: () => { type = k; renderType(); } }, l)));
+      scheduleBox.style.display = type === "schedule" ? "grid" : "none";
+      emailBox.style.display = type === "email" ? "grid" : "none";
+    };
+    renderType();
+    const err = h("div", { class: "error-text" });
+    const close = (v) => { wrap.remove(); resolve(v); };
+    const form = h("form", { class: "modal contact-modal", role: "dialog", "aria-modal": "true", onsubmit: async (e) => {
+      e.preventDefault();
+      err.textContent = "";
+      const trigger = type === "schedule"
+        ? { type, time: f.time.value || "07:00", days: [...days].sort() }
+        : { type, ...(f.from.value.trim() ? { from: f.from.value.trim() } : {}), ...(f.subject.value.trim() ? { subject: f.subject.value.trim() } : {}) };
+      if (type === "schedule" && !trigger.days.length) { err.textContent = "Mindestens einen Wochentag wählen."; return; }
+      const body = { name: f.name.value.trim(), prompt: f.prompt.value.trim(), trigger };
+      try {
+        close(a?.id ? await api(`/api/automations/${a.id}`, { method: "PATCH", body }) : await api("/api/automations", { method: "POST", body }));
+      } catch (ex) { err.textContent = ex.message; }
+    } },
+      h("h3", {}, a?.id ? "Automation bearbeiten" : "Neue Automation"),
+      h("label", { class: "small muted", for: "au-name" }, "Name"), f.name,
+      h("div", { class: "small muted" }, "Auslöser"), seg, scheduleBox, emailBox,
+      h("label", { class: "small muted", for: "au-prompt" }, "Auftrag an JARVIS"), f.prompt,
+      h("div", { class: "muted small" }, "Es gelten dieselben Regeln wie im Chat: Senden, Einladen, Löschen usw. werden nur vorbereitet — du bestätigst sie über die Push-Nachricht."),
+      err,
+      h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: () => close(null) }, "Abbrechen"), h("button", { class: "btn primary", type: "submit" }, "Speichern")));
+    const wrap = h("div", { class: "modal-wrap", onclick: (e) => e.target === wrap && close(null) }, form);
+    wrap.addEventListener("keydown", (e) => e.key === "Escape" && close(null));
+    document.body.append(wrap);
+    f.name.focus();
+  });
+}
+
+async function viewAutomations(main) {
+  const data = await api("/api/automations");
+  const reload = () => viewAutomations(main);
+  const sw = (checked, onchange) => { const i = h("input", { type: "checkbox", checked, "aria-label": "Aktiv" }); i.addEventListener("change", () => onchange(i.checked)); return h("label", { class: "switch" }, i, h("span")); };
+  const card = (a) => {
+    const st = a.lastStatus ? AUTO_STATUS[a.lastStatus] : null;
+    const runBtn = h("button", { class: "btn sm" }, icon("bolt"), h("span", {}, "Jetzt ausführen"));
+    runBtn.onclick = async () => {
+      runBtn.disabled = true;
+      set(runBtn, h("span", { class: "spinner sm" }), h("span", {}, "Läuft …"));
+      try {
+        const r = await api(`/api/automations/${a.id}/run`, { method: "POST" });
+        toast(r.status === "error" ? r.text : r.status === "nothing" ? "Nichts Neues." : "Fertig — Ergebnis wurde als Benachrichtigung verschickt.", r.status === "error" ? "err" : "ok");
+      } catch (e) { fail(e); }
+      reload();
+    };
+    return h("div", { class: `card auto ${a.enabled ? "" : "off"}` },
+      h("div", { class: "auto-head" },
+        h("div", { class: "sheet-ic" }, icon(a.trigger.type === "email" ? "mail" : "clock")),
+        h("div", { class: "main" }, h("div", { class: "title" }, a.name), h("div", { class: "sub" }, a.triggerText, a.enabled && a.nextRunAt && a.trigger.type === "schedule" ? ` · nächste: ${fmt.dt(a.nextRunAt)}` : "")),
+        sw(a.enabled, async (v) => { await api(`/api/automations/${a.id}`, { method: "PATCH", body: { enabled: v } }).catch(fail); reload(); })),
+      h("div", { class: "auto-prompt" }, a.prompt),
+      a.lastRunAt ? h("div", { class: "auto-last" },
+        h("div", { class: "auto-last-head" }, st ? h("span", { class: `badge ${st[1]}` }, st[0]) : null, h("span", { class: "muted small" }, `zuletzt ${fmt.rel(a.lastRunAt)} · ${a.runCount}× gelaufen`)),
+        a.lastResult ? h("div", { class: "small auto-result" }, a.lastResult.length > 280 ? `${a.lastResult.slice(0, 280)} …` : a.lastResult) : null) : null,
+      h("div", { class: "auto-actions" },
+        runBtn,
+        a.lastConversationId ? h("button", { class: "btn ghost sm", "aria-label": "Verlauf öffnen", onclick: () => go("chat", `?c=${a.lastConversationId}`) }, icon("chat"), h("span", { class: "hide-mobile" }, "Verlauf")) : null,
+        h("span", { style: "flex:1" }),
+        h("button", { class: "btn ghost icon sm", "aria-label": `${a.name} bearbeiten`, onclick: async () => { if (await automationEditor(a)) { toast("Gespeichert.", "ok"); reload(); } } }, icon("edit")),
+        h("button", { class: "btn ghost icon sm", "aria-label": `${a.name} löschen`, onclick: async () => {
+          if (!(await dialog({ title: `„${a.name}“ löschen?`, text: "Die Automation läuft danach nicht mehr.", confirmLabel: "Löschen", danger: true }))) return;
+          await api(`/api/automations/${a.id}`, { method: "DELETE" }).catch(fail); reload();
+        } }, icon("trash"))));
+  };
+  const have = new Set(data.automations.map((a) => a.name));
+  const templates = data.templates.filter((t) => !have.has(t.name));
+  set(main, h("div", { class: "view" },
+    viewHead("Automationen", "JARVIS erledigt Dinge von selbst und schickt dir das Ergebnis aufs Handy.",
+      h("button", { class: "btn primary", onclick: async () => { if (await automationEditor(null)) { toast("Automation angelegt.", "ok"); reload(); } } }, icon("plus"), h("span", {}, "Neue Automation"))),
+    data.pushDevices ? null : h("div", { class: "banner warn", style: "max-width:none" }, icon("bell"),
+      h("div", { style: "flex:1" }, h("b", {}, "Push ist noch aus. "), "Ohne Push siehst du Ergebnisse nur hier und unter Benachrichtigungen."),
+      h("button", { class: "btn sm", onclick: () => go("settings", "?focus=push") }, "Einrichten")),
+    data.automations.length ? h("div", { class: "auto-grid" }, data.automations.map(card))
+      : h("div", { class: "empty" }, "Noch keine Automationen. Nimm eine Vorlage oder sag im Chat z.B. „Schick mir jeden Montag um 8 eine Wochenübersicht.“"),
+    templates.length ? [h("div", { class: "section-title" }, icon("memory"), "Vorlagen"),
+      h("div", { class: "tpl-grid" }, templates.map((t) =>
+        h("button", { class: "card tpl", onclick: async () => { if (await automationEditor({ ...t, id: undefined })) { toast(`„${t.name}“ angelegt.`, "ok"); reload(); } } },
+          h("div", { class: "title" }, t.name), h("div", { class: "sub" }, t.description), h("span", { class: "badge accent" }, icon("plus"), "Hinzufügen"))))] : null,
+    data.cronConfigured ? null : h("div", { class: "muted small", style: "margin-top:14px" }, "Hinweis: CRON_SECRET ist nicht gesetzt — Zeitpläne laufen nur, solange JARVIS lokal läuft.")));
+}
+
+// ─── View: Wochenrückblick ──────────────────────────────────────────────────
+async function viewReview(main, params) {
+  const offset = Math.min(0, Number(params.get("w") ?? 0) || 0);
+  const r = await api(`/api/review?offset=${offset}`);
+  const num = (key) => r.actions.find((a) => a.key === key)?.count ?? 0;
+  const tile = (n, l, ic, cls = "") => h("div", { class: "card stat static" }, h("div", { class: `ic ${cls}` }, icon(ic)), h("div", {}, h("div", { class: "n" }, n), h("div", { class: "l" }, l)));
+  const eur = (usd) => usd.toLocaleString("de-DE", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: usd < 1 ? 3 : 2 });
+  const cacheShare = r.usage.inputTokens + r.usage.cacheReadTokens + r.usage.cacheWriteTokens
+    ? Math.round((r.usage.cacheReadTokens / (r.usage.inputTokens + r.usage.cacheReadTokens + r.usage.cacheWriteTokens)) * 100) : 0;
+  const list = (items, empty) => items.length ? h("div", {}, items) : h("div", { class: "muted small", style: "padding:4px 0" }, empty);
+  set(main, h("div", { class: "view" },
+    viewHead("Wochenrückblick", `${r.label}${r.isCurrentWeek ? " · diese Woche" : ""}`,
+      h("button", { class: "btn icon", "aria-label": "Vorherige Woche", onclick: () => go("review", `?w=${offset - 1}`) }, icon("left")),
+      offset < 0 ? h("button", { class: "btn icon", "aria-label": "Nächste Woche", onclick: () => go("review", `?w=${offset + 1}`) }, icon("right")) : null,
+      h("button", { class: "btn primary", onclick: () => startChat(`Erstelle meinen Wochenrückblick${offset ? ` für week_offset ${offset}` : ""}: Was wurde erledigt, was ist offen geblieben, was steht an? Schließe mit den 3 wichtigsten Punkten.`) }, icon("bolt"), h("span", {}, "Zusammenfassen"))),
+    h("div", { class: "stat-row review-stats" },
+      tile(num("emailsSent"), "E-Mails gesendet", "mail"),
+      tile(num("eventsCreated") + num("eventsChanged"), "Termine geplant", "calendar"),
+      tile(r.tasks.completed.length, "Aufgaben erledigt", "tasks", "ok"),
+      tile(r.automationRuns, "Automationen gelaufen", "bolt")),
+    h("div", { class: "grid" },
+      h("div", { class: "card col-6" }, cardHead("Erledigt", "check"), h("div", { class: "card-body" },
+        list(r.tasks.completed.map((t) => h("div", { class: "rv-row" }, icon("check"), h("span", {}, t.title), h("span", { class: "muted small" }, fmt.rel(t.completedAt)))), "Keine erledigten Aufgaben."),
+        r.highlights.length ? [h("div", { class: "rv-sub" }, "Von JARVIS ausgeführt"), r.highlights.map((x) => h("div", { class: "rv-row" }, icon(x.tool.includes("event") || x.tool.includes("invit") ? "calendar" : "mail"), h("span", {}, x.description), h("span", { class: "muted small" }, fmt.rel(x.at))))] : null,
+        r.actions.length ? h("div", { class: "rv-chips" }, r.actions.map((a) => h("span", { class: "badge" }, `${a.label}: ${a.count}`))) : null)),
+      h("div", { class: "card col-6" }, cardHead("Offen & nächste Woche", "clock"), h("div", { class: "card-body" },
+        r.tasks.openOverdue ? h("div", { class: "rv-row warn" }, icon("alert"), h("span", {}, `${r.tasks.openOverdue} überfällige Aufgabe${r.tasks.openOverdue === 1 ? "" : "n"}`), h("button", { class: "btn ghost sm", onclick: () => go("tasks") }, "Ansehen")) : null,
+        h("div", { class: "rv-sub" }, "Fällig nächste Woche"),
+        list(r.tasks.dueNextWeek.map((t) => h("div", { class: "rv-row" }, icon("tasks"), h("span", {}, t.title), h("span", { class: "muted small" }, new Date(t.due).toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" })))), "Nichts fällig."),
+        h("div", { class: "rv-sub" }, "Termine nächste Woche"),
+        r.nextWeek.events ? list(r.nextWeek.events.map((e) => h("div", { class: "rv-row" }, icon("calendar"), h("span", {}, e.title), h("span", { class: "muted small" }, e.allDay ? new Date(e.start).toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" }) : fmt.dt(e.start)))), "Keine Termine.")
+          : h("div", { class: "muted small" }, "Kalender nicht verbunden."))),
+      h("div", { class: "card col-6" }, cardHead("Aktivität", "activity"), h("div", { class: "card-body" }, h("dl", { class: "kv" },
+        h("dt", {}, "Unterhaltungen"), h("dd", {}, r.conversations),
+        h("dt", {}, "Erinnerungen ausgelöst"), h("dd", {}, r.remindersFired),
+        h("dt", {}, "Bestätigt / abgelehnt"), h("dd", {}, `${r.confirmations.approved} / ${r.confirmations.rejected}`),
+        h("dt", {}, "Neue Aufgaben"), h("dd", {}, r.tasks.created)))),
+      h("div", { class: "card col-6" }, cardHead("Kosten (Claude API)", "bolt"), h("div", { class: "card-body" },
+        h("div", { class: "rv-cost" }, `ca. ${eur(r.usage.costUsd)}`),
+        h("dl", { class: "kv" },
+          h("dt", {}, "Anfragen ans Modell"), h("dd", {}, r.usage.requests),
+          h("dt", {}, "Tokens (ein/aus)"), h("dd", {}, `${(r.usage.inputTokens + r.usage.cacheReadTokens + r.usage.cacheWriteTokens).toLocaleString("de-DE")} / ${r.usage.outputTokens.toLocaleString("de-DE")}`),
+          h("dt", {}, "Aus dem Cache"), h("dd", {}, `${cacheShare} %`),
+          h("dt", {}, "Websuchen"), h("dd", {}, r.usage.webSearches),
+          h("dt", {}, "Gekürzte Unterhaltungen"), h("dd", {}, r.usage.compactions)),
+        h("div", { class: "muted small", style: "margin-top:8px" }, "Schätzung nach Listenpreisen. Genaue Abrechnung: console.anthropic.com → Usage.")))),
+  ));
+}
+
 // ─── View: Gedächtnis ───────────────────────────────────────────────────────
 const CATS = { preference: ["Präferenzen", "settings"], person: ["Personen", "chat"], project: ["Projekte", "tasks"], rule: ["Regeln", "shield"], fact: ["Fakten", "memory"] };
 async function viewMemory(main) {
@@ -1371,6 +1610,7 @@ async function viewSettings(main, params) {
   if (flash) { toast(flash === "connected" ? "Google wurde verbunden." : `Google-Verbindung fehlgeschlagen: ${flash}`, flash === "connected" ? "ok" : "err"); history.replaceState(null, "", "#settings"); }
   const [setup, integrations, perms, status] = await Promise.all([api("/api/setup"), api("/api/integrations"), api("/api/settings/permissions"), api("/api/status")]);
   const done = setup.steps.filter((s) => s.done).length;
+  if (params.get("focus") === "push") setTimeout(() => $("#push-section")?.scrollIntoView({ behavior: "smooth" }), 300);
   const settings = perms.settings;
   const save = async () => { try { await api("/api/settings/permissions", { method: "PUT", body: settings }); toast("Berechtigungen gespeichert.", "ok"); } catch (e) { fail(e); } };
   const sw = (checked, onchange) => { const i = h("input", { type: "checkbox", checked }); i.addEventListener("change", () => onchange(i.checked)); return h("label", { class: "switch" }, i, h("span")); };
@@ -1397,6 +1637,8 @@ async function viewSettings(main, params) {
         } }, "Trennen") : null);
     })),
 
+    h("div", { class: "section-title", id: "push-section" }, icon("bell"), "Push-Benachrichtigungen"),
+    pushCard(),
     h("div", { class: "section-title" }, icon("mail"), "E-Mail-Konten"),
     mailAccountsCard(main),
     h("div", { class: "section-title" }, icon("shield"), "Berechtigungen"),
@@ -1558,7 +1800,7 @@ async function openNotifications() {
 }
 
 // ─── Boot ───────────────────────────────────────────────────────────────────
-const VIEWS = { today: viewToday, chat: viewChat, activity: viewActivity, calendar: viewCalendar, email: viewEmail, tasks: viewTasks, contacts: viewContacts, memory: viewMemory, settings: viewSettings };
+const VIEWS = { today: viewToday, chat: viewChat, activity: viewActivity, calendar: viewCalendar, email: viewEmail, tasks: viewTasks, contacts: viewContacts, automations: viewAutomations, review: viewReview, memory: viewMemory, settings: viewSettings };
 
 let routerBound = false;
 async function boot() {
@@ -1573,6 +1815,7 @@ async function boot() {
     if (line) set(line, h("span", { class: `dot ${st.llmConfigured ? "ok" : "warn"}` }), st.llmConfigured ? `Online · ${st.hosting}` : "Sprachmodell fehlt");
   }).catch(() => {});
   if (!routerBound) { window.addEventListener("hashchange", route); routerBound = true; }
+  push.register();
   await route();
   refreshCounts();
   state.poll ??= setInterval(() => state.csrf && refreshCounts(), 30_000);

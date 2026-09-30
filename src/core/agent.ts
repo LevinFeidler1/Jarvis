@@ -11,7 +11,9 @@ import { ConversationStore } from "./conversation.js";
 import { scanForInjection, wrapExternal } from "./injection.js";
 import { type LlmClient, type LlmMessage, LlmUnavailableError } from "./llm.js";
 import { decidePermission, loadPermissionSettings } from "./permissions.js";
-import { buildSystem, buildTurnContext } from "./prompt.js";
+import { createHash } from "node:crypto";
+import { buildSystem, buildTurnContext, renderAutomationBlock, renderMemoryBlock } from "./prompt.js";
+import { UsageStore } from "./usage.js";
 import { type ActionStatus, RiskLevel, type ToolContext, type ToolDefinition, ToolError, type ToolResult } from "./types.js";
 
 const MAX_TOOL_RESULT_CHARS = 40_000;
@@ -80,6 +82,7 @@ export class Agent {
   readonly confirmations: ConfirmationStore;
   readonly activity: ActivityLog;
   readonly audit: AuditLog;
+  readonly usage: UsageStore;
   private readonly now: () => Date;
 
   constructor(private readonly deps: AgentDeps) {
@@ -87,13 +90,21 @@ export class Agent {
     this.confirmations = new ConfirmationStore(deps.db, deps.config.confirmationTtlMinutes);
     this.activity = new ActivityLog(deps.db);
     this.audit = new AuditLog(deps.db);
+    this.usage = new UsageStore(deps.db);
     this.now = deps.now ?? (() => new Date());
   }
 
   // ─── Public entry points ────────────────────────────────────────────────
 
-  async handleUserMessage(conversationId: string | undefined, text: string, emit: AgentEventListener = noop): Promise<AgentReply> {
-    const conv = (conversationId && (await this.conversations.get(conversationId))) || (await this.conversations.create());
+  async handleUserMessage(
+    conversationId: string | undefined,
+    text: string,
+    emit: AgentEventListener = noop,
+    opts: { automation?: { name: string; trigger: string } } = {},
+  ): Promise<AgentReply> {
+    const conv =
+      (conversationId && (await this.conversations.get(conversationId))) ||
+      (await this.conversations.create(opts.automation ? `⚡ ${opts.automation.name}` : undefined, opts.automation ? "automation" : undefined));
     await this.expireStale(conv.id);
 
     // A short "ja"/"nein" answers the open confirmation directly (server-side),
@@ -115,13 +126,19 @@ export class Agent {
       return this.reply(conv.id, reply, []);
     }
 
-    const userMessage: LlmMessage = {
-      role: "user",
-      content: [
-        { type: "text", text: buildTurnContext(this.deps.config, this.now()) },
-        { type: "text", text },
-      ],
-    };
+    // Memory travels in the user turn (only when it changed) so that system
+    // prompt and history stay append-only — required for cache hits and for
+    // the API's preserved-thinking check.
+    const memoryText = await this.deps.memory.renderForPrompt();
+    const memoryHash = createHash("sha256").update(memoryText).digest("hex").slice(0, 32);
+    const context: Anthropic.Beta.BetaTextBlockParam[] = [];
+    if (opts.automation) context.push({ type: "text", text: renderAutomationBlock(opts.automation) });
+    context.push({ type: "text", text: buildTurnContext(this.deps.config, this.now()) });
+    if (conv.memoryHash !== memoryHash) {
+      context.push({ type: "text", text: renderMemoryBlock(memoryText) });
+      await this.conversations.setMemoryHash(conv.id, memoryHash);
+    }
+    const userMessage: LlmMessage = { role: "user", content: [...context, { type: "text", text }] };
     await this.conversations.append(conv.id, userMessage, text);
     return this.run({ conversationId: conv.id, tainted: conv.tainted, actions: [], emit });
   }
@@ -191,15 +208,16 @@ export class Agent {
   // ─── Agent loop ─────────────────────────────────────────────────────────
 
   private async run(state: RunState): Promise<AgentReply> {
-    const { config, llm, registry, memory } = this.deps;
+    const { config, llm, registry } = this.deps;
     const tools = registry.toAnthropicTools();
-    const system = await buildSystem(memory);
+    const system = buildSystem();
 
     for (let step = 0; step < config.maxAgentSteps; step++) {
       let response;
       state.emit({ type: "thinking" });
       try {
         response = await llm.create({ system, messages: await this.conversations.history(state.conversationId), tools });
+        await this.usage.record(response, state.conversationId).catch((err) => console.error("[agent] usage", err));
       } catch (err) {
         const msg =
           err instanceof LlmUnavailableError ? err.message : "Bei der Verarbeitung ist ein unerwarteter Fehler aufgetreten.";
