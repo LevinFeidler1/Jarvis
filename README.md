@@ -31,7 +31,8 @@ npm run setup:secrets        # Werte in .env eintragen
 npm start                    # → http://localhost:3000, mit JARVIS_ACCESS_TOKEN anmelden
 ```
 
-Gmail/Kalender/Kontakte verbinden: **[docs/SETUP_GOOGLE.md](docs/SETUP_GOOGLE.md)**.
+Gmail/Kalender/Kontakte verbinden: **[docs/SETUP_GOOGLE.md](docs/SETUP_GOOGLE.md)** ·
+weitere Postfächer (1&1/IONOS, All-Inkl, jedes IMAP-Postfach): **[docs/SETUP_MAIL.md](docs/SETUP_MAIL.md)**.
 Ohne Google-Verbindung funktionieren Aufgaben, Erinnerungen, Gedächtnis und
 Websuche; bei E-Mail/Kalender sagt JARVIS ehrlich, dass die Integration fehlt.
 

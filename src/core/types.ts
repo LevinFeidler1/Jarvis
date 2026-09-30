@@ -91,6 +91,12 @@ export interface ToolDefinition<I = any> {
   auditTarget?(input: I): string | undefined;
   /** Outgoing free text to scan for sensitive data (passwords, OTPs, IBAN…). */
   outgoingText?(input: I): string;
+  /**
+   * Optional read-only check before the permission gate (e.g. "which mailbox
+   * sends this?"). A failure is returned to the model instead of asking the
+   * user to confirm an action that could not run anyway.
+   */
+  precheck?(input: I, ctx: ToolContext): Promise<ToolResult | void>;
   execute(input: I, ctx: ToolContext): Promise<ToolResult>;
 }
 

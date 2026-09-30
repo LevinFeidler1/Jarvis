@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { RiskLevel, type ToolDefinition } from "../core/types.js";
+import { RiskLevel, type ToolDefinition, type ToolResult } from "../core/types.js";
+import { accountOfId, MultiAccountEmail } from "../providers/multi-email.js";
 import type { EmailSummary } from "../providers/types.js";
 import { defineTool, emailAddress, external, id, ok, singleLine } from "./common.js";
 
@@ -16,6 +17,7 @@ function summarize(e: EmailSummary) {
     unread: e.unread,
     labels: e.labels,
     hasAttachments: e.hasAttachments,
+    account: e.account,
   };
 }
 
@@ -27,10 +29,12 @@ const listInput = z.object({
   label: z.string().max(100).optional(),
   inbox_only: z.boolean().optional().describe("Nur Posteingang (Standard: true bei list_emails)."),
   max_results: z.number().int().min(1).max(50).optional(),
+  account: z.string().max(254).optional().describe("Nur dieses Postfach (E-Mail-Adresse aus list_email_accounts). Leer = alle Postfächer."),
 });
 
 async function listEmails(input: z.infer<typeof listInput>, ctx: Parameters<ToolDefinition["execute"]>[1], inboxDefault: boolean) {
-  const mails = await (await ctx.providers.email()).listEmails({
+  const provider = await ctx.providers.email();
+  const query = {
     text: input.query,
     from: input.from,
     unreadOnly: input.unread_only,
@@ -38,11 +42,30 @@ async function listEmails(input: z.infer<typeof listInput>, ctx: Parameters<Tool
     label: input.label,
     inboxOnly: input.inbox_only ?? inboxDefault,
     maxResults: input.max_results ?? 20,
-  });
-  return external("email:list", { count: mails.length, emails: mails.map(summarize) }, mails.flatMap((m) => [m.subject, m.snippet]));
+    account: input.account,
+  };
+  const { emails: mails, failures } =
+    provider instanceof MultiAccountEmail ? await provider.listAcrossAccounts(query) : { emails: await provider.listEmails(query), failures: [] };
+  const res = external(
+      "email:list",
+      {
+        count: mails.length,
+        emails: mails.map(summarize),
+        ...(failures.length ? { unreachableMailboxes: failures, note: "Einige Postfächer konnten nicht gelesen werden — dem Benutzer mitteilen." } : {}),
+      },
+      mails.flatMap((m) => [m.subject, m.snippet]),
+    ) as Extract<ToolResult, { ok: true }>;
+  return { ...res, partial: failures.length > 0 };
 }
 
+const fromAccount = z
+  .string()
+  .max(254)
+  .optional()
+  .describe("Absender-Postfach (E-Mail-Adresse aus list_email_accounts). Bei mehreren Postfächern ohne Standard Pflicht — im Zweifel den Benutzer fragen.");
+
 const outgoingInput = z.object({
+  from_account: fromAccount,
   to: z.array(emailAddress).min(1).max(50),
   cc: z.array(emailAddress).max(50).optional(),
   bcc: z.array(emailAddress).max(50).optional(),
@@ -59,8 +82,33 @@ const replyInput = z.object({
 });
 
 const recipients = (i: { to: string[]; cc?: string[]; bcc?: string[] }) => [...i.to, ...(i.cc ?? []), ...(i.bcc ?? [])].join(", ");
+/** Fails early (before any confirmation) when the sending mailbox is unclear. */
+async function checkSender(i: { from_account?: string; reply_to_message_id?: string; message_id?: string }, ctx: Parameters<ToolDefinition["execute"]>[1]) {
+  const provider = await ctx.providers.email();
+  if (provider instanceof MultiAccountEmail) provider.resolveSender({ fromAccount: i.from_account, replyToMessageId: i.reply_to_message_id ?? i.message_id });
+}
+
+const sender = (i: { from_account?: string; message_id?: string; reply_to_message_id?: string }) => {
+  const acct = i.from_account ?? accountOfId(i.message_id ?? i.reply_to_message_id ?? "");
+  return acct ? `\nVon: ${acct}` : "";
+};
 
 export const emailTools: ToolDefinition[] = [
+  defineTool({
+    name: "list_email_accounts",
+    description:
+      "Zeigt alle verbundenen Postfächer (z.B. Gmail, 1&1, All-Inkl) und welches der Standard-Absender ist. " +
+      "Nutze die Adressen für account/from_account.",
+    category: "email",
+    risk: RiskLevel.READ,
+    input: z.object({}),
+    describe: () => "Postfächer anzeigen",
+    async execute(_input, ctx) {
+      const provider = await ctx.providers.email();
+      const accounts = provider instanceof MultiAccountEmail ? provider.accounts() : [{ email: provider.name, name: provider.name, kind: "imap", isDefault: true }];
+      return ok({ accounts });
+    },
+  }),
   defineTool({
     name: "list_emails",
     description:
@@ -113,10 +161,11 @@ export const emailTools: ToolDefinition[] = [
     category: "email",
     risk: RiskLevel.LOW,
     input: outgoingInput.extend({ reply_to_message_id: id.optional() }),
-    describe: (i) => `Entwurf an ${recipients(i)} — Betreff: "${i.subject}"`,
+    describe: (i) => `Entwurf an ${recipients(i)} — Betreff: "${i.subject}"${sender(i)}`,
     auditTarget: (i) => recipients(i),
+    precheck: async (i, ctx) => void (await checkSender(i, ctx)),
     async execute(input, ctx) {
-      const d = await (await ctx.providers.email()).draftEmail({ ...input, replyToMessageId: input.reply_to_message_id });
+      const d = await (await ctx.providers.email()).draftEmail({ ...input, fromAccount: input.from_account, replyToMessageId: input.reply_to_message_id });
       return ok({ draftId: d.id, status: "Entwurf gespeichert, nicht gesendet" });
     },
   }),
@@ -128,11 +177,12 @@ export const emailTools: ToolDefinition[] = [
     risk: RiskLevel.EXTERNAL,
     isExternal: true,
     input: outgoingInput,
-    describe: (i) => `E-Mail an ${recipients(i)} senden\nBetreff: ${i.subject}\n\n${i.body}`,
+    describe: (i) => `E-Mail an ${recipients(i)} senden${sender(i)}\nBetreff: ${i.subject}\n\n${i.body}`,
     auditTarget: (i) => recipients(i),
     outgoingText: (i) => `${i.subject}\n${i.body}`,
+    precheck: async (i, ctx) => void (await checkSender(i, ctx)),
     async execute(input, ctx) {
-      const r = await (await ctx.providers.email()).sendEmail(input);
+      const r = await (await ctx.providers.email()).sendEmail({ ...input, fromAccount: input.from_account });
       return ok({ sent: true, messageId: r.id });
     },
   }),
@@ -143,9 +193,10 @@ export const emailTools: ToolDefinition[] = [
     risk: RiskLevel.EXTERNAL,
     isExternal: true,
     input: replyInput,
-    describe: (i) => `Antwort an ${recipients(i)} senden${i.subject ? `\nBetreff: ${i.subject}` : ""}\n\n${i.body}`,
+    describe: (i) => `Antwort an ${recipients(i)} senden${sender(i)}${i.subject ? `\nBetreff: ${i.subject}` : ""}\n\n${i.body}`,
     auditTarget: (i) => recipients(i),
     outgoingText: (i) => `${i.subject ?? ""}\n${i.body}`,
+    precheck: async (i, ctx) => void (await checkSender(i, ctx)),
     async execute(input, ctx) {
       const r = await (await ctx.providers.email()).sendEmail({ to: input.to, cc: input.cc, subject: input.subject ?? "", body: input.body, replyToMessageId: input.message_id });
       return ok({ sent: true, messageId: r.id });
@@ -158,9 +209,10 @@ export const emailTools: ToolDefinition[] = [
     risk: RiskLevel.EXTERNAL,
     isExternal: true,
     input: z.object({ message_id: id, to: z.array(emailAddress).min(1).max(20), note: z.string().max(10_000).optional() }),
-    describe: (i) => `E-Mail an ${i.to.join(", ")} weiterleiten${i.note ? `\nNotiz: ${i.note}` : ""}`,
+    describe: (i) => `E-Mail an ${i.to.join(", ")} weiterleiten${sender(i)}${i.note ? `\nNotiz: ${i.note}` : ""}`,
     auditTarget: (i) => i.to.join(", "),
     outgoingText: (i) => i.note ?? "",
+    precheck: async (i, ctx) => void (await checkSender(i, ctx)),
     async execute(input, ctx) {
       const r = await (await ctx.providers.email()).forwardEmail(input.message_id, input.to, input.note);
       return ok({ forwarded: true, messageId: r.id });

@@ -87,6 +87,12 @@ Umsetzung: `src/core/permissions.ts`. Die Stufe steht fest im Tool-Code.
   gespeichert; Schlüssel `JARVIS_ENCRYPTION_KEY` (32 Byte, Base64) nur aus der
   Umgebung. Ohne Schlüssel startet JARVIS nicht.
 * OAuth mit `state`-Parameter (CSRF) und PKCE (S256).
+* **IMAP/SMTP-Passwörter** (1&1, All-Inkl, …) gibt nur der Benutzer in der authentifizierten UI
+  ein. Sie werden AES-256-GCM-verschlüsselt gespeichert (AAD je Konto), nie an die UI oder das
+  Modell zurückgegeben und nie geloggt. Vor dem Speichern wird die Anmeldung per IMAP und SMTP
+  geprüft. Verbindungen nur mit TLS (993/465) bzw. erzwungenem STARTTLS (587).
+* Bei mehreren Postfächern wird das **Absender-Postfach** in jeder Sende-Bestätigung angezeigt;
+  Antworten gehen zwingend vom Postfach der Original-Mail, ein unklarer Absender wird nie geraten.
 * **Least privilege:** Es werden nur die Scopes angefragt, die die
   implementierten Tools benötigen (siehe `TOOLS.md`).
 * `npm run setup:secrets` erzeugt sichere Zufallswerte.

@@ -249,6 +249,16 @@ export class Agent {
     const input = parsed.data;
     const description = safeDescribe(tool, input);
 
+    if (tool.precheck) {
+      let pre: ToolResult | void;
+      try {
+        pre = await tool.precheck(input, this.toolContext(state));
+      } catch (err) {
+        pre = { ok: false, error: err instanceof Error ? err.message : String(err), code: err instanceof ToolError ? err.code : "INTERNAL" };
+      }
+      if (pre && !pre.ok) return result(JSON.stringify({ ok: false, status: "not_prepared", code: pre.code, error: pre.error }), true);
+    }
+
     // 3. Permission check.
     const decision = decidePermission(tool, input, {
       tainted: state.tainted,
@@ -307,14 +317,7 @@ export class Agent {
     const description = safeDescribe(tool, input);
     await this.activity.update(activityId, "executing");
     state.emit({ type: "action", action: { activityId, toolName: tool.name, description, status: "executing", risk } });
-    const ctx: ToolContext = {
-      config: this.deps.config,
-      db: this.deps.db,
-      providers: this.deps.providers,
-      memory: this.deps.memory,
-      conversationId: state.conversationId,
-      now: this.now,
-    };
+    const ctx = this.toolContext(state);
 
     let res: ToolResult;
     try {
@@ -356,6 +359,17 @@ export class Agent {
       payload = wrapExternal(res.externalData.source, payload, scan);
     }
     return { content: payload, isError: false };
+  }
+
+  private toolContext(state: RunState): ToolContext {
+    return {
+      config: this.deps.config,
+      db: this.deps.db,
+      providers: this.deps.providers,
+      memory: this.deps.memory,
+      conversationId: state.conversationId,
+      now: this.now,
+    };
   }
 
   /** Server-side tools (web search) run at Anthropic; log them for transparency. */

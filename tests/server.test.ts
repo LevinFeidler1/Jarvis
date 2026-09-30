@@ -168,3 +168,45 @@ describe("Vercel handler", () => {
     expect(restoreUrl("/api/index?path=integrations%2Fgoogle%2Fcallback&code=x&state=y")).toBe("/api/integrations/google/callback?code=x&state=y");
   });
 });
+
+describe("HTTP API — e-mail accounts", () => {
+  it("rejects accounts whose login cannot be verified and stores nothing", async () => {
+    const { app, h } = await start();
+    const { cookie, csrf } = await login(app);
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/email-accounts",
+      headers: { cookie, "x-jarvis-csrf": csrf },
+      payload: {
+        email: "levin@feidler.de",
+        preset: "ionos",
+        username: "levin@feidler.de",
+        password: "geheim",
+        imap: { host: "127.0.0.1", port: 1, secure: false },
+        smtp: { host: "127.0.0.1", port: 1, secure: false },
+      },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatch(/nicht erreichbar|Fehler/);
+    expect(await h.providers.emailAccounts.list()).toHaveLength(0);
+  });
+
+  it("never returns stored passwords and keeps them encrypted", async () => {
+    const { app, h } = await start();
+    await h.providers.emailAccounts.add({
+      email: "levin.feidler@fa-automations.de",
+      name: "F&A",
+      preset: "allinkl",
+      username: "m0123456",
+      password: "super-geheim-123",
+      imap: { host: "w0123456.kasserver.com", port: 993, secure: true },
+      smtp: { host: "w0123456.kasserver.com", port: 465, secure: true },
+    });
+    const { cookie } = await login(app);
+    const body = (await app.inject({ url: "/api/email-accounts", headers: { cookie } })).body;
+    expect(body).toContain("levin.feidler@fa-automations.de");
+    expect(body).not.toContain("super-geheim-123");
+    expect(JSON.stringify(await h.db.query("SELECT * FROM email_accounts"))).not.toContain("super-geheim-123");
+    expect((await h.providers.emailAccounts.listWithSecrets())[0]!.password).toBe("super-geheim-123");
+  });
+});

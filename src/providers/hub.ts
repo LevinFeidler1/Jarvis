@@ -7,7 +7,10 @@ import { GmailProvider } from "./google/gmail.js";
 import { GoogleHttp } from "./google/http.js";
 import { GoogleAuth } from "./google/oauth.js";
 import { GoogleContactsProvider } from "./google/people.js";
+import { EmailAccountStore } from "./imap/accounts.js";
+import { type ImapDeps, ImapEmailProvider } from "./imap/imap.js";
 import { InAppNotificationProvider, LocalTaskProvider, ReminderStore } from "./local/local.js";
+import { type MailboxEntry, MultiAccountEmail } from "./multi-email.js";
 import type { CalendarProvider, ContactProvider, EmailProvider } from "./types.js";
 
 export interface IntegrationStatus {
@@ -29,7 +32,9 @@ export class ProviderHub {
   readonly tasks: LocalTaskProvider;
   readonly reminders: ReminderStore;
   readonly notifications: InAppNotificationProvider;
+  readonly emailAccounts: EmailAccountStore;
   readonly googleAuth?: GoogleAuth;
+  private imapDeps: ImapDeps = {};
   private readonly google?: { email: GmailProvider; calendar: GoogleCalendarProvider; contacts: GoogleContactsProvider };
   private overrides: { email?: EmailProvider; calendar?: CalendarProvider; contacts?: ContactProvider } = {};
 
@@ -37,6 +42,7 @@ export class ProviderHub {
     this.tasks = new LocalTaskProvider(db);
     this.reminders = new ReminderStore(db);
     this.notifications = new InAppNotificationProvider(db);
+    this.emailAccounts = new EmailAccountStore(db, config.encryptionKey);
     if (config.google) {
       this.googleAuth = new GoogleAuth(
         { ...config.google, redirectUri: `${config.publicUrl}/api/integrations/google/callback` },
@@ -57,14 +63,36 @@ export class ProviderHub {
     this.overrides = { ...this.overrides, ...p };
   }
 
+  /** Test hook: custom IMAP/SMTP clients. */
+  setImapDeps(deps: ImapDeps): void {
+    this.imapDeps = deps;
+  }
+
   private async googleReady(): Promise<boolean> {
     return !!this.google && !!(await this.googleAuth?.isConnected());
   }
 
+  /** All connected mailboxes (Gmail + IMAP accounts) behind one provider. */
   async email(): Promise<EmailProvider> {
     if (this.overrides.email) return this.overrides.email;
-    if (await this.googleReady()) return this.google!.email;
-    throw new ToolError(`E-Mail ist noch nicht konfiguriert. ${SETUP_HINT}`, "NOT_CONFIGURED");
+    const entries: MailboxEntry[] = [];
+    if (await this.googleReady()) {
+      const s = await this.googleAuth!.status();
+      entries.push({ email: (s.account ?? "gmail").toLowerCase(), name: "Gmail", kind: "gmail", provider: this.google!.email });
+    }
+    let accounts;
+    try {
+      accounts = await this.emailAccounts.listWithSecrets();
+    } catch {
+      throw new ToolError("Gespeicherte Postfach-Passwörter können nicht entschlüsselt werden (JARVIS_ENCRYPTION_KEY geändert?). Konten neu anlegen.", "AUTH_FAILED");
+    }
+    for (const a of accounts) {
+      entries.push({ email: a.email, name: a.name ?? a.email, kind: "imap", provider: new ImapEmailProvider(a, this.imapDeps) });
+    }
+    if (entries.length === 0) {
+      throw new ToolError(`E-Mail ist noch nicht konfiguriert. Einstellungen → E-Mail-Konten (Gmail über Google, 1&1/All-Inkl über IMAP).`, "NOT_CONFIGURED");
+    }
+    return new MultiAccountEmail(entries, await this.emailAccounts.getDefault());
   }
 
   async calendar(): Promise<CalendarProvider> {
@@ -100,8 +128,17 @@ export class ProviderHub {
         detail: s.connected ? `Verbunden. Scopes: ${s.scopes.length}` : "Zugangsdaten vorhanden — Konto noch nicht verbunden.",
       };
     }
+    const imap: IntegrationStatus[] = (await this.emailAccounts.list()).map((a) => ({
+      id: `imap:${a.id}`,
+      name: a.name ? `${a.name} (${a.email})` : a.email,
+      category: "email",
+      state: "connected",
+      account: a.email,
+      detail: `IMAP ${a.imap.host} · SMTP ${a.smtp.host}`,
+    }));
     return [
       google,
+      ...imap,
       {
         id: "microsoft",
         name: "Microsoft 365 (Outlook, Kalender, Kontakte)",

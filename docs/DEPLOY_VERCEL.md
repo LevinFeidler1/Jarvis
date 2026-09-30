@@ -85,6 +85,12 @@ https://<projektname>.vercel.app/api/integrations/google/callback
 `GOOGLE_CLIENT_ID` und `GOOGLE_CLIENT_SECRET` setzen → Redeploy →
 *Einstellungen → Integrationen → Verbinden*.
 
+## 6b. Weitere Postfächer (1&1, All-Inkl)
+
+Nach dem Login in JARVIS: *Einstellungen → E-Mail-Konten → Postfach hinzufügen* —
+Details in [SETUP_MAIL.md](SETUP_MAIL.md). Dafür sind keine Vercel-Variablen nötig; die
+Passwörter liegen verschlüsselt in der Neon-Datenbank.
+
 ## 7. Erinnerungen zuverlässig auslösen
 
 Vercel hat keinen dauerhaft laufenden Prozess. JARVIS löst fällige Erinnerungen deshalb aus:

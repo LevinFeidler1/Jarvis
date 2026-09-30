@@ -21,6 +21,8 @@ export interface EmailSummary {
   unread: boolean;
   labels: string[];
   hasAttachments: boolean;
+  /** Mailbox the message belongs to (set when several accounts are connected). */
+  account?: string;
 }
 
 export interface Email extends EmailSummary {
@@ -41,6 +43,8 @@ export interface ListEmailsQuery {
   label?: string;
   inboxOnly?: boolean;
   maxResults?: number;
+  /** Restrict to one mailbox (account e-mail address). */
+  account?: string;
 }
 
 export interface OutgoingEmail {
@@ -51,6 +55,21 @@ export interface OutgoingEmail {
   body: string;
   /** When set, the message is sent as a reply in that thread. */
   replyToMessageId?: string;
+  /** Sending mailbox (account e-mail address). Replies always use the original's mailbox. */
+  fromAccount?: string;
+}
+
+export interface EmailAccountInfo {
+  email: string;
+  name: string;
+  kind: "gmail" | "imap";
+  isDefault: boolean;
+}
+
+export interface MultiListResult {
+  emails: EmailSummary[];
+  /** Mailboxes that could not be read (reported honestly, never hidden). */
+  failures: Array<{ account: string; error: string }>;
 }
 
 export interface EmailDraft {

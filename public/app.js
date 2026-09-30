@@ -810,9 +810,15 @@ async function viewEmail(main) {
     h("button", { class: "btn ghost icon", onclick: () => viewEmail(main), "aria-label": "Aktualisieren" }, icon("refresh")));
   set(main, h("div", { class: "view" }, head, h("div", { class: "card", style: "padding:40px" }, h("div", { class: "spinner", style: "margin:auto" }))));
 
-  let mails;
+  let mails, failures, accountsInfo;
   try {
-    mails = await api(`/api/email${state.mailUnread ? "?unread=true" : ""}`);
+    const qs = new URLSearchParams();
+    if (state.mailUnread) qs.set("unread", "true");
+    if (state.mailAccount) qs.set("account", state.mailAccount);
+    const [res, acc] = await Promise.all([api(`/api/email?${qs}`), api("/api/email-accounts")]);
+    mails = res.emails;
+    failures = res.failures ?? [];
+    accountsInfo = [...(acc.gmail ? [acc.gmail] : []), ...acc.accounts.map((a) => a.email)];
   } catch (err) {
     set(main, h("div", { class: "view" }, head, err.status === 409 ? notConfigured("E-Mail ist noch nicht verbunden.") : h("div", { class: "empty" }, err.message)));
     return;
@@ -849,14 +855,24 @@ async function viewEmail(main) {
       avatar(m.from.name ?? m.from.email),
       h("div", { class: "main" },
         h("div", { class: "top" }, h("div", { class: "from" }, m.from.name ?? m.from.email), h("div", { class: "date" }, fmt.rel(m.date))),
-        h("div", { class: "subj" }, m.subject), h("div", { class: "snip" }, m.snippet)));
+        h("div", { class: "subj" }, m.subject), h("div", { class: "snip" }, m.snippet),
+        m.account && accountsInfo.length > 1 ? h("div", { class: "acct" }, m.account) : null));
     listScroll.append(item);
     if (m.id === state.mailSelected) queueMicrotask(() => select(m, item));
   }
   if (!mails.length) listScroll.append(h("div", { class: "empty", style: "margin:12px" }, "Keine E-Mails."));
+  const multi = accountsInfo.length > 1;
+  const accountBar = multi
+    ? h("div", { class: "filters", style: "margin-bottom:12px" },
+        [["", "Alle Postfächer"], ...accountsInfo.map((a) => [a, a])].map(([v, l]) =>
+          h("button", { class: `chip ${(state.mailAccount ?? "") === v ? "active" : ""}`, onclick: () => { state.mailAccount = v || null; viewEmail(main); } }, l)))
+    : null;
+  const failBanner = failures.length
+    ? h("div", { class: "banner warn", style: "max-width:none" }, icon("alert"), h("div", {}, failures.map((f) => h("div", {}, `${f.account}: ${f.error}`))))
+    : null;
   reader.append(h("div", { class: "empty", style: "margin-top:20vh;border:0" }, icon("mail"), h("div", {}, "Wähle eine E-Mail aus.")));
   wrap.append(h("div", { class: "card mail-list" }, listScroll), reader);
-  set(main, h("div", { class: "view" }, head, wrap));
+  set(main, h("div", { class: "view" }, head, failBanner, accountBar, wrap));
 }
 
 // ─── View: Aufgaben ─────────────────────────────────────────────────────────
@@ -984,6 +1000,8 @@ async function viewSettings(main, params) {
         } }, "Trennen") : null);
     })),
 
+    h("div", { class: "section-title" }, icon("mail"), "E-Mail-Konten"),
+    mailAccountsCard(main),
     h("div", { class: "section-title" }, icon("shield"), "Berechtigungen"),
     h("div", { class: "levels" },
       [["0", "Lesen", "", "E-Mails, Kalender, Kontakte lesen und suchen. Immer erlaubt."],
@@ -1010,6 +1028,86 @@ async function viewSettings(main, params) {
       h("dt", {}, "Design"), h("dd", {}, h("div", { class: "filters" }, [["system", "System"], ["dark", "Dunkel"], ["light", "Hell"]].map(([k, l]) =>
         h("button", { class: `chip ${getTheme() === k ? "active" : ""}`, onclick: () => { applyTheme(k); viewSettings(main, new URLSearchParams()); } }, l)))))),
   ));
+}
+
+// ─── E-Mail-Konten (IMAP/SMTP) ─────────────────────────────────────────────
+function mailAccountsCard(main) {
+  const card = h("div", { class: "card" }, h("div", { class: "card-body", style: "padding:18px" }, h("div", { class: "spinner" })));
+  const reload = () => viewSettings(main, new URLSearchParams());
+  api("/api/email-accounts").then((data) => {
+    const all = [...(data.gmail ? [{ email: data.gmail, label: "Gmail (über Google verbunden)", gmail: true }] : []), ...data.accounts.map((a) => ({ ...a, label: `${a.name ? `${a.name} · ` : ""}IMAP ${a.imap.host}` }))];
+    const rows = all.map((a) =>
+      h("div", { class: "integration" },
+        avatar(a.email),
+        h("div", { class: "main" }, h("div", { class: "title" }, a.email), h("div", { class: "sub" }, a.label)),
+        data.defaultAccount === a.email || (all.length === 1)
+          ? h("span", { class: "badge accent" }, "Standard-Absender")
+          : h("button", { class: "btn ghost sm", onclick: async () => { await api("/api/email-accounts/default", { method: "PUT", body: { email: a.email } }).catch(fail); reload(); } }, "Als Standard"),
+        a.gmail ? null : h("button", { class: "btn ghost icon sm", "aria-label": "Entfernen", onclick: async () => {
+          if (!(await dialog({ title: `${a.email} entfernen?`, text: "JARVIS verliert den Zugriff auf dieses Postfach. Das gespeicherte Passwort wird gelöscht.", confirmLabel: "Entfernen", danger: true }))) return;
+          await api(`/api/email-accounts/${a.id}`, { method: "DELETE" }).catch(fail); reload();
+        } }, icon("trash"))));
+
+    // Add form
+    const presetSel = h("select", { class: "field", id: "ma-preset" }, data.presets.map((p) => h("option", { value: p.id }, p.label)));
+    const f = {
+      email: h("input", { class: "field", id: "ma-email", type: "email", placeholder: "levin@feidler.de", required: true, autocomplete: "off" }),
+      name: h("input", { class: "field", id: "ma-name", placeholder: "Anzeigename, z.B. Levin Feidler" }),
+      username: h("input", { class: "field", id: "ma-user", placeholder: "Benutzername (meist die E-Mail-Adresse)", autocomplete: "off" }),
+      password: h("input", { class: "field", id: "ma-pass", type: "password", placeholder: "Postfach-Passwort", required: true, autocomplete: "new-password" }),
+      imapHost: h("input", { class: "field", id: "ma-imap", placeholder: "IMAP-Server" }),
+      imapPort: h("input", { class: "field", id: "ma-imap-port", type: "number", min: 1, max: 65535 }),
+      smtpHost: h("input", { class: "field", id: "ma-smtp", placeholder: "SMTP-Server" }),
+      smtpPort: h("input", { class: "field", id: "ma-smtp-port", type: "number", min: 1, max: 65535 }),
+    };
+    const hint = h("div", { class: "muted small" });
+    const err = h("div", { class: "error-text" });
+    let preset;
+    const applyPreset = () => {
+      preset = data.presets.find((p) => p.id === presetSel.value);
+      f.imapHost.value = preset.imap.host; f.imapPort.value = preset.imap.port;
+      f.smtpHost.value = preset.smtp.host; f.smtpPort.value = preset.smtp.port;
+      f.imapHost.placeholder = f.smtpHost.placeholder = preset.id === "allinkl" ? "w0123456.kasserver.com" : "z.B. imap.anbieter.de";
+      hint.textContent = preset.hint;
+    };
+    presetSel.addEventListener("change", applyPreset);
+    f.email.addEventListener("input", () => { f.username.placeholder = f.email.value || "Benutzername (meist die E-Mail-Adresse)"; });
+    f.imapHost.addEventListener("input", () => { if (preset?.id === "allinkl") f.smtpHost.value = f.imapHost.value; });
+    applyPreset();
+    const submit = h("button", { class: "btn primary", type: "submit" }, "Verbindung testen & speichern");
+    const form = h("form", { class: "card-body", style: "display:grid;gap:10px;padding:18px", onsubmit: async (e) => {
+      e.preventDefault();
+      err.textContent = "";
+      submit.disabled = true;
+      submit.textContent = "Teste Verbindung …";
+      const port = (v, d) => Number(v) || d;
+      try {
+        await api("/api/email-accounts", { method: "POST", body: {
+          email: f.email.value.trim(), name: f.name.value.trim() || undefined, preset: preset.id,
+          username: f.username.value.trim() || f.email.value.trim(), password: f.password.value,
+          imap: { host: f.imapHost.value.trim(), port: port(f.imapPort.value, 993), secure: port(f.imapPort.value, 993) === 993 },
+          smtp: { host: f.smtpHost.value.trim(), port: port(f.smtpPort.value, 465), secure: port(f.smtpPort.value, 465) === 465 },
+        } });
+        toast(`${f.email.value} verbunden.`, "ok");
+        reload();
+      } catch (ex) {
+        err.textContent = ex.message;
+      } finally {
+        f.password.value = "";
+        submit.disabled = false;
+        submit.textContent = "Verbindung testen & speichern";
+      }
+    } },
+      h("div", { class: "title", style: "font-weight:600" }, "Postfach hinzufügen (1&1, All-Inkl, …)"),
+      h("label", { class: "small muted", for: "ma-preset" }, "Anbieter"), presetSel, hint,
+      h("div", { class: "grid2" }, f.email, f.name),
+      h("div", { class: "grid2" }, f.username, f.password),
+      h("div", { class: "grid2" }, h("div", { class: "hostport" }, f.imapHost, f.imapPort), h("div", { class: "hostport" }, f.smtpHost, f.smtpPort)),
+      h("div", { class: "muted small" }, "Das Passwort wird verschlüsselt gespeichert und nie wieder angezeigt. Vor dem Speichern prüft JARVIS die Anmeldung per IMAP und SMTP."),
+      err, h("div", {}, submit));
+    set(card, ...(rows.length ? rows : [h("div", { class: "card-body", style: "padding:18px" }, h("div", { class: "muted" }, "Noch kein Postfach verbunden."))]), h("details", { class: "fold", open: rows.length === 0 }, h("summary", { class: "integration", style: "cursor:pointer" }, icon("plus"), h("div", { class: "main title" }, "Postfach hinzufügen")), form));
+  }).catch((e) => set(card, h("div", { class: "card-body" }, h("div", { class: "empty" }, e.message))));
+  return card;
 }
 
 // ─── Notifications drawer ───────────────────────────────────────────────────

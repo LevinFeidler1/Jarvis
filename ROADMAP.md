@@ -30,6 +30,11 @@ Iterativ, jede Phase ist für sich lauffähig und getestet.
 - [x] Google Calendar: lesen, suchen, freie Slots, erstellen, ändern, löschen, einladen, antworten
 - [x] Google Contacts: suchen (inkl. weitere Kontakte), lesen, anlegen, ändern
 - [ ] **Live-Test mit echtem Google-Konto** (benötigt deine Credentials → docs/SETUP_GOOGLE.md)
+- [x] Mehrere Postfächer gleichzeitig: Gmail + IMAP/SMTP (1&1/IONOS, All-Inkl, …), Standard-Absender,
+      Antworten vom richtigen Postfach, ehrliche Meldung nicht erreichbarer Postfächer (docs/SETUP_MAIL.md);
+      gegen echten IMAP-Server (Dovecot) getestet
+- [ ] Live-Test mit den echten Postfächern levin@feidler.de (1&1) und levin.feidler@fa-automations.de (All-Inkl)
+- [ ] Kalender der IMAP-Anbieter (CalDAV) — aktuell nur Google Calendar
 - [ ] Microsoft Graph: Outlook, Kalender, Kontakte (`MicrosoftEmailProvider` etc. gegen dieselben Interfaces)
 - [ ] Google Drive / OneDrive (`FileProvider`, Tools `search_files`, `read_file`, …)
 - [ ] Reisezeit zwischen Terminen (Ort → Maps-API) in `find_free_slots`

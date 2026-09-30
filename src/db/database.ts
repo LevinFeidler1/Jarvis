@@ -151,6 +151,24 @@ const MIGRATIONS: string[] = [
     expires_at TEXT NOT NULL
   );
   `,
+  // 2 — additional mailboxes via IMAP/SMTP (1&1/IONOS, All-Inkl, …). Password AES-256-GCM encrypted.
+  `
+  CREATE TABLE email_accounts (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    name TEXT,
+    preset TEXT NOT NULL,
+    username TEXT NOT NULL,
+    encrypted_password TEXT NOT NULL,
+    imap_host TEXT NOT NULL,
+    imap_port INTEGER NOT NULL,
+    imap_secure BOOLEAN NOT NULL,
+    smtp_host TEXT NOT NULL,
+    smtp_port INTEGER NOT NULL,
+    smtp_secure BOOLEAN NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  `,
 ];
 
 async function migrate(db: Db): Promise<void> {

@@ -15,6 +15,9 @@ import { addDaysYmd, localDate, zonedToUtc } from "./core/time.js";
 import { RISK_LABELS, ToolError } from "./core/types.js";
 import type { Db } from "./db/database.js";
 import { MEMORY_CATEGORIES, type MemoryStore } from "./memory/memory.js";
+import { MAIL_PRESETS } from "./providers/imap/accounts.js";
+import { ImapEmailProvider } from "./providers/imap/imap.js";
+import { MultiAccountEmail } from "./providers/multi-email.js";
 import type { ProviderHub } from "./providers/hub.js";
 import { safeEqual } from "./security/crypto.js";
 import { SessionStore } from "./security/sessions.js";
@@ -159,11 +162,13 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get("/api/setup", async () => {
     const integrations = await providers.status();
     const google = integrations.find((i) => i.id === "google")!;
+    const imapCount = (await providers.emailAccounts.list()).length;
+    const mailDone = google.state === "connected" || imapCount > 0;
     const prefs = (await memory.list("preference")).length;
     const permsSaved = (await db.one("SELECT 1 AS x FROM settings WHERE key = 'permissions'")) !== undefined;
     const steps = [
       { id: "llm", title: "Sprachmodell (Claude API)", done: deps.llmConfigured, hint: deps.llmConfigured ? `Modell: ${config.model}` : "ANTHROPIC_API_KEY setzen und neu deployen." },
-      { id: "email", title: "E-Mail verbinden", done: google.state === "connected", hint: google.detail },
+      { id: "email", title: "E-Mail verbinden", done: mailDone, hint: mailDone ? `${imapCount + (google.state === "connected" ? 1 : 0)} Postfach/Postfächer verbunden` : "Gmail über Google, 1&1/All-Inkl über Einstellungen → E-Mail-Konten" },
       { id: "calendar", title: "Kalender verbinden", done: google.state === "connected", hint: google.detail },
       { id: "contacts", title: "Kontakte verbinden", done: google.state === "connected", hint: google.detail },
       { id: "permissions", title: "Berechtigungen prüfen", done: permsSaved, hint: "Einstellungen → Berechtigungen" },
@@ -313,12 +318,69 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
     return (await providers.calendar()).listEvents({ timeMin: q.from, timeMax: q.to });
   });
   app.get("/api/email", async (req) => {
-    const q = z.object({ unread: z.enum(["true", "false"]).optional(), q: z.string().max(200).optional() }).parse(req.query);
-    return (await providers.email()).listEmails({ inboxOnly: true, unreadOnly: q.unread === "true", text: q.q, maxResults: 30 });
+    const q = z
+      .object({ unread: z.enum(["true", "false"]).optional(), q: z.string().max(200).optional(), account: z.string().max(254).optional() })
+      .parse(req.query);
+    const provider = await providers.email();
+    const query = { inboxOnly: true, unreadOnly: q.unread === "true", text: q.q, maxResults: 40, account: q.account || undefined };
+    if (provider instanceof MultiAccountEmail) return provider.listAcrossAccounts(query);
+    return { emails: await provider.listEmails(query), failures: [] };
   });
   app.get("/api/email/:id", async (req) => {
     const { id } = z.object({ id: z.string().min(1).max(256) }).parse(req.params);
     return (await providers.email()).readEmail(id);
+  });
+
+  // ─── E-Mail-Konten (IMAP/SMTP) ────────────────────────────────────────
+  app.get("/api/email-accounts", async () => {
+    let gmail: string | null = null;
+    if (providers.googleAuth) {
+      const s = await providers.googleAuth.status();
+      if (s.connected) gmail = (s.account ?? "gmail").toLowerCase();
+    }
+    return {
+      presets: MAIL_PRESETS,
+      accounts: await providers.emailAccounts.list(),
+      gmail,
+      defaultAccount: await providers.emailAccounts.getDefault(),
+    };
+  });
+
+  const endpoint = z.object({ host: z.string().trim().min(3).max(253).regex(/^[A-Za-z0-9.-]+$/, "ungültiger Hostname"), port: z.number().int().min(1).max(65535), secure: z.boolean() });
+  app.post("/api/email-accounts", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
+    const body = z
+      .object({
+        email: z.email().max(254),
+        name: z.string().trim().max(100).optional(),
+        preset: z.string().max(40),
+        username: z.string().trim().min(1).max(254),
+        password: z.string().min(1).max(512),
+        imap: endpoint,
+        smtp: endpoint,
+      })
+      .parse(req.body);
+    const existing = await providers.emailAccounts.list();
+    if (existing.some((a) => a.email === body.email.toLowerCase())) return reply.code(409).send({ error: "Dieses Postfach ist bereits verbunden." });
+    // Verify IMAP login and SMTP before storing anything.
+    try {
+      await new ImapEmailProvider({ ...body, name: body.name ?? null, id: "test", createdAt: "" }).verify();
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : "Verbindung fehlgeschlagen" });
+    }
+    const acct = await providers.emailAccounts.add({ ...body, name: body.name || null });
+    if (!(await providers.emailAccounts.getDefault()) && existing.length === 0) await providers.emailAccounts.setDefault(acct.email);
+    return acct;
+  });
+
+  app.delete("/api/email-accounts/:id", async (req, reply) => {
+    const { id } = z.object({ id: z.uuid() }).parse(req.params);
+    return (await providers.emailAccounts.delete(id)) ? { ok: true } : reply.code(404).send({ error: "Nicht gefunden" });
+  });
+
+  app.put("/api/email-accounts/default", async (req) => {
+    const { email } = z.object({ email: z.email().nullable() }).parse(req.body);
+    await providers.emailAccounts.setDefault(email);
+    return { ok: true };
   });
 
   // ─── Integrations ─────────────────────────────────────────────────────

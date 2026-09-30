@@ -12,10 +12,17 @@ Jede Eingabe wird mit zod validiert. Ausgehender Text wird auf sensible
 Inhalte geprüft (→ Stufe 3). Nach verdächtigem Fremdinhalt werden alle
 externen Aktionen der Unterhaltung auf Stufe 3 angehoben.
 
-## E-Mail (`src/tools/email.ts`) — Provider: Gmail
+## E-Mail (`src/tools/email.ts`) — Provider: Gmail + beliebig viele IMAP/SMTP-Postfächer
+
+Alle Postfächer werden zu einer Sicht zusammengeführt (`src/providers/multi-email.ts`).
+E-Mail-IDs haben die Form `<postfach>|<id>`, damit jede Aktion im richtigen Postfach landet.
+Lese-Tools haben den Filter `account`, sendende Tools `from_account`. Antworten gehen immer vom
+Postfach der Original-Mail. Ist der Absender unklar, schlägt die Vorprüfung (`precheck`) fehl,
+**bevor** eine Bestätigung angefragt wird — JARVIS fragt nach. Einrichtung: [docs/SETUP_MAIL.md](docs/SETUP_MAIL.md).
 
 | Tool | Stufe | Beschreibung |
 |---|---|---|
+| `list_email_accounts` | 0 | Verbundene Postfächer + Standard-Absender |
 | `list_emails` | 0 | Posteingang mit Filtern (ungelesen, Absender, Zeitraum, Label) |
 | `search_emails` | 0 | Suche über alle Ordner |
 | `read_email` | 0 | Vollständige E-Mail inkl. Anhänge-Liste, Newsletter-Erkennung |
@@ -25,7 +32,7 @@ externen Aktionen der Unterhaltung auf Stufe 3 angehoben.
 | `forward_email` | 2 | Weiterleiten |
 | `archive_email` | 1 | Aus dem Posteingang entfernen |
 | `mark_as_read` / `mark_as_unread` | 1 | Gelesen-Status |
-| `label_email` | 1 | Labels setzen/entfernen (legt fehlende Labels an) |
+| `label_email` | 1 | Labels setzen/entfernen (Gmail) bzw. in Ordner verschieben (IMAP); fehlende werden angelegt |
 | `delete_email` | 2 | In den Papierkorb (keine endgültige Löschung möglich) |
 
 `summarize_email` ist kein eigenes Tool: Zusammenfassen und Kategorisieren
@@ -106,6 +113,12 @@ verpackt und auf Prompt Injection gescannt.
 | `contacts` | Kontakte lesen/anlegen/ändern | — |
 | `contacts.other.readonly` | Korrespondenzpartner finden („Sarah") | nur lesend |
 | `openid`, `email` | verbundenes Konto anzeigen | — |
+
+## IMAP/SMTP
+
+Keine OAuth-Scopes: Zugriff per Postfach-Passwort, verschlüsselt gespeichert (Tabelle
+`email_accounts`, AES-256-GCM, AAD `imap:<id>`). Server-Presets für 1&1/IONOS und All-Inkl in
+`src/providers/imap/accounts.ts`.
 
 ## Neues Tool hinzufügen
 

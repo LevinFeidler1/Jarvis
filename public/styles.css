@@ -468,3 +468,8 @@ details.fold > summary::-webkit-details-marker { display: none; }
 }
 .check svg { opacity: 0; transition: opacity .15s; }
 .check:hover svg, .check.done svg { opacity: 1; }
+
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.hostport { display: grid; grid-template-columns: 1fr 90px; gap: 6px; }
+.mail-item .acct { font-size: 11px; color: var(--accent); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
