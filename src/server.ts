@@ -3,7 +3,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
-import fastifyStatic from "@fastify/static";
 import { waitUntil } from "@vercel/functions";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -115,6 +114,9 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   if (deps.serveStatic !== false && existsSync(PUBLIC_DIR)) {
+    // Lazy import: on Vercel (serveStatic: false) the CDN serves files and
+    // @fastify/static (CJS requiring ESM-only content-disposition) must not load.
+    const { default: fastifyStatic } = await import("@fastify/static");
     await app.register(fastifyStatic, { root: PUBLIC_DIR, prefix: "/", index: ["index.html"] });
   }
 
