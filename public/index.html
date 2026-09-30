@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>JARVIS</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='12' fill='none' stroke='%2332d2f0' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%2332d2f0'/%3E%3C/svg%3E" />
+</head>
+<body>
+  <!-- Login -->
+  <section id="login" class="login hidden" aria-label="Anmeldung">
+    <form id="login-form" class="login-card">
+      <div class="logo"><span class="ring"></span>JARVIS</div>
+      <p class="muted">Persönlicher digitaler Butler</p>
+      <label for="token">Zugangstoken</label>
+      <input id="token" type="password" autocomplete="current-password" required />
+      <button type="submit" class="primary">Anmelden</button>
+      <p id="login-error" class="error" role="alert"></p>
+    </form>
+  </section>
+
+  <!-- App -->
+  <div id="app" class="app hidden">
+    <nav class="sidebar" aria-label="Hauptnavigation">
+      <div class="logo"><span class="ring"></span>JARVIS</div>
+      <button data-view="chat" class="nav active">Chat</button>
+      <button data-view="activity" class="nav">Aktivität <span id="badge-confirm" class="badge hidden"></span></button>
+      <button data-view="calendar" class="nav">Kalender</button>
+      <button data-view="email" class="nav">E-Mail</button>
+      <button data-view="tasks" class="nav">Aufgaben</button>
+      <button data-view="memory" class="nav">Gedächtnis</button>
+      <button data-view="settings" class="nav">Einstellungen</button>
+      <div class="sidebar-foot">
+        <button id="notif-btn" class="nav">Benachrichtigungen <span id="badge-notif" class="badge hidden"></span></button>
+        <button id="logout" class="nav subtle">Abmelden</button>
+      </div>
+    </nav>
+
+    <main>
+      <!-- Chat -->
+      <section id="view-chat" class="view chat-view">
+        <header class="view-head">
+          <h1>Chat</h1>
+          <div class="head-actions">
+            <select id="conv-select" aria-label="Unterhaltung"></select>
+            <button id="new-conv" class="ghost">Neue Unterhaltung</button>
+          </div>
+        </header>
+        <div id="setup-banner" class="setup hidden"></div>
+        <div id="security-banner" class="warn hidden" role="alert">
+          ⚠ In dieser Unterhaltung wurden Inhalte mit möglichen Manipulationsversuchen (Prompt Injection) gelesen. Externe Aktionen erfordern erhöhte Bestätigung.
+        </div>
+        <div id="messages" class="messages" aria-live="polite"></div>
+        <div id="pending" class="pending"></div>
+        <form id="chat-form" class="composer">
+          <textarea id="chat-input" rows="1" placeholder="Was kann ich für dich tun?" maxlength="8000"></textarea>
+          <button type="submit" class="primary" id="send-btn">Senden</button>
+        </form>
+        <div class="suggestions" id="suggestions">
+          <button class="chip">Guten Morgen, JARVIS.</button>
+          <button class="chip">Was muss ich heute beantworten?</button>
+          <button class="chip">Was steht diese Woche an?</button>
+          <button class="chip">Was habe ich noch offen?</button>
+        </div>
+      </section>
+
+      <!-- Activity -->
+      <section id="view-activity" class="view hidden">
+        <header class="view-head"><h1>Aktivität</h1><button class="ghost" data-refresh="activity">Aktualisieren</button></header>
+        <h2>Wartet auf Bestätigung</h2>
+        <div id="activity-pending" class="list"></div>
+        <h2>Verlauf</h2>
+        <div id="activity-list" class="list"></div>
+        <h2>Audit-Log</h2>
+        <div id="audit-list" class="list mono"></div>
+      </section>
+
+      <!-- Calendar -->
+      <section id="view-calendar" class="view hidden">
+        <header class="view-head">
+          <h1>Kalender</h1>
+          <div class="head-actions">
+            <button class="ghost" id="cal-prev">‹</button>
+            <span id="cal-range"></span>
+            <button class="ghost" id="cal-next">›</button>
+          </div>
+        </header>
+        <div id="calendar-body" class="week"></div>
+      </section>
+
+      <!-- Email -->
+      <section id="view-email" class="view hidden">
+        <header class="view-head">
+          <h1>E-Mail</h1>
+          <div class="head-actions">
+            <label class="check"><input type="checkbox" id="email-unread" /> nur ungelesen</label>
+            <button class="ghost" data-refresh="email">Aktualisieren</button>
+          </div>
+        </header>
+        <div id="email-list" class="list"></div>
+      </section>
+
+      <!-- Tasks -->
+      <section id="view-tasks" class="view hidden">
+        <header class="view-head"><h1>Aufgaben</h1></header>
+        <form id="task-form" class="inline-form">
+          <input id="task-title" placeholder="Neue Aufgabe" required maxlength="300" />
+          <input id="task-due" type="date" aria-label="Fällig am" />
+          <select id="task-prio" aria-label="Priorität"><option value="normal">normal</option><option value="high">hoch</option><option value="low">niedrig</option></select>
+          <button class="primary" type="submit">Hinzufügen</button>
+        </form>
+        <div id="task-list" class="list"></div>
+        <h2>Erinnerungen</h2>
+        <div id="reminder-list" class="list"></div>
+      </section>
+
+      <!-- Memory -->
+      <section id="view-memory" class="view hidden">
+        <header class="view-head"><h1>Gedächtnis</h1></header>
+        <p class="muted">Alles, was JARVIS sich merkt — sichtbar, änderbar, löschbar. „abgeleitet“ = von JARVIS vermutet, nicht von dir bestätigt.</p>
+        <form id="memory-form" class="inline-form">
+          <select id="mem-cat" aria-label="Kategorie">
+            <option value="preference">Präferenz</option><option value="person">Person</option><option value="project">Projekt</option><option value="rule">Regel</option><option value="fact">Fakt</option>
+          </select>
+          <input id="mem-key" placeholder="Schlüssel (z.B. Meetingdauer)" required maxlength="200" />
+          <input id="mem-value" placeholder="Wert (z.B. 30 Minuten)" required maxlength="2000" />
+          <button class="primary" type="submit">Speichern</button>
+        </form>
+        <div id="memory-list" class="list"></div>
+      </section>
+
+      <!-- Settings -->
+      <section id="view-settings" class="view hidden">
+        <header class="view-head"><h1>Einstellungen</h1></header>
+        <div id="settings-flash" class="flash hidden"></div>
+        <h2>Einrichtung</h2>
+        <div id="setup-steps" class="list"></div>
+        <h2>Integrationen</h2>
+        <div id="integrations" class="list"></div>
+        <h2>Berechtigungen</h2>
+        <p class="muted">Stufe 0 (Lesen) ist immer erlaubt. Stufe 2 (externe Kommunikation) und 3 (kritisch) erfordern immer deine Bestätigung. Hier steuerst du Stufe 1.</p>
+        <div id="perm-categories" class="list"></div>
+        <h3>Tools</h3>
+        <div id="perm-tools" class="list"></div>
+        <h2>System</h2>
+        <div id="system-info" class="list"></div>
+      </section>
+    </main>
+
+    <aside id="notif-panel" class="notif-panel hidden" aria-label="Benachrichtigungen">
+      <header class="view-head"><h2>Benachrichtigungen</h2><button class="ghost" id="notif-close">×</button></header>
+      <div id="notif-list" class="list"></div>
+    </aside>
+  </div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

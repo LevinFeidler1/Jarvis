@@ -1,0 +1,407 @@
+import type Anthropic from "@anthropic-ai/sdk";
+import type { AppConfig } from "../config.js";
+import type { Db } from "../db/database.js";
+import type { MemoryStore } from "../memory/memory.js";
+import type { ProviderHub } from "../providers/hub.js";
+import type { ToolRegistry } from "../tools/registry.js";
+import { ActivityLog } from "./activity.js";
+import { AuditLog, type AuditStatus } from "./audit.js";
+import { ConfirmationStore, type PendingAction } from "./confirmations.js";
+import { ConversationStore } from "./conversation.js";
+import { scanForInjection, wrapExternal } from "./injection.js";
+import { type LlmClient, type LlmMessage, LlmUnavailableError } from "./llm.js";
+import { decidePermission, loadPermissionSettings } from "./permissions.js";
+import { buildSystem, buildTurnContext } from "./prompt.js";
+import { type ActionStatus, RiskLevel, type ToolContext, type ToolDefinition, ToolError, type ToolResult } from "./types.js";
+
+const MAX_TOOL_RESULT_CHARS = 40_000;
+
+export interface PendingActionView {
+  id: string;
+  toolName: string;
+  description: string;
+  risk: RiskLevel;
+  reasons: string[];
+  expiresAt: string;
+}
+
+export interface ActionReport {
+  activityId: string;
+  toolName: string;
+  description: string;
+  status: ActionStatus;
+  error?: string;
+}
+
+export interface AgentReply {
+  conversationId: string;
+  text: string;
+  actions: ActionReport[];
+  pendingActions: PendingActionView[];
+  /** Suspicious external content was detected in this conversation. */
+  securityWarning: boolean;
+}
+
+export interface AgentDeps {
+  config: AppConfig;
+  db: Db;
+  llm: LlmClient;
+  registry: ToolRegistry;
+  providers: ProviderHub;
+  memory: MemoryStore;
+  now?: () => Date;
+}
+
+interface RunState {
+  conversationId: string;
+  tainted: boolean;
+  actions: ActionReport[];
+}
+
+const APPROVE_RE = /^\s*(ja|jap|jo|yes|ok(ay)?|klar|bestätig\w*|genehmig\w*|send(e|en)?|abschicken|buch(e|en)?|mach( das| es)?|passt|einverstanden|go|do it)\b[\s!.]*$/i;
+const REJECT_RE = /^\s*(nein|nö|no|nope|abbrechen|abbruch|stopp?|nicht senden|lass (es|das)|verwerfen|cancel)\b[\s!.]*$/i;
+
+/**
+ * Agent Core — the loop from ARCHITECTURE.md §3:
+ * UNDERSTAND → CONTEXT → PLAN → PERMISSION → EXECUTE → VERIFY → STATE → RESPOND.
+ */
+export class Agent {
+  readonly conversations: ConversationStore;
+  readonly confirmations: ConfirmationStore;
+  readonly activity: ActivityLog;
+  readonly audit: AuditLog;
+  private readonly now: () => Date;
+
+  constructor(private readonly deps: AgentDeps) {
+    this.conversations = new ConversationStore(deps.db);
+    this.confirmations = new ConfirmationStore(deps.db, deps.config.confirmationTtlMinutes);
+    this.activity = new ActivityLog(deps.db);
+    this.audit = new AuditLog(deps.db);
+    this.now = deps.now ?? (() => new Date());
+  }
+
+  // ─── Public entry points ────────────────────────────────────────────────
+
+  async handleUserMessage(conversationId: string | undefined, text: string): Promise<AgentReply> {
+    const conv = (conversationId && this.conversations.get(conversationId)) || this.conversations.create();
+    this.expireStale(conv.id);
+
+    // A short "ja"/"nein" answers the open confirmation directly (server-side),
+    // but only if exactly one action is waiting — otherwise it is ambiguous.
+    const pending = this.confirmations.listPending(conv.id);
+    if (pending.length > 0 && (APPROVE_RE.test(text) || REJECT_RE.test(text))) {
+      if (pending.length === 1) return this.resolveConfirmation(pending[0]!.id, APPROVE_RE.test(text), text);
+      const reply = `Es warten ${pending.length} Aktionen auf deine Bestätigung. Bitte bestätige oder verwirf sie einzeln in der Übersicht, damit nichts Falsches passiert.`;
+      this.conversations.append(conv.id, { role: "user", content: [{ type: "text", text }] }, text);
+      this.conversations.append(conv.id, { role: "assistant", content: [{ type: "text", text: reply }] }, reply);
+      return this.reply(conv.id, reply, []);
+    }
+
+    const userMessage: LlmMessage = {
+      role: "user",
+      content: [
+        { type: "text", text: buildTurnContext(this.deps.config, this.now()) },
+        { type: "text", text },
+      ],
+    };
+    this.conversations.append(conv.id, userMessage, text);
+    return this.run({ conversationId: conv.id, tainted: conv.tainted, actions: [] });
+  }
+
+  /**
+   * Executes (or rejects) a stored action exactly as it was prepared. The model
+   * never gets a chance to alter the parameters after the user approved them.
+   */
+  async resolveConfirmation(actionId: string, approve: boolean, userText?: string): Promise<AgentReply> {
+    const action = this.confirmations.get(actionId);
+    if (!action) throw new Error("Unbekannte Aktion");
+    const conv = this.conversations.get(action.conversationId);
+    if (!conv) throw new Error("Unbekannte Unterhaltung");
+    const state: RunState = { conversationId: conv.id, tainted: conv.tainted, actions: [] };
+    const tool = this.deps.registry.get(action.toolName);
+
+    if (action.status !== "pending") {
+      return this.reply(conv.id, "Diese Aktion wurde bereits bearbeitet.", []);
+    }
+    if (this.confirmations.isExpired(action, this.now())) {
+      this.confirmations.resolve(action.id, "expired");
+      this.activity.update(action.activityId, "expired");
+      this.audit.record({ action: action.toolName, risk: action.risk, status: "EXPIRED", userConfirmation: false });
+      const text = "Die Bestätigung ist abgelaufen. Die Aktion wurde nicht ausgeführt. Sag Bescheid, wenn ich sie neu vorbereiten soll.";
+      this.appendSystemNote(conv.id, userText, `Aktion "${action.description}" ist abgelaufen und wurde nicht ausgeführt.`, text);
+      return this.reply(conv.id, text, []);
+    }
+    if (!this.confirmations.resolve(action.id, approve ? "approved" : "rejected")) {
+      return this.reply(conv.id, "Diese Aktion wurde bereits bearbeitet.", []);
+    }
+
+    let note: string;
+    if (!approve || !tool) {
+      this.activity.update(action.activityId, "rejected");
+      this.audit.record({
+        action: action.toolName,
+        target: tool?.auditTarget?.(action.input),
+        risk: action.risk,
+        status: "REJECTED",
+        userConfirmation: false,
+      });
+      state.actions.push({ activityId: action.activityId, toolName: action.toolName, description: action.description, status: "rejected" });
+      note = `Der Benutzer hat die Aktion ABGELEHNT; sie wurde nicht ausgeführt: ${action.description}`;
+    } else {
+      const outcome = await this.executeTool(tool, action.input, state, action.activityId, true, action.risk);
+      note =
+        `Der Benutzer hat die Aktion BESTÄTIGT: ${action.description}\n` +
+        `Ausführungsergebnis (vom Server, verifiziert): ${outcome.content}`;
+    }
+
+    // Record the decision as a user turn, then let the agent continue the
+    // workflow (e.g. next step after the event was created).
+    this.conversations.append(
+      conv.id,
+      {
+        role: "user",
+        content: [
+          { type: "text", text: buildTurnContext(this.deps.config, this.now()) },
+          { type: "text", text: `${userText ? `${userText}\n` : ""}[Bestätigungssystem] ${note}` },
+        ],
+      },
+      userText ?? (approve ? "✓ Bestätigt" : "✗ Abgelehnt"),
+    );
+    return this.run(state);
+  }
+
+  // ─── Agent loop ─────────────────────────────────────────────────────────
+
+  private async run(state: RunState): Promise<AgentReply> {
+    const { config, llm, registry, memory } = this.deps;
+    const tools = registry.toAnthropicTools();
+    const system = buildSystem(memory);
+
+    for (let step = 0; step < config.maxAgentSteps; step++) {
+      let response;
+      try {
+        response = await llm.create({ system, messages: this.conversations.history(state.conversationId), tools });
+      } catch (err) {
+        const msg =
+          err instanceof LlmUnavailableError ? err.message : "Bei der Verarbeitung ist ein unerwarteter Fehler aufgetreten.";
+        if (!(err instanceof LlmUnavailableError)) console.error("[agent] LLM error", err);
+        const suffix = state.actions.some((a) => a.status === "succeeded")
+          ? " Bereits ausgeführte Schritte siehe Aktivität."
+          : " Es wurde nichts ausgeführt.";
+        return this.reply(state.conversationId, `${msg}${suffix}`, state.actions);
+      }
+
+      if (response.stop_reason === "refusal") {
+        return this.reply(state.conversationId, "Dabei kann ich nicht helfen.", state.actions);
+      }
+
+      this.conversations.append(state.conversationId, { role: "assistant", content: response.content }, extractText(response.content) || null);
+      this.recordServerTools(response.content, state);
+
+      if (response.stop_reason === "pause_turn") continue;
+      if (response.stop_reason === "max_tokens") {
+        return this.reply(state.conversationId, `${extractText(response.content)}\n\n(Antwort wurde wegen Längenbegrenzung gekürzt.)`, state.actions);
+      }
+
+      const toolUses = response.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use");
+      if (toolUses.length === 0 || response.stop_reason !== "tool_use") {
+        return this.reply(state.conversationId, extractText(response.content), state.actions);
+      }
+
+      // Independent tool calls run concurrently; all results go back in ONE user message.
+      const results = await Promise.all(toolUses.map((tu) => this.handleToolUse(tu, state)));
+      this.conversations.append(state.conversationId, { role: "user", content: results }, null);
+    }
+
+    const text = `Ich habe die Bearbeitung nach ${config.maxAgentSteps} Schritten gestoppt, um keine Endlosschleife zu riskieren. Bisherige Ergebnisse siehe Aktivität.`;
+    return this.reply(state.conversationId, text, state.actions);
+  }
+
+  private async handleToolUse(tu: Anthropic.Beta.BetaToolUseBlock, state: RunState): Promise<Anthropic.Beta.BetaToolResultBlockParam> {
+    const result = (content: string, isError = false): Anthropic.Beta.BetaToolResultBlockParam => ({
+      type: "tool_result",
+      tool_use_id: tu.id,
+      content,
+      is_error: isError,
+    });
+
+    // 1. Only registered tools.
+    const tool = this.deps.registry.get(tu.name);
+    if (!tool) return result(JSON.stringify({ ok: false, error: `Unbekanntes Tool: ${tu.name}` }), true);
+
+    // 2. Validate untrusted model input.
+    const parsed = tool.input.safeParse(tu.input);
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
+      return result(JSON.stringify({ ok: false, code: "INVALID_INPUT", error: `Ungültige Eingabe: ${issues}` }), true);
+    }
+    const input = parsed.data;
+    const description = safeDescribe(tool, input);
+
+    // 3. Permission check.
+    const decision = decidePermission(tool, input, {
+      tainted: state.tainted,
+      settings: loadPermissionSettings(this.deps.db),
+    });
+
+    if (decision.decision === "deny") {
+      const act = this.activity.create({ conversationId: state.conversationId, toolName: tool.name, description, risk: decision.risk, status: "denied" });
+      this.audit.record({ action: tool.name, target: tool.auditTarget?.(input), risk: decision.risk, status: "DENIED", userConfirmation: false });
+      state.actions.push({ activityId: act.id, toolName: tool.name, description, status: "denied" });
+      return result(JSON.stringify({ ok: false, status: "denied", reasons: decision.reasons }), true);
+    }
+
+    if (decision.decision === "confirm") {
+      const act = this.activity.create({
+        conversationId: state.conversationId,
+        toolName: tool.name,
+        description,
+        risk: decision.risk,
+        status: "awaiting_confirmation",
+      });
+      const pending = this.confirmations.create(
+        { conversationId: state.conversationId, activityId: act.id, toolName: tool.name, input, description, risk: decision.risk, reasons: decision.reasons },
+        this.now(),
+      );
+      state.actions.push({ activityId: act.id, toolName: tool.name, description, status: "awaiting_confirmation" });
+      return result(
+        JSON.stringify({
+          ok: false,
+          status: "awaiting_confirmation",
+          action_id: pending.id,
+          executed: false,
+          prepared_action: description,
+          risk_level: decision.risk,
+          reasons: decision.reasons,
+          instruction:
+            "Nicht ausgeführt. Nicht erneut aufrufen. Frage den Benutzer präzise, ob genau diese Aktion ausgeführt werden soll. Der Benutzer bestätigt über das Bestätigungssystem.",
+        }),
+      );
+    }
+
+    // 4. Execute + verify.
+    const act = this.activity.create({ conversationId: state.conversationId, toolName: tool.name, description, risk: decision.risk, status: "planned" });
+    const outcome = await this.executeTool(tool, input, state, act.id, false, decision.risk);
+    return result(outcome.content, outcome.isError);
+  }
+
+  private async executeTool(
+    tool: ToolDefinition,
+    input: unknown,
+    state: RunState,
+    activityId: string,
+    confirmed: boolean,
+    risk: RiskLevel,
+  ): Promise<{ content: string; isError: boolean }> {
+    const description = safeDescribe(tool, input);
+    this.activity.update(activityId, "executing");
+    const ctx: ToolContext = {
+      config: this.deps.config,
+      db: this.deps.db,
+      providers: this.deps.providers,
+      memory: this.deps.memory,
+      conversationId: state.conversationId,
+      now: this.now,
+    };
+
+    let res: ToolResult;
+    try {
+      res = await tool.execute(input, ctx);
+    } catch (err) {
+      const code = err instanceof ToolError ? err.code : "INTERNAL";
+      const message = err instanceof Error ? err.message : String(err);
+      if (!(err instanceof ToolError)) console.error(`[agent] tool ${tool.name} failed`, err);
+      res = { ok: false, error: message, code };
+    }
+
+    const status: ActionStatus = !res.ok ? "failed" : res.partial ? "partially_succeeded" : "succeeded";
+    this.activity.update(activityId, status, res.ok ? undefined : res.error);
+    state.actions.push({ activityId, toolName: tool.name, description, status, error: res.ok ? undefined : res.error });
+    if (risk >= RiskLevel.LOW || confirmed) {
+      const auditStatus: AuditStatus = !res.ok ? "FAILED" : res.partial ? "PARTIAL" : "SUCCESS";
+      this.audit.record({
+        action: tool.name,
+        target: tool.auditTarget?.(input),
+        risk,
+        status: auditStatus,
+        userConfirmation: confirmed,
+        details: res.ok ? undefined : { code: res.code, error: res.error },
+      });
+    }
+
+    if (!res.ok) {
+      return { content: JSON.stringify({ ok: false, status: "failed", code: res.code, error: res.error }), isError: true };
+    }
+
+    let payload = JSON.stringify({ ok: true, status, data: res.data });
+    if (payload.length > MAX_TOOL_RESULT_CHARS) payload = `${payload.slice(0, MAX_TOOL_RESULT_CHARS)}… [gekürzt]`;
+    if (res.externalData) {
+      const scan = scanForInjection(...res.externalData.texts);
+      if (scan.suspicious && !state.tainted) {
+        state.tainted = true;
+        this.conversations.markTainted(state.conversationId);
+      }
+      payload = wrapExternal(res.externalData.source, payload, scan);
+    }
+    return { content: payload, isError: false };
+  }
+
+  /** Server-side tools (web search) run at Anthropic; log them for transparency. */
+  private recordServerTools(content: Anthropic.Beta.BetaContentBlock[], state: RunState): void {
+    for (const block of content) {
+      if (block.type !== "server_tool_use") continue;
+      const query = (block.input as { query?: string })?.query;
+      const description = query ? `Websuche: "${query}"` : `Server-Tool ${block.name}`;
+      const act = this.activity.create({ conversationId: state.conversationId, toolName: block.name, description, risk: RiskLevel.READ, status: "succeeded" });
+      state.actions.push({ activityId: act.id, toolName: block.name, description, status: "succeeded" });
+    }
+  }
+
+  private appendSystemNote(conversationId: string, userText: string | undefined, note: string, replyText: string): void {
+    this.conversations.append(
+      conversationId,
+      { role: "user", content: [{ type: "text", text: `${userText ? `${userText}\n` : ""}[Bestätigungssystem] ${note}` }] },
+      userText ?? null,
+    );
+    this.conversations.append(conversationId, { role: "assistant", content: [{ type: "text", text: replyText }] }, replyText);
+  }
+
+  private expireStale(conversationId: string): void {
+    for (const p of this.confirmations.listPending(conversationId)) {
+      if (this.confirmations.isExpired(p, this.now()) && this.confirmations.resolve(p.id, "expired")) {
+        this.activity.update(p.activityId, "expired");
+        this.audit.record({ action: p.toolName, risk: p.risk, status: "EXPIRED", userConfirmation: false });
+      }
+    }
+  }
+
+  private reply(conversationId: string, text: string, actions: ActionReport[]): AgentReply {
+    return {
+      conversationId,
+      text: text.trim() || "Erledigt.",
+      actions,
+      pendingActions: this.confirmations.listPending(conversationId).map(toView),
+      securityWarning: this.conversations.get(conversationId)?.tainted ?? false,
+    };
+  }
+}
+
+export function toView(p: PendingAction): PendingActionView {
+  return { id: p.id, toolName: p.toolName, description: p.description, risk: p.risk, reasons: p.reasons, expiresAt: p.expiresAt };
+}
+
+function extractText(content: Anthropic.Beta.BetaContentBlock[]): string {
+  return content
+    .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join("\n")
+    .trim();
+}
+
+function safeDescribe(tool: ToolDefinition, input: unknown): string {
+  try {
+    return tool.describe(input);
+  } catch {
+    return tool.name;
+  }
+}
