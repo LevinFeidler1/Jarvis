@@ -51,14 +51,19 @@ erledigt das Modell selbst auf Basis von `read_email`/`list_emails`.
 | `delete_event` | 2 | Termin löschen |
 | `respond_to_invitation` | 2 | Zusagen/Absagen/Vielleicht |
 
-## Kontakte (`src/tools/personal.ts`) — Provider: Google People API
+## Kontakte (`src/tools/personal.ts`) — Provider: JARVIS-Kontakte (+ Google People API, wenn verbunden)
+
+JARVIS-Kontakte liegen in der eigenen Datenbank (Seite *Kontakte*: anlegen, bearbeiten,
+löschen, vCard-Import/-Export) und funktionieren ohne Google. Ist Google verbunden,
+durchsucht `search_contact` beide Quellen; fällt Google aus, gibt es die lokalen
+Treffer plus eine ehrliche Warnung.
 
 | Tool | Stufe | Beschreibung |
 |---|---|---|
-| `search_contact` | 0 | Kontakte + „weitere Kontakte" (Korrespondenzpartner) + Gedächtnisnotizen |
-| `get_contact` | 0 | Einzelner Kontakt |
-| `create_contact` | 1 | Kontakt anlegen |
-| `update_contact` | 1 | Kontakt ändern |
+| `search_contact` | 0 | JARVIS-Kontakte + Google-Kontakte + „weitere Kontakte" (Korrespondenzpartner) + Gedächtnisnotizen |
+| `get_contact` | 0 | Einzelner Kontakt (`jarvis:…` oder `people/…`) |
+| `create_contact` | 1 | Kontakt anlegen — standardmäßig in JARVIS, `save_to: "google"` nur auf Wunsch |
+| `update_contact` | 1 | Kontakt ändern (Name, E-Mails, Telefon, Firma, Rolle, Notizen) |
 
 ## Aufgaben & Erinnerungen — Provider: lokal (SQLite)
 

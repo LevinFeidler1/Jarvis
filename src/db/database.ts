@@ -169,6 +169,21 @@ const MIGRATIONS: string[] = [
     created_at TEXT NOT NULL
   );
   `,
+  // 3 — contacts maintained in JARVIS itself (works without Google Contacts).
+  `
+  CREATE TABLE contacts (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    emails TEXT NOT NULL DEFAULT '[]',
+    phones TEXT NOT NULL DEFAULT '[]',
+    organization TEXT,
+    role TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX contacts_name_idx ON contacts (lower(name));
+  `,
 ];
 
 async function migrate(db: Db): Promise<void> {

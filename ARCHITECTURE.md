@@ -125,7 +125,7 @@ stillen Fake-Provider.
 |---|---|---|
 | E-Mail | Gmail (REST, OAuth 2.0) | Outlook (Microsoft Graph) |
 | Kalender | Google Calendar | Microsoft Calendar |
-| Kontakte | Google People API | Microsoft Contacts |
+| Kontakte | JARVIS-Kontakte (DB, vCard-Import) + Google People API | Microsoft Contacts, CardDAV |
 | Aufgaben | Lokal (SQLite) | Google Tasks, Microsoft To Do |
 | Erinnerungen | Lokal + In-App-Benachrichtigung | Push / E-Mail / Voice |
 

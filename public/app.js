@@ -67,6 +67,10 @@ const ICONS = {
   bell2: '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>',
   new: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   dot: '<circle cx="12" cy="12" r="3"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/>',
+  upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
+  phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/>',
   mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/>',
   volume: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/>',
   mute: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="m22 9-6 6M16 9l6 6"/>',
@@ -297,6 +301,7 @@ const NAV = [
   ["calendar", "Kalender", "calendar"],
   ["email", "E-Mail", "mail"],
   ["tasks", "Aufgaben", "tasks"],
+  ["contacts", "Kontakte", "users"],
   ["memory", "Gedächtnis", "memory"],
   ["settings", "Einstellungen", "settings"],
 ];
@@ -1125,6 +1130,128 @@ async function viewTasks(main) {
       : h("div", { class: "card-body", style: "padding:18px" }, h("div", { class: "empty" }, "Keine Erinnerungen. Beispiel: „Erinnere mich morgen um 9 an den Zahnarzt.“")))));
 }
 
+// ─── View: Kontakte ─────────────────────────────────────────────────────────
+const splitList = (v) => v.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
+
+function contactEditor(c) {
+  return new Promise((resolve) => {
+    const f = {
+      name: h("input", { class: "field", id: "ct-name", maxlength: 200, required: true, placeholder: "Vor- und Nachname", value: c?.name ?? "" }),
+      emails: h("input", { class: "field", id: "ct-emails", placeholder: "anna@example.com, …", value: (c?.emails ?? []).join(", ") }),
+      phones: h("input", { class: "field", id: "ct-phones", type: "tel", placeholder: "+49 170 …", value: (c?.phones ?? []).join(", ") }),
+      organization: h("input", { class: "field", id: "ct-org", maxlength: 200, placeholder: "Firma", value: c?.organization ?? "" }),
+      role: h("input", { class: "field", id: "ct-role", maxlength: 200, placeholder: "Rolle, z.B. Geschäftsführerin", value: c?.role ?? "" }),
+      notes: h("textarea", { class: "field", id: "ct-notes", rows: 3, maxlength: 2000, style: "height:auto;padding:10px 12px", placeholder: "Notizen (z.B. „duzen“, „bevorzugt WhatsApp“)" }, c?.notes ?? ""),
+    };
+    const err = h("div", { class: "error-text" });
+    const close = (v) => { wrap.remove(); resolve(v); };
+    const label = (text, forId) => h("label", { class: "small muted", for: forId }, text);
+    const form = h("form", { class: "modal contact-modal", role: "dialog", "aria-modal": "true", onsubmit: async (e) => {
+      e.preventDefault();
+      err.textContent = "";
+      const body = {
+        name: f.name.value.trim(), emails: splitList(f.emails.value), phones: splitList(f.phones.value),
+        organization: f.organization.value.trim(), role: f.role.value.trim(), notes: f.notes.value.trim(),
+      };
+      const bad = body.emails.find((m) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(m));
+      if (bad) { err.textContent = `Ungültige E-Mail-Adresse: ${bad}`; return; }
+      try {
+        const saved = c ? await api(`/api/contacts/${encodeURIComponent(c.id)}`, { method: "PATCH", body }) : await api("/api/contacts", { method: "POST", body });
+        close(saved);
+      } catch (ex) { err.textContent = ex.message; }
+    } },
+      h("h3", {}, c ? "Kontakt bearbeiten" : "Neuer Kontakt"),
+      label("Name", "ct-name"), f.name,
+      label("E-Mail-Adressen (mehrere mit Komma)", "ct-emails"), f.emails,
+      label("Telefonnummern", "ct-phones"), f.phones,
+      h("div", { class: "grid2" }, f.organization, f.role),
+      label("Notizen", "ct-notes"), f.notes,
+      err,
+      h("div", { class: "foot" },
+        h("button", { class: "btn ghost", type: "button", onclick: () => close(null) }, "Abbrechen"),
+        h("button", { class: "btn primary", type: "submit" }, "Speichern")));
+    const wrap = h("div", { class: "modal-wrap", onclick: (e) => e.target === wrap && close(null) }, form);
+    wrap.addEventListener("keydown", (e) => e.key === "Escape" && close(null));
+    document.body.append(wrap);
+    f.name.focus();
+  });
+}
+
+async function viewContacts(main) {
+  const data = await api("/api/contacts");
+  const contacts = data.contacts;
+  const reload = () => viewContacts(main);
+
+  const row = (c) => h("div", { class: "integration contact-row" },
+    avatar(c.name),
+    h("div", { class: "main" },
+      h("div", { class: "title" }, c.name, c.source !== "jarvis" ? h("span", { class: "badge", style: "margin-left:8px" }, c.source === "other" ? "aus E-Mails" : "Google") : null),
+      h("div", { class: "sub" }, [c.role, c.organization].filter(Boolean).join(" · ") || null),
+      h("div", { class: "sub contact-links" },
+        c.emails.map((m) => h("a", { href: `mailto:${m}` }, icon("mail"), m)),
+        c.phones.map((p) => h("a", { href: `tel:${p.replace(/[^\d+]/g, "")}` }, icon("phone"), p))),
+      c.notes ? h("div", { class: "sub" }, c.notes) : null),
+    c.source === "jarvis" ? h("div", { class: "actions" },
+      h("button", { class: "btn ghost icon sm", "aria-label": `${c.name} bearbeiten`, onclick: async () => { if (await contactEditor(c)) { toast("Gespeichert.", "ok"); reload(); } } }, icon("edit")),
+      h("button", { class: "btn ghost icon sm", "aria-label": `${c.name} löschen`, onclick: async () => {
+        if (!(await dialog({ title: `${c.name} löschen?`, text: "Der Kontakt wird aus JARVIS entfernt.", confirmLabel: "Löschen", danger: true }))) return;
+        await api(`/api/contacts/${encodeURIComponent(c.id)}`, { method: "DELETE" }).catch(fail); reload();
+      } }, icon("trash"))) : null);
+
+  const listBox = h("div", {});
+  const googleBox = h("div", {});
+  const renderList = (q) => {
+    const needle = q.trim().toLowerCase();
+    const hits = needle ? contacts.filter((c) => [c.name, c.organization, c.role, ...c.emails, ...c.phones].filter(Boolean).join(" ").toLowerCase().includes(needle)) : contacts;
+    set(listBox, hits.length
+      ? h("div", { class: "card" }, hits.map(row))
+      : h("div", { class: "empty" }, contacts.length ? "Keine Treffer in deinen JARVIS-Kontakten." : "Noch keine Kontakte. Lege oben einen an, importiere eine .vcf-Datei oder sag JARVIS: „Speichere Anna Schmidt, anna@example.com“."));
+  };
+  let timer;
+  const search = h("input", { class: "field", type: "search", placeholder: data.google ? "Suchen (auch in Google Kontakte) …" : "Kontakte durchsuchen …", "aria-label": "Kontakte durchsuchen",
+    oninput: () => {
+      renderList(search.value);
+      clearTimeout(timer);
+      set(googleBox);
+      if (!data.google || search.value.trim().length < 2) return;
+      timer = setTimeout(async () => {
+        try {
+          const r = await api(`/api/contacts?q=${encodeURIComponent(search.value.trim())}`);
+          const remote = r.contacts.filter((c) => c.source !== "jarvis");
+          set(googleBox,
+            r.warning ? h("div", { class: "muted small" }, r.warning) : null,
+            remote.length ? [h("div", { class: "section-title" }, "Aus Google Kontakte", h("span", { class: "badge" }, remote.length)), h("div", { class: "card" }, remote.map(row))] : null);
+        } catch (e) { set(googleBox, h("div", { class: "muted small" }, e.message)); }
+      }, 300);
+    } });
+
+  const file = h("input", { type: "file", accept: ".vcf,text/vcard,text/x-vcard", hidden: true, onchange: async () => {
+    const f = file.files?.[0];
+    if (!f) return;
+    if (f.size > 4 * 1024 * 1024) { toast("Datei zu groß (max. 4 MB).", "err"); return; }
+    try {
+      const r = await api("/api/contacts/import", { method: "POST", body: { vcf: await f.text() } });
+      toast(`${r.imported} Kontakte importiert${r.skipped ? `, ${r.skipped} übersprungen (schon vorhanden)` : ""}.`, "ok");
+      reload();
+    } catch (e) { fail(e); } finally { file.value = ""; }
+  } });
+
+  set(main, h("div", { class: "view" },
+    viewHead("Kontakte",
+      `${contacts.length} in JARVIS${data.google ? " · Google Kontakte verbunden" : ""}`,
+      h("button", { class: "btn", onclick: () => file.click() }, icon("upload"), h("span", {}, "Importieren")),
+      contacts.length ? h("a", { class: "btn", href: "/api/contacts/export", download: "jarvis-kontakte.vcf" }, icon("download"), h("span", {}, "Exportieren")) : null,
+      h("button", { class: "btn primary", onclick: async () => { if (await contactEditor(null)) { toast("Kontakt gespeichert.", "ok"); reload(); } } }, icon("plus"), h("span", {}, "Neuer Kontakt")),
+      file),
+    h("div", { class: "card", style: "padding:12px" }, search),
+    listBox,
+    googleBox,
+    h("div", { class: "muted small", style: "margin-top:4px" },
+      "Import: vCard-Datei (.vcf) vom iPhone (iCloud.com → Kontakte → Exportieren), Android, Outlook oder 1&1. ",
+      data.google ? "Google-Kontakte werden bei der Suche automatisch mit durchsucht." : "Google Kontakte ist optional — JARVIS nutzt diese Kontakte auch ohne Google.")));
+  renderList("");
+}
+
 // ─── View: Gedächtnis ───────────────────────────────────────────────────────
 const CATS = { preference: ["Präferenzen", "settings"], person: ["Personen", "chat"], project: ["Projekte", "tasks"], rule: ["Regeln", "shield"], fact: ["Fakten", "memory"] };
 async function viewMemory(main) {
@@ -1362,7 +1489,7 @@ async function openNotifications() {
 }
 
 // ─── Boot ───────────────────────────────────────────────────────────────────
-const VIEWS = { today: viewToday, chat: viewChat, activity: viewActivity, calendar: viewCalendar, email: viewEmail, tasks: viewTasks, memory: viewMemory, settings: viewSettings };
+const VIEWS = { today: viewToday, chat: viewChat, activity: viewActivity, calendar: viewCalendar, email: viewEmail, tasks: viewTasks, contacts: viewContacts, memory: viewMemory, settings: viewSettings };
 
 let routerBound = false;
 async function boot() {

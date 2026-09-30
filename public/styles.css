@@ -482,3 +482,17 @@ details.fold > summary::-webkit-details-marker { display: none; }
 .btn.active-chip { color: var(--accent); background: var(--accent-soft); }
 @media (max-width: 860px) { .chat-top .head-actions .btn span { display: none; } }
 @media (prefers-reduced-motion: reduce) { .composer .mic.on, .orb.xl, .orb.busy { animation: none; } }
+
+/* Kontakte */
+.contact-row { align-items: flex-start; }
+.contact-row .sub { margin-top: 2px; overflow-wrap: anywhere; }
+.contact-links { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.contact-links a { display: inline-flex; align-items: center; gap: 5px; color: var(--text-2); text-decoration: none; }
+.contact-links a:hover { color: var(--accent); }
+.contact-links .i { width: 13px; height: 13px; }
+.contact-row .actions { display: flex; gap: 2px; flex-shrink: 0; }
+.contact-modal { width: min(520px, 100%); gap: 8px; max-height: calc(100dvh - 40px); overflow-y: auto; }
+.contact-modal h3 { margin-bottom: 6px; }
+.contact-modal .foot { margin-top: 6px; }
+@media (max-width: 600px) { .head-actions .btn span { display: none; } }
+a.btn { text-decoration: none; }

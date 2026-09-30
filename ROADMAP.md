@@ -34,6 +34,8 @@ Iterativ, jede Phase ist für sich lauffähig und getestet.
       Antworten vom richtigen Postfach, ehrliche Meldung nicht erreichbarer Postfächer (docs/SETUP_MAIL.md);
       gegen echten IMAP-Server (Dovecot) getestet
 - [ ] Live-Test mit den echten Postfächern levin@feidler.de (1&1) und levin.feidler@fa-automations.de (All-Inkl)
+- [x] Eigene Kontakte in JARVIS (ohne Google): Seite *Kontakte*, vCard-Import/-Export (iPhone, Android, Outlook, 1&1),
+      gemeinsame Suche mit Google Kontakte, ehrliche Meldung bei Google-Ausfall
 - [ ] Kalender der IMAP-Anbieter (CalDAV) — aktuell nur Google Calendar
 - [ ] Microsoft Graph: Outlook, Kalender, Kontakte (`MicrosoftEmailProvider` etc. gegen dieselben Interfaces)
 - [ ] Google Drive / OneDrive (`FileProvider`, Tools `search_files`, `read_file`, …)

@@ -151,19 +151,26 @@ export interface Contact {
   phones: string[];
   organization?: string;
   role?: string;
-  /** "contacts" = saved contact, "other" = auto-collected from past emails. */
-  source: "contacts" | "other";
+  notes?: string;
+  /** "jarvis" = maintained in JARVIS, "contacts" = Google contact, "other" = auto-collected from past emails. */
+  source: "jarvis" | "contacts" | "other";
+}
+
+export interface ContactInput {
+  name: string;
+  emails?: string[];
+  phones?: string[];
+  organization?: string;
+  role?: string;
+  notes?: string;
 }
 
 export interface ContactProvider {
   readonly name: string;
   searchContacts(query: string, max?: number): Promise<Contact[]>;
   getContact(id: string): Promise<Contact>;
-  createContact(input: { name: string; emails?: string[]; phones?: string[]; organization?: string }): Promise<Contact>;
-  updateContact(
-    id: string,
-    patch: { name?: string; emails?: string[]; phones?: string[]; organization?: string },
-  ): Promise<Contact>;
+  createContact(input: ContactInput): Promise<Contact>;
+  updateContact(id: string, patch: Partial<ContactInput>): Promise<Contact>;
 }
 
 // ─── Tasks & notifications ────────────────────────────────────────────────

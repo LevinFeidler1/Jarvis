@@ -15,6 +15,8 @@ import { addDaysYmd, localDate, zonedToUtc } from "./core/time.js";
 import { RISK_LABELS, ToolError } from "./core/types.js";
 import type { Db } from "./db/database.js";
 import { MEMORY_CATEGORIES, type MemoryStore } from "./memory/memory.js";
+import { CombinedContacts } from "./providers/combined-contacts.js";
+import { parseVCards, toVCards } from "./providers/local/vcard.js";
 import { MAIL_PRESETS } from "./providers/imap/accounts.js";
 import { ImapEmailProvider } from "./providers/imap/imap.js";
 import { MultiAccountEmail } from "./providers/multi-email.js";
@@ -100,7 +102,7 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
       return reply.code(400).send({ error: "Ungültige Eingabe", issues: err.issues.map((i) => `${i.path.join(".")}: ${i.message}`) });
     }
     if (err instanceof ToolError) {
-      const code = err.code === "NOT_CONFIGURED" ? 409 : err.code === "NOT_FOUND" ? 404 : 502;
+      const code = err.code === "NOT_CONFIGURED" ? 409 : err.code === "NOT_FOUND" ? 404 : err.code === "INVALID_INPUT" ? 400 : 502;
       return reply.code(code).send({ error: err.message, code: err.code });
     }
     if (err.statusCode && err.statusCode < 500) return reply.code(err.statusCode).send({ error: err.message });
@@ -288,6 +290,44 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
     await providers.tasks.delete(idParam.parse(req.params).id);
     return { ok: true };
   });
+  // ─── Contacts (JARVIS-own; Google only searched) ──────────────────────
+  const contactInput = z.object({
+    name: z.string().trim().min(1).max(200),
+    emails: z.array(z.email().max(320)).max(10).optional(),
+    phones: z.array(z.string().trim().min(1).max(40)).max(10).optional(),
+    organization: z.string().trim().max(200).optional(),
+    role: z.string().trim().max(200).optional(),
+    notes: z.string().max(2000).optional(),
+  });
+  const contactId = z.object({ id: z.string().regex(/^jarvis:[0-9a-f-]{36}$/) });
+  app.get("/api/contacts", async (req) => {
+    const { q } = z.object({ q: z.string().trim().max(200).optional() }).parse(req.query);
+    const combined = await providers.contacts();
+    const google = combined instanceof CombinedContacts && combined.hasGoogle;
+    if (!q) return { contacts: await providers.localContacts.list(), google };
+    const contacts = await combined.searchContacts(q, 50);
+    return { contacts, google, warning: combined instanceof CombinedContacts ? combined.lastFailure : undefined };
+  });
+  app.post("/api/contacts", async (req) => providers.localContacts.createContact(contactInput.parse(req.body)));
+  app.patch("/api/contacts/:id", async (req) =>
+    providers.localContacts.updateContact(contactId.parse(req.params).id, contactInput.partial().parse(req.body)),
+  );
+  app.delete("/api/contacts/:id", async (req, reply) =>
+    (await providers.localContacts.deleteContact(contactId.parse(req.params).id)) ? { ok: true } : reply.code(404).send({ error: "Nicht gefunden" }),
+  );
+  app.post("/api/contacts/import", { bodyLimit: 4 * 1024 * 1024 }, async (req, reply) => {
+    const { vcf } = z.object({ vcf: z.string().min(1).max(4 * 1024 * 1024) }).parse(req.body);
+    const parsed = parseVCards(vcf);
+    if (parsed.length === 0) return reply.code(400).send({ error: "Keine Kontakte in der Datei gefunden (erwartet: vCard/.vcf)." });
+    return providers.localContacts.importContacts(parsed);
+  });
+  app.get("/api/contacts/export", async (_req, reply) =>
+    reply
+      .header("content-type", "text/vcard; charset=utf-8")
+      .header("content-disposition", 'attachment; filename="jarvis-kontakte.vcf"')
+      .send(toVCards(await providers.localContacts.list())),
+  );
+
   app.get("/api/reminders", async () => providers.reminders.list("all"));
   app.delete("/api/reminders/:id", async (req) => ({ ok: await providers.reminders.cancel(idParam.parse(req.params).id) }));
 
