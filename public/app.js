@@ -67,6 +67,8 @@ const ICONS = {
   bell2: '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>',
   new: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   dot: '<circle cx="12" cy="12" r="3"/>',
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  pin: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/>',
   users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/>',
   upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>',
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
@@ -305,7 +307,8 @@ const NAV = [
   ["memory", "Gedächtnis", "memory"],
   ["settings", "Einstellungen", "settings"],
 ];
-const MOBILE_NAV = ["today", "chat", "calendar", "tasks", "settings"];
+const MOBILE_NAV = ["today", "chat", "calendar", "email"];
+const isMobile = () => matchMedia("(max-width: 860px)").matches;
 
 function renderShell() {
   const navBtn = (id, label, ic) =>
@@ -323,8 +326,9 @@ function renderShell() {
   const mobile = h("nav", { class: "mobile-bar", "aria-label": "Navigation" },
     MOBILE_NAV.map((id) => {
       const [, label, ic] = NAV.find((n) => n[0] === id);
-      return h("button", { "data-view": id, onclick: () => go(id) }, icon(ic), label, id === "today" ? h("span", { class: "count hidden", "data-count": "pending" }) : null);
-    }));
+      return h("button", { "data-view": id, onclick: () => go(id) }, icon(ic), h("span", {}, label), id === "today" ? h("span", { class: "count hidden", "data-count": "pending" }) : null);
+    }),
+    h("button", { id: "more-btn", onclick: openMoreSheet, "aria-haspopup": "dialog" }, icon("grid"), h("span", {}, "Mehr"), h("span", { class: "count hidden", "data-count": "notif" })));
   set($("#root"), h("div", { class: "shell" }, sidebar, h("main", { id: "main" }), mobile));
 }
 
@@ -361,6 +365,27 @@ async function logout() {
   renderLogin();
 }
 
+/** Mobile: everything that does not fit into the bottom bar. */
+function openMoreSheet() {
+  const close = () => wrap.remove();
+  const item = (ic, label, onclick, extra = null, active = false) =>
+    h("button", { class: `sheet-item ${active ? "active" : ""}`, onclick: () => { close(); onclick(); } }, h("span", { class: "sheet-ic" }, icon(ic)), h("span", {}, label), extra);
+  const views = NAV.filter(([id]) => !MOBILE_NAV.includes(id));
+  const themeLabel = { system: "System", dark: "Dunkel", light: "Hell" }[getTheme()];
+  const wrap = h("div", { class: "modal-wrap sheet-wrap", onclick: (e) => e.target === wrap && close() },
+    h("div", { class: "sheet", role: "dialog", "aria-modal": "true", "aria-label": "Mehr" },
+      h("div", { class: "sheet-grip" }),
+      h("div", { class: "sheet-grid" }, views.map(([id, label, ic]) =>
+        item(ic, label, () => go(id), id === "activity" && state.counts.pending ? h("span", { class: "count" }, state.counts.pending) : null, state.view === id))),
+      h("div", { class: "sheet-list" },
+        item("bell", "Benachrichtigungen", openNotifications, state.counts.notif ? h("span", { class: "count" }, state.counts.notif) : null),
+        item(getTheme() === "light" ? "sun" : "moon", `Design: ${themeLabel}`, cycleTheme),
+        item("logout", "Abmelden", logout))));
+  wrap.addEventListener("keydown", (e) => e.key === "Escape" && close());
+  document.body.append(wrap);
+  wrap.querySelector("button")?.focus();
+}
+
 function go(view, params = "") {
   location.hash = `${view}${params}`;
 }
@@ -371,6 +396,7 @@ async function route() {
   const [view, query = ""] = location.hash.replace(/^#/, "").split("?");
   state.view = VIEWS[view] ? view : "today";
   document.querySelectorAll("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === state.view));
+  $("#more-btn")?.classList.toggle("active", !MOBILE_NAV.includes(state.view));
   const main = $("#main");
   if (!main) return;
   main.scrollTop = 0;
@@ -530,7 +556,7 @@ function voiceUi() {
   }
   $(".composer")?.classList.toggle("listening", voice.listening);
   const input = $("#chat-input");
-  if (input) input.placeholder = voice.listening ? "Ich höre zu …" : "Frag JARVIS oder gib einen Auftrag …";
+  if (input) input.placeholder = voice.listening ? "Ich höre zu …" : isMobile() ? "Nachricht an JARVIS …" : "Frag JARVIS oder gib einen Auftrag …";
   $(".chat-top .orb")?.classList.toggle("busy", voice.speaking);
   const spk = $("#speak-btn");
   if (spk) {
@@ -677,7 +703,7 @@ function startChat(text, { send = true, newConversation = true } = {}) {
 async function viewChat(main) {
   const thread = h("div", { class: "thread", id: "thread" });
   const scroll = h("div", { class: "chat-scroll", id: "chat-scroll" }, thread);
-  const input = h("textarea", { id: "chat-input", rows: 1, placeholder: "Frag JARVIS oder gib einen Auftrag …", maxlength: 8000, "aria-label": "Nachricht" });
+  const input = h("textarea", { id: "chat-input", rows: 1, placeholder: isMobile() ? "Nachricht an JARVIS …" : "Frag JARVIS oder gib einen Auftrag …", enterkeyhint: "send", maxlength: 8000, "aria-label": "Nachricht" });
   const sendBtn = h("button", { class: "btn primary icon", type: "submit", title: "Senden", "aria-label": "Senden" }, icon("send"));
   const micBtn = voice.canListen
     ? h("button", { class: "btn ghost icon mic", id: "mic-btn", type: "button", title: "Sprechen", "aria-label": "Sprechen", "aria-pressed": "false",
@@ -697,8 +723,8 @@ async function viewChat(main) {
       voice.canListen ? h("button", { class: "btn ghost sm", id: "conv-btn", title: "Gesprächsmodus: nach jeder Antwort automatisch weiter zuhören. Beenden mit „Stopp“.",
         onclick: () => { voice.prefs.conversation = !voice.prefs.conversation; voice.save(); voiceUi(); if (voice.prefs.conversation && !voice.listening) startVoiceInput(); else if (!voice.prefs.conversation) voice.stopListening(); } },
         icon("headset"), h("span", {}, "Gespräch")) : null,
-      h("button", { class: "btn ghost sm", onclick: openHistory }, icon("history"), h("span", {}, "Verlauf")),
-      h("button", { class: "btn sm", onclick: () => { state.conversationId = null; route(); } }, icon("plus"), h("span", {}, "Neu"))));
+      h("button", { class: "btn ghost sm", onclick: openHistory, "aria-label": "Verlauf" }, icon("history"), h("span", {}, "Verlauf")),
+      h("button", { class: "btn sm", "aria-label": "Neue Unterhaltung", onclick: () => { state.conversationId = null; route(); } }, icon("plus"), h("span", {}, "Neu"))));
 
   const secBanner = h("div", { class: "banner warn hidden", id: "sec-banner" }, icon("shield"),
     h("div", {}, h("b", {}, "Sicherheitshinweis: "), "In dieser Unterhaltung wurde ein möglicher Manipulationsversuch (Prompt Injection) erkannt. Externe Aktionen erfordern erhöhte Bestätigung."));
@@ -969,6 +995,7 @@ async function viewCalendar(main) {
   }
 
   const days = [...Array(7)].map((_, i) => { const d = new Date(start); d.setDate(d.getDate() + i); return d; });
+  if (isMobile()) return renderAgenda(main, head, days, events);
   const headRow = h("div", { class: "cal-head" }, h("div"), days.map((d) =>
     h("div", { class: isToday(d) ? "today" : "" }, d.toLocaleDateString("de-DE", { weekday: "short" }), h("b", {}, d.getDate()))));
   const allday = h("div", { class: "cal-allday" }, h("div", {}, "ganzt."), days.map((d) =>
@@ -1008,11 +1035,53 @@ async function viewCalendar(main) {
   body.scrollTop = 7 * HOUR_PX;
 }
 
+/** Phones: a readable day-by-day list instead of the 7-column grid. */
+function renderAgenda(main, head, days, events) {
+  const todayYmd = ymd(new Date());
+  const past = days.filter((d) => ymd(d) < todayYmd);
+  let showPast = false;
+  const list = h("div", { class: "agenda" });
+  const dayEvents = (d) => {
+    const dayStart = new Date(d).getTime();
+    const dayEnd = dayStart + 86400000;
+    return events
+      .filter((e) => (e.allDay ? e.start.slice(0, 10) <= ymd(d) && e.end.slice(0, 10) > ymd(d) : new Date(e.start).getTime() < dayEnd && new Date(e.end).getTime() > dayStart))
+      .sort((a, b) => (b.allDay - a.allDay) || (new Date(a.start) - new Date(b.start)));
+  };
+  const render = () => {
+    const shown = showPast ? days : days.filter((d) => ymd(d) >= todayYmd);
+    set(list,
+      past.length && !showPast && shown.length < days.length
+        ? h("button", { class: "btn ghost sm agenda-past", onclick: () => { showPast = true; render(); } }, icon("history"), `${past.length} ${past.length === 1 ? "früheren Tag" : "frühere Tage"} anzeigen`)
+        : null,
+      shown.map((d) => {
+        const evs = dayEvents(d);
+        const today = ymd(d) === todayYmd;
+        return h("section", { class: `agenda-day ${today ? "today" : ""} ${ymd(d) < todayYmd ? "past" : ""}` },
+          h("div", { class: "agenda-date" },
+            h("div", { class: "num" }, d.getDate()),
+            h("div", {}, h("div", { class: "wd" }, d.toLocaleDateString("de-DE", { weekday: "long" })), h("div", { class: "mo" }, d.toLocaleDateString("de-DE", { month: "long" }))),
+            today ? h("span", { class: "badge accent" }, "Heute") : null),
+          evs.length
+            ? h("div", { class: "card agenda-list" }, evs.map((e) =>
+                h("div", { class: `agenda-ev ${e.busy ? "" : "free"}` },
+                  h("div", { class: "t" }, e.allDay ? h("b", {}, "ganztägig") : [h("b", {}, fmt.time(e.start)), h("span", {}, fmt.time(e.end))]),
+                  h("div", { class: "main" }, h("div", { class: "title" }, e.title),
+                    e.location ? h("div", { class: "sub" }, icon("pin"), e.location) : null,
+                    e.attendees?.length ? h("div", { class: "sub" }, icon("users"), `${e.attendees.length} Teilnehmer`) : null))))
+            : h("div", { class: "agenda-free" }, "Keine Termine"));
+      }));
+  };
+  render();
+  set(main, h("div", { class: "view" }, head, list,
+    h("div", { class: "muted small", style: "margin-top:14px" }, `${events.length} Termine diese Woche · Zeitzone ${state.status?.timezone ?? TZ}`)));
+}
+
 // ─── View: E-Mail ───────────────────────────────────────────────────────────
 async function viewEmail(main) {
   const head = viewHead("E-Mail", "Posteingang",
     h("button", { class: `chip ${state.mailUnread ? "active" : ""}`, onclick: () => { state.mailUnread = !state.mailUnread; viewEmail(main); } }, "Nur ungelesen"),
-    h("button", { class: "btn", onclick: () => startChat("Sortiere mein Postfach: Was ist wichtig, was braucht eine Antwort, was ist Newsletter/Werbung? Schlag Aktionen vor.") }, icon("bolt"), "Mit JARVIS sortieren"),
+    h("button", { class: "btn", onclick: () => startChat("Sortiere mein Postfach: Was ist wichtig, was braucht eine Antwort, was ist Newsletter/Werbung? Schlag Aktionen vor."), "aria-label": "Mit JARVIS sortieren" }, icon("bolt"), h("span", {}, "Mit JARVIS sortieren")),
     h("button", { class: "btn ghost icon", onclick: () => viewEmail(main), "aria-label": "Aktualisieren" }, icon("refresh")));
   set(main, h("div", { class: "view" }, head, h("div", { class: "card", style: "padding:40px" }, h("div", { class: "spinner", style: "margin:auto" }))));
 
