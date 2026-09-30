@@ -13,7 +13,15 @@ Iterativ, jede Phase ist für sich lauffähig und getestet.
 - [x] Strukturiertes Gedächtnis (Präferenzen, Personen, Projekte, Regeln, Fakten; user vs. inferred)
 - [x] Web-UI: Chat, Aktivität, Kalender, E-Mail, Aufgaben, Gedächtnis, Einstellungen, Setup-Assistent
 - [x] Security: Session-Auth, CSRF, Origin-Check, Rate-Limit, CSP, AES-256-GCM-Tokens
-- [x] 86 automatisierte Tests inkl. Injection-, Failure- und Bestätigungsszenarien
+- [x] Automatisierte Tests inkl. Injection-, Failure- und Bestätigungsszenarien (aktuell 91)
+
+## Phase 1b — Hosting & UI ✅
+
+- [x] Datenbank auf PostgreSQL umgestellt: Neon (Vercel), PGlite (lokal/Tests); migrationssicher bei parallelen Kaltstarts
+- [x] Vercel-Deployment: Serverless Function, CDN für die UI, Cron-Endpunkt, Region Frankfurt (docs/DEPLOY_VERCEL.md)
+- [x] UI-Redesign: Heute-Dashboard, Chat mit Live-Arbeitsschritten (NDJSON-Streaming) und Markdown,
+      Wochenkalender mit Zeitachse, E-Mail mit Lesebereich, Aufgaben nach Fälligkeit, Gedächtnis-Karten,
+      Einstellungen mit Schaltern, Hell/Dunkel, Mobil-Navigation, installierbar als Web-App (PWA-Manifest)
 
 ## Phase 2 — Integrationen (größtenteils ✅)
 
@@ -55,11 +63,12 @@ Iterativ, jede Phase ist für sich lauffähig und getestet.
 - [ ] Proaktive Hinweise aus neuen E-Mails (Terminvorschlag erkannt → „Du bist frei. Soll ich zusagen?")
 - [ ] Memory: automatische Vorschläge („Soll ich mir merken, dass …?"), Verfallsdaten, Quellenlinks
 - [ ] Lange Unterhaltungen: Server-Compaction der Claude API
-- [ ] Optional PostgreSQL + Mehrgeräte-/Mehrbenutzerbetrieb
+- [ ] Mehrbenutzerbetrieb (Mandantentrennung)
 
 ## Bekannte Einschränkungen des aktuellen Stands
 
 - Die Google-Integration ist gegen die offiziellen REST-APIs implementiert und mit
   simulierten HTTP-Antworten getestet, aber noch nicht gegen ein echtes Konto gelaufen.
-- Der Chat antwortet nicht gestreamt (Antwort erscheint vollständig).
+- Arbeitsschritte werden live gestreamt, der Antworttext selbst erscheint am Stück.
+- Auf Vercel Hobby läuft der Cron nur täglich; minutengenaue Erinnerungen über externen Cron (siehe DEPLOY_VERCEL.md).
 - Unterhaltungen werden ungekürzt an das Modell gesendet — für neue Themen „Neue Unterhaltung" nutzen.

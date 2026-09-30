@@ -23,7 +23,7 @@ export class Scheduler {
   }
 
   async tick(now = new Date()): Promise<number> {
-    const due = this.providers.reminders.takeDue(now);
+    const due = await this.providers.reminders.takeDue(now);
     for (const r of due) await this.providers.notifications.notify("Erinnerung", r.text);
     return due.length;
   }

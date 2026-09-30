@@ -17,8 +17,8 @@ export const contactTools: ToolDefinition[] = [
     input: z.object({ query: z.string().min(1).max(200), max_results: z.number().int().min(1).max(20).optional() }),
     describe: (i) => `Kontakt suchen: "${i.query}"`,
     async execute(input, ctx) {
-      const contacts = await ctx.providers.contacts().searchContacts(input.query, input.max_results ?? 10);
-      const people = ctx.memory.search(input.query).filter((m) => m.category === "person");
+      const contacts = await (await ctx.providers.contacts()).searchContacts(input.query, input.max_results ?? 10);
+      const people = (await ctx.memory.search(input.query)).filter((m) => m.category === "person");
       return external(
         "contacts",
         { count: contacts.length, contacts, memoryNotes: people.map((p) => ({ key: p.key, value: p.value, source: p.source })) },
@@ -34,7 +34,7 @@ export const contactTools: ToolDefinition[] = [
     input: z.object({ contact_id: id }),
     describe: () => "Kontakt lesen",
     async execute(input, ctx) {
-      const c = await ctx.providers.contacts().getContact(input.contact_id);
+      const c = await (await ctx.providers.contacts()).getContact(input.contact_id);
       return external("contacts", c, [c.name]);
     },
   }),
@@ -51,7 +51,7 @@ export const contactTools: ToolDefinition[] = [
     }),
     describe: (i) => `Kontakt anlegen: ${i.name}`,
     async execute(input, ctx) {
-      return ok(await ctx.providers.contacts().createContact(input));
+      return ok(await (await ctx.providers.contacts()).createContact(input));
     },
   }),
   defineTool({
@@ -68,7 +68,7 @@ export const contactTools: ToolDefinition[] = [
     }),
     describe: (i) => `Kontakt aktualisieren (${i.contact_id})`,
     async execute({ contact_id, ...patch }, ctx) {
-      return ok(await ctx.providers.contacts().updateContact(contact_id, patch));
+      return ok(await (await ctx.providers.contacts()).updateContact(contact_id, patch));
     },
   }),
 ];
@@ -166,7 +166,7 @@ export const reminderTools: ToolDefinition[] = [
     describe: (i) => `Erinnerung "${i.text}" am ${i.remind_at}`,
     async execute(input, ctx) {
       if (new Date(input.remind_at).getTime() <= ctx.now().getTime()) return fail("Der Zeitpunkt liegt in der Vergangenheit.", "INVALID_INPUT");
-      const r = ctx.providers.reminders.create(input.text, new Date(input.remind_at).toISOString());
+      const r = await ctx.providers.reminders.create(input.text, new Date(input.remind_at).toISOString());
       return ok({ ...r, remindAtLocal: formatHuman(new Date(r.remindAt), ctx.config.timezone, ctx.config.language) });
     },
   }),
@@ -178,7 +178,7 @@ export const reminderTools: ToolDefinition[] = [
     input: z.object({ status: z.enum(["scheduled", "fired", "cancelled", "all"]).optional() }),
     describe: () => "Erinnerungen auflisten",
     async execute(input, ctx) {
-      const list = ctx.providers.reminders.list(input.status ?? "scheduled");
+      const list = await ctx.providers.reminders.list(input.status ?? "scheduled");
       return ok({ count: list.length, reminders: list.map((r) => ({ ...r, remindAtLocal: toLocalIso(new Date(r.remindAt), ctx.config.timezone) })) });
     },
   }),
@@ -190,7 +190,7 @@ export const reminderTools: ToolDefinition[] = [
     input: z.object({ reminder_id: id }),
     describe: (i) => `Erinnerung stornieren (${i.reminder_id})`,
     async execute(input, ctx) {
-      return ctx.providers.reminders.cancel(input.reminder_id)
+      return (await ctx.providers.reminders.cancel(input.reminder_id))
         ? ok({ cancelled: true })
         : fail("Erinnerung nicht gefunden oder nicht mehr geplant.", "NOT_FOUND");
     },
@@ -227,7 +227,7 @@ export const memoryTools: ToolDefinition[] = [
     }),
     describe: (i) => `Merken (${i.category}): ${i.key} = ${i.value}`,
     async execute(input, ctx) {
-      return ok(ctx.memory.upsert(input));
+      return ok(await ctx.memory.upsert(input));
     },
   }),
   defineTool({
@@ -238,7 +238,7 @@ export const memoryTools: ToolDefinition[] = [
     input: z.object({ query: z.string().max(200).optional(), category: z.enum(MEMORY_CATEGORIES).optional() }),
     describe: () => "Gedächtnis durchsuchen",
     async execute(input, ctx) {
-      const entries = input.query ? ctx.memory.search(input.query) : ctx.memory.list(input.category);
+      const entries = input.query ? await ctx.memory.search(input.query) : await ctx.memory.list(input.category);
       return ok({ entries: input.category ? entries.filter((e) => e.category === input.category) : entries });
     },
   }),
@@ -250,7 +250,7 @@ export const memoryTools: ToolDefinition[] = [
     input: z.object({ memory_id: id }),
     describe: (i) => `Gedächtniseintrag löschen (${i.memory_id})`,
     async execute(input, ctx) {
-      return ctx.memory.delete(input.memory_id) ? ok({ deleted: true }) : fail("Eintrag nicht gefunden.", "NOT_FOUND");
+      return (await ctx.memory.delete(input.memory_id)) ? ok({ deleted: true }) : fail("Eintrag nicht gefunden.", "NOT_FOUND");
     },
   }),
 ];
@@ -266,7 +266,7 @@ export const systemTools: ToolDefinition[] = [
     input: z.object({}),
     describe: () => "Integrationsstatus prüfen",
     async execute(_input, ctx) {
-      return ok(ctx.providers.status());
+      return ok(await ctx.providers.status());
     },
   }),
 ];

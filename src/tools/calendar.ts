@@ -28,7 +28,7 @@ const hm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Format HH:MM");
 
 /** Conflicts with existing busy events in [start, end). */
 async function conflicts(ctx: Parameters<ToolDefinition["execute"]>[1], start: string, end: string, ignoreId?: string) {
-  const events = await ctx.providers.calendar().listEvents({ timeMin: start, timeMax: end });
+  const events = await (await ctx.providers.calendar()).listEvents({ timeMin: start, timeMax: end });
   return events
     .filter((e) => e.busy && !e.allDay && e.id !== ignoreId)
     .filter((e) => new Date(e.start) < new Date(end) && new Date(e.end) > new Date(start))
@@ -56,7 +56,7 @@ export const calendarTools: ToolDefinition[] = [
     input: range,
     describe: () => "Kalender lesen",
     async execute(input, ctx) {
-      const events = await ctx.providers.calendar().listEvents({ timeMin: input.time_min, timeMax: input.time_max });
+      const events = await (await ctx.providers.calendar()).listEvents({ timeMin: input.time_min, timeMax: input.time_max });
       return external(
         "calendar",
         { count: events.length, events: events.map(view) },
@@ -72,7 +72,7 @@ export const calendarTools: ToolDefinition[] = [
     input: range.extend({ query: z.string().min(1).max(200) }),
     describe: (i) => `Termine suchen: "${i.query}"`,
     async execute(input, ctx) {
-      const events = await ctx.providers.calendar().listEvents({ timeMin: input.time_min, timeMax: input.time_max, text: input.query });
+      const events = await (await ctx.providers.calendar()).listEvents({ timeMin: input.time_min, timeMax: input.time_max, text: input.query });
       return external("calendar", { count: events.length, events: events.map(view) }, events.map((e) => e.title));
     },
   }),
@@ -93,7 +93,7 @@ export const calendarTools: ToolDefinition[] = [
     }),
     describe: (i) => `Freie Zeitfenster (${i.duration_minutes} min) suchen`,
     async execute(input, ctx) {
-      const events = await ctx.providers.calendar().listEvents({ timeMin: input.time_min, timeMax: input.time_max });
+      const events = await (await ctx.providers.calendar()).listEvents({ timeMin: input.time_min, timeMax: input.time_max });
       const busy = events
         .filter((e) => e.busy && !e.allDay && e.status !== "cancelled")
         .filter((e) => !e.attendees.some((a) => a.self && a.responseStatus === "declined"))
@@ -129,7 +129,7 @@ export const calendarTools: ToolDefinition[] = [
     outgoingText: (i) => `${i.title}\n${i.description ?? ""}`,
     async execute(input, ctx) {
       const found = input.all_day ? [] : await conflicts(ctx, input.start, input.end);
-      const ev = await ctx.providers.calendar().createEvent(
+      const ev = await (await ctx.providers.calendar()).createEvent(
         {
           title: input.title,
           start: input.start,
@@ -174,7 +174,7 @@ export const calendarTools: ToolDefinition[] = [
     },
     auditTarget: (i) => i.attendees?.join(", ") ?? i.event_id,
     async execute(input, ctx) {
-      const cal = ctx.providers.calendar();
+      const cal = (await ctx.providers.calendar());
       const current = await cal.getEvent(input.event_id);
       // Guard against the model under-reporting attendees: re-check with live data.
       if (current.attendees.some((a) => !a.self) && !input.has_attendees) {
@@ -214,7 +214,7 @@ export const calendarTools: ToolDefinition[] = [
     describe: (i) => `Einladungen senden an: ${i.attendees.join(", ")} (Termin ${i.event_id})`,
     auditTarget: (i) => i.attendees.join(", "),
     async execute(input, ctx) {
-      const cal = ctx.providers.calendar();
+      const cal = (await ctx.providers.calendar());
       const current = await cal.getEvent(input.event_id);
       const emails = new Set(current.attendees.map((a) => a.email.toLowerCase()));
       const merged = [...current.attendees.map((a) => a.email), ...input.attendees.filter((a) => !emails.has(a.toLowerCase()))];
@@ -231,7 +231,7 @@ export const calendarTools: ToolDefinition[] = [
     describe: (i) => `Termin löschen: "${i.event_title}"${i.notify_attendees ? " — Gäste werden benachrichtigt" : ""}`,
     auditTarget: (i) => i.event_id,
     async execute(input, ctx) {
-      await ctx.providers.calendar().deleteEvent(input.event_id, input.notify_attendees);
+      await (await ctx.providers.calendar()).deleteEvent(input.event_id, input.notify_attendees);
       return ok({ deleted: true });
     },
   }),
@@ -246,7 +246,7 @@ export const calendarTools: ToolDefinition[] = [
       `Einladung "${i.event_title}" ${i.response === "accepted" ? "zusagen" : i.response === "declined" ? "absagen" : "mit Vorbehalt beantworten"}`,
     auditTarget: (i) => i.event_id,
     async execute(input, ctx) {
-      const ev = await ctx.providers.calendar().respondToInvitation(input.event_id, input.response);
+      const ev = await (await ctx.providers.calendar()).respondToInvitation(input.event_id, input.response);
       return ok({ updated: view(ev) });
     },
   }),

@@ -51,27 +51,31 @@ export class GoogleAuth {
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
-  isConnected(): boolean {
+  async isConnected(): Promise<boolean> {
     try {
-      return this.tokens.load(PROVIDER) !== undefined;
+      return (await this.tokens.load(PROVIDER)) !== undefined;
     } catch {
       return false;
     }
   }
 
-  status(): { connected: boolean; account: string | null; scopes: string[] } {
-    const stored = this.tokens.load(PROVIDER);
+  async status(): Promise<{ connected: boolean; account: string | null; scopes: string[] }> {
+    const stored = await this.tokens.load(PROVIDER).catch(() => undefined);
     return { connected: !!stored, account: stored?.account ?? null, scopes: stored?.scopes ?? [] };
   }
 
   /** Step 1: build the consent URL (with state + PKCE S256). */
-  createAuthUrl(): string {
+  async createAuthUrl(): Promise<string> {
     const state = randomToken(24);
     const verifier = randomToken(48);
     const challenge = createHash("sha256").update(verifier).digest("base64url");
-    this.db
-      .prepare("INSERT INTO oauth_states (state, provider, code_verifier, created_at) VALUES (?, ?, ?, ?)")
-      .run(state, PROVIDER, verifier, nowIso());
+    await this.db.run("DELETE FROM oauth_states WHERE created_at < $1", [new Date(Date.now() - STATE_TTL_MS).toISOString()]);
+    await this.db.run("INSERT INTO oauth_states (state, provider, code_verifier, created_at) VALUES ($1, $2, $3, $4)", [
+      state,
+      PROVIDER,
+      verifier,
+      nowIso(),
+    ]);
     const params = new URLSearchParams({
       client_id: this.cfg.clientId,
       redirect_uri: this.cfg.redirectUri,
@@ -89,10 +93,11 @@ export class GoogleAuth {
 
   /** Step 2: validate state, exchange code, store encrypted tokens. */
   async handleCallback(code: string, state: string): Promise<{ account: string | null; scopes: string[] }> {
-    const row = this.db
-      .prepare("SELECT code_verifier, created_at FROM oauth_states WHERE state = ? AND provider = ?")
-      .get(state, PROVIDER) as { code_verifier: string; created_at: string } | undefined;
-    this.db.prepare("DELETE FROM oauth_states WHERE state = ?").run(state);
+    // Single use: fetch-and-delete atomically.
+    const row = await this.db.one<{ code_verifier: string; created_at: string }>(
+      "DELETE FROM oauth_states WHERE state = $1 AND provider = $2 RETURNING code_verifier, created_at",
+      [state, PROVIDER],
+    );
     if (!row || Date.now() - new Date(row.created_at).getTime() > STATE_TTL_MS) {
       throw new Error("Ungültiger oder abgelaufener OAuth-State. Bitte Verbindung erneut starten.");
     }
@@ -115,7 +120,7 @@ export class GoogleAuth {
     }
     const scopes = (body.scope ?? "").split(" ").filter(Boolean);
     const account = body.id_token ? decodeIdTokenEmail(body.id_token) : null;
-    this.tokens.save(
+    await this.tokens.save(
       PROVIDER,
       { accessToken: body.access_token, refreshToken: body.refresh_token, expiresAt: Date.now() + body.expires_in * 1000 },
       scopes,
@@ -126,7 +131,7 @@ export class GoogleAuth {
 
   /** Valid access token, refreshing when needed. Concurrent callers share one refresh. */
   async getAccessToken(forceRefresh = false): Promise<string> {
-    const stored = this.tokens.load(PROVIDER);
+    const stored = await this.tokens.load(PROVIDER);
     if (!stored) throw new ToolError("Google ist nicht verbunden.", "NOT_CONFIGURED");
     if (!forceRefresh && stored.tokens.expiresAt - 60_000 > Date.now()) return stored.tokens.accessToken;
     this.refreshing ??= this.refresh(stored.tokens, stored.scopes).finally(() => {
@@ -152,7 +157,7 @@ export class GoogleAuth {
     }
     if (!res.ok) throw new ToolError(`Google-Token-Erneuerung fehlgeschlagen (HTTP ${res.status})`, "UPSTREAM_ERROR");
     const body = (await res.json()) as TokenResponse;
-    this.tokens.save(
+    await this.tokens.save(
       PROVIDER,
       {
         accessToken: body.access_token,
@@ -165,8 +170,8 @@ export class GoogleAuth {
   }
 
   async disconnect(): Promise<void> {
-    const stored = this.tokens.load(PROVIDER);
-    this.tokens.delete(PROVIDER);
+    const stored = await this.tokens.load(PROVIDER).catch(() => undefined);
+    await this.tokens.delete(PROVIDER);
     const token = stored?.tokens.refreshToken ?? stored?.tokens.accessToken;
     if (token) {
       await this.fetchImpl(REVOKE_URL, {

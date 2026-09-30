@@ -1,28 +1,44 @@
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+/**
+ * Database layer (ARCHITECTURE.md §6).
+ *
+ * One SQL dialect everywhere: PostgreSQL.
+ *  - Production (Vercel): Neon Postgres via DATABASE_URL (node-postgres pool).
+ *  - Local development and tests: PGlite — real Postgres compiled to WASM,
+ *    running in-process, persisted to a directory (or in memory).
+ */
 
-export type Db = DatabaseSync;
+export interface Db {
+  /** All rows. Use $1, $2 … placeholders. */
+  query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+  /** First row or undefined. */
+  one<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T | undefined>;
+  /** Number of affected rows. */
+  run(sql: string, params?: unknown[]): Promise<number>;
+  /** Multiple statements, no parameters (migrations). */
+  exec(sql: string): Promise<void>;
+  close(): Promise<void>;
+}
 
 /**
  * Ordered, append-only list of schema migrations. Never edit an applied
- * migration; add a new one instead.
+ * migration; add a new one instead. Column aliases in queries must be quoted
+ * ("createdAt") because Postgres folds unquoted identifiers to lower case.
  */
 const MIGRATIONS: string[] = [
   `
   CREATE TABLE conversations (
     id TEXT PRIMARY KEY,
     title TEXT,
-    tainted INTEGER NOT NULL DEFAULT 0, -- suspicious external content was read
+    tainted BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
   CREATE TABLE messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    role TEXT NOT NULL,              -- 'user' | 'assistant'
-    content_json TEXT NOT NULL,      -- Anthropic content blocks, stored verbatim
-    display_text TEXT,               -- plain text shown in the UI (null = hidden)
+    role TEXT NOT NULL,
+    content_json TEXT NOT NULL,
+    display_text TEXT,
     created_at TEXT NOT NULL
   );
   CREATE INDEX idx_messages_conv ON messages(conversation_id, id);
@@ -36,13 +52,14 @@ const MIGRATIONS: string[] = [
     description TEXT NOT NULL,
     risk INTEGER NOT NULL,
     reasons_json TEXT NOT NULL,
-    status TEXT NOT NULL,            -- pending | approved | rejected | expired
+    status TEXT NOT NULL,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     resolved_at TEXT
   );
 
   CREATE TABLE activity (
+    seq INTEGER GENERATED ALWAYS AS IDENTITY,
     id TEXT PRIMARY KEY,
     conversation_id TEXT,
     tool_name TEXT NOT NULL,
@@ -53,26 +70,26 @@ const MIGRATIONS: string[] = [
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
-  CREATE INDEX idx_activity_created ON activity(created_at);
+  CREATE INDEX idx_activity_seq ON activity(seq);
 
   CREATE TABLE audit_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     ts TEXT NOT NULL,
     action TEXT NOT NULL,
     target TEXT,
     risk INTEGER NOT NULL,
     status TEXT NOT NULL,
-    user_confirmation INTEGER NOT NULL,
+    user_confirmation BOOLEAN NOT NULL,
     details_json TEXT
   );
 
   CREATE TABLE memory (
     id TEXT PRIMARY KEY,
-    category TEXT NOT NULL,          -- preference | person | project | rule | fact
+    category TEXT NOT NULL,
     key TEXT NOT NULL,
     value TEXT NOT NULL,
-    source TEXT NOT NULL,            -- user | inferred
-    confidence REAL NOT NULL,
+    source TEXT NOT NULL,
+    confidence DOUBLE PRECISION NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE(category, key)
@@ -95,7 +112,7 @@ const MIGRATIONS: string[] = [
     id TEXT PRIMARY KEY,
     text TEXT NOT NULL,
     remind_at TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'scheduled', -- scheduled | fired | cancelled
+    status TEXT NOT NULL DEFAULT 'scheduled',
     created_at TEXT NOT NULL
   );
 
@@ -103,7 +120,7 @@ const MIGRATIONS: string[] = [
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     body TEXT,
-    read INTEGER NOT NULL DEFAULT 0,
+    read BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TEXT NOT NULL
   );
 
@@ -136,33 +153,86 @@ const MIGRATIONS: string[] = [
   `,
 ];
 
-export function openDatabase(path: string): Db {
-  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-  const db = new DatabaseSync(path);
-  db.exec("PRAGMA foreign_keys = ON;");
-  if (path !== ":memory:") db.exec("PRAGMA journal_mode = WAL;");
-  migrate(db);
+async function migrate(db: Db): Promise<void> {
+  // Serialise concurrent cold starts (several serverless instances). The lock
+  // is taken before anything else; `db` must be a single connection here.
+  await db.exec("SELECT pg_advisory_lock(424242)");
+  try {
+    await db.exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
+    const row = await db.one<{ version: number }>("SELECT version FROM schema_version");
+    let version = row?.version ?? 0;
+    if (!row) await db.run("INSERT INTO schema_version (version) VALUES (0)");
+    while (version < MIGRATIONS.length) {
+      await db.exec(`BEGIN; ${MIGRATIONS[version]}; UPDATE schema_version SET version = ${version + 1}; COMMIT;`);
+      version += 1;
+    }
+  } catch (err) {
+    await db.exec("ROLLBACK").catch(() => undefined);
+    throw err;
+  } finally {
+    await db.exec("SELECT pg_advisory_unlock(424242)");
+  }
+}
+
+// ─── Implementations ────────────────────────────────────────────────────────
+
+async function openPostgres(url: string): Promise<Db> {
+  const { default: pg } = await import("pg");
+  const pool = new pg.Pool({
+    connectionString: url,
+    max: Number(process.env.JARVIS_DB_POOL_MAX ?? 3),
+    idleTimeoutMillis: 10_000,
+    ssl: /sslmode=disable/.test(url) || /localhost|127\.0\.0\.1/.test(url) ? undefined : { rejectUnauthorized: true },
+  });
+  const over = (q: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number | null }>): Omit<Db, "close"> => ({
+    query: async <T>(sql: string, params: unknown[] = []) => (await q(sql, params)).rows as T[],
+    one: async <T>(sql: string, params: unknown[] = []) => (await q(sql, params)).rows[0] as T | undefined,
+    run: async (sql: string, params: unknown[] = []) => (await q(sql, params)).rowCount ?? 0,
+    exec: async (sql: string) => void (await q(sql)),
+  });
+
+  // Migrations run on one pinned connection (advisory lock + BEGIN/COMMIT).
+  const client = await pool.connect();
+  try {
+    await migrate({ ...over((sql, params) => client.query(sql, params)), close: async () => undefined });
+  } finally {
+    client.release();
+  }
+  return { ...over((sql, params) => pool.query(sql, params)), close: () => pool.end() };
+}
+
+async function openPglite(dataDir: string | undefined): Promise<Db> {
+  const { PGlite } = await import("@electric-sql/pglite");
+  if (dataDir) {
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(dataDir, { recursive: true });
+  }
+  const pg = new PGlite(dataDir);
+  // PGlite is single-connection; serialise statements to keep BEGIN/COMMIT atomic.
+  let chain: Promise<unknown> = Promise.resolve();
+  const serial = <T>(fn: () => Promise<T>): Promise<T> => {
+    const next = chain.then(fn, fn);
+    chain = next.catch(() => undefined);
+    return next;
+  };
+  const db: Db = {
+    query: <T>(sql: string, params: unknown[] = []) => serial(async () => (await pg.query<T>(sql, params)).rows),
+    one: <T>(sql: string, params: unknown[] = []) => serial(async () => (await pg.query<T>(sql, params)).rows[0]),
+    run: (sql: string, params: unknown[] = []) => serial(async () => (await pg.query(sql, params)).affectedRows ?? 0),
+    exec: (sql: string) => serial(async () => void (await pg.exec(sql))),
+    close: () => serial(() => pg.close()),
+  };
+  await migrate(db);
   return db;
 }
 
-function migrate(db: Db): void {
-  db.exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
-  const row = db.prepare("SELECT version FROM schema_version").get() as { version: number } | undefined;
-  let version = row?.version ?? 0;
-  if (!row) db.prepare("INSERT INTO schema_version (version) VALUES (0)").run();
-  while (version < MIGRATIONS.length) {
-    const sql = MIGRATIONS[version]!;
-    db.exec("BEGIN");
-    try {
-      db.exec(sql);
-      version += 1;
-      db.prepare("UPDATE schema_version SET version = ?").run(version);
-      db.exec("COMMIT");
-    } catch (err) {
-      db.exec("ROLLBACK");
-      throw err;
-    }
-  }
+/**
+ * `DATABASE_URL` (postgres://…) → Neon/Postgres.
+ * Otherwise PGlite: a directory path persists data, ":memory:" does not.
+ */
+export async function openDatabase(opts: { url?: string; localPath?: string }): Promise<Db> {
+  if (opts.url) return openPostgres(opts.url);
+  return openPglite(opts.localPath && opts.localPath !== ":memory:" ? opts.localPath : undefined);
 }
 
 export function nowIso(): string {

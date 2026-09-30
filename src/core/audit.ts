@@ -37,33 +37,42 @@ export function redact(value: unknown, depth = 0): unknown {
   return value;
 }
 
+export interface AuditRecord {
+  id: number;
+  ts: string;
+  action: string;
+  target: string | null;
+  risk: number;
+  status: AuditStatus;
+  userConfirmation: boolean;
+  details: unknown;
+}
+
 export class AuditLog {
   constructor(private readonly db: Db) {}
 
-  record(entry: AuditEntry): void {
-    this.db
-      .prepare(
-        `INSERT INTO audit_log (ts, action, target, risk, status, user_confirmation, details_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
+  async record(entry: AuditEntry): Promise<void> {
+    await this.db.run(
+      `INSERT INTO audit_log (ts, action, target, risk, status, user_confirmation, details_json)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
         nowIso(),
         entry.action,
         entry.target ? maskEmail(entry.target) : null,
         entry.risk,
         entry.status,
-        entry.userConfirmation ? 1 : 0,
+        entry.userConfirmation,
         entry.details ? JSON.stringify(redact(entry.details)) : null,
-      );
+      ],
+    );
   }
 
-  list(limit = 100): Array<Record<string, unknown>> {
-    return this.db
-      .prepare(
-        `SELECT id, ts, action, target, risk, status, user_confirmation AS userConfirmation, details_json AS details
-         FROM audit_log ORDER BY id DESC LIMIT ?`,
-      )
-      .all(limit)
-      .map((r) => ({ ...r, userConfirmation: r.userConfirmation === 1, details: r.details ? JSON.parse(String(r.details)) : null }));
+  async list(limit = 100): Promise<AuditRecord[]> {
+    const rows = await this.db.query<Omit<AuditRecord, "details"> & { details: string | null }>(
+      `SELECT id, ts, action, target, risk, status, user_confirmation AS "userConfirmation", details_json AS details
+       FROM audit_log ORDER BY id DESC LIMIT $1`,
+      [limit],
+    );
+    return rows.map((r) => ({ ...r, details: r.details ? JSON.parse(r.details) : null }));
   }
 }

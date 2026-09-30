@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import cookie from "@fastify/cookie";
@@ -6,14 +7,15 @@ import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { AppConfig } from "./config.js";
-import type { Agent } from "./core/agent.js";
+import type { Agent, AgentEvent, AgentReply } from "./core/agent.js";
 import { toView } from "./core/agent.js";
 import { DEFAULT_PERMISSION_SETTINGS, loadPermissionSettings, savePermissionSettings } from "./core/permissions.js";
+import type { Scheduler } from "./core/scheduler.js";
+import { addDaysYmd, localDate, zonedToUtc } from "./core/time.js";
 import { RISK_LABELS, ToolError } from "./core/types.js";
 import type { Db } from "./db/database.js";
 import { MEMORY_CATEGORIES, type MemoryStore } from "./memory/memory.js";
 import type { ProviderHub } from "./providers/hub.js";
-import type { InAppNotificationProvider } from "./providers/local/local.js";
 import { safeEqual } from "./security/crypto.js";
 import { SessionStore } from "./security/sessions.js";
 import type { ToolRegistry } from "./tools/registry.js";
@@ -28,7 +30,10 @@ export interface ServerDeps {
   providers: ProviderHub;
   memory: MemoryStore;
   registry: ToolRegistry;
+  scheduler: Scheduler;
   llmConfigured: boolean;
+  /** Serve public/ from Fastify (local). On Vercel the CDN serves it. */
+  serveStatic?: boolean;
 }
 
 declare module "fastify" {
@@ -37,34 +42,44 @@ declare module "fastify" {
   }
 }
 
+const CSP =
+  "default-src 'self'; img-src 'self' data:; style-src 'self'; " +
+  "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+
 export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
-  const { config, db, agent, providers, memory, registry } = deps;
+  const { config, db, agent, providers, memory, registry, scheduler } = deps;
   const sessions = new SessionStore(db);
   const secureCookie = config.publicUrl.startsWith("https://");
   const allowedOrigin = new URL(config.publicUrl).origin;
 
-  const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info", redact: ["req.headers.cookie", "req.headers['x-jarvis-csrf']"] }, bodyLimit: 256 * 1024 });
+  const app = Fastify({
+    logger: { level: process.env.LOG_LEVEL ?? "info", redact: ["req.headers.cookie", "req.headers['x-jarvis-csrf']", "req.headers.authorization"] },
+    bodyLimit: 256 * 1024,
+    trustProxy: !!process.env.VERCEL,
+  });
 
   await app.register(cookie);
   await app.register(rateLimit, { global: true, max: 300, timeWindow: "1 minute" });
 
   app.addHook("onSend", async (_req, reply, payload) => {
-    reply.header("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+    reply.header("Content-Security-Policy", CSP);
     reply.header("X-Frame-Options", "DENY");
     reply.header("X-Content-Type-Options", "nosniff");
     reply.header("Referrer-Policy", "no-referrer");
     reply.header("Cross-Origin-Opener-Policy", "same-origin");
+    if (secureCookie) reply.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
     return payload;
   });
 
   // ─── Auth + CSRF ──────────────────────────────────────────────────────
   // The OAuth callback arrives as a cross-site navigation (SameSite=Strict cookie is not sent);
   // it is protected by the single-use, unguessable state + PKCE verifier instead.
-  const PUBLIC_API = new Set(["/api/login", "/api/session", "/api/integrations/google/callback"]);
+  // The cron endpoint authenticates with CRON_SECRET.
+  const PUBLIC_API = new Set(["/api/login", "/api/session", "/api/integrations/google/callback", "/api/cron/tick", "/api/health"]);
   app.addHook("preHandler", async (req, reply) => {
     const path = req.url.split("?")[0]!;
     if (!path.startsWith("/api/") || PUBLIC_API.has(path)) return;
-    const session = sessions.get(req.cookies[SESSION_COOKIE]);
+    const session = await sessions.get(req.cookies[SESSION_COOKIE]);
     if (!session) return reply.code(401).send({ error: "Nicht angemeldet" });
     req.session = session;
     if (req.method !== "GET" && req.method !== "HEAD") {
@@ -82,7 +97,7 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
       return reply.code(400).send({ error: "Ungültige Eingabe", issues: err.issues.map((i) => `${i.path.join(".")}: ${i.message}`) });
     }
     if (err instanceof ToolError) {
-      const code = err.code === "NOT_CONFIGURED" ? 409 : err.code === "AUTH_FAILED" ? 502 : err.code === "NOT_FOUND" ? 404 : 502;
+      const code = err.code === "NOT_CONFIGURED" ? 409 : err.code === "NOT_FOUND" ? 404 : 502;
       return reply.code(code).send({ error: err.message, code: err.code });
     }
     if (err.statusCode && err.statusCode < 500) return reply.code(err.statusCode).send({ error: err.message });
@@ -90,72 +105,137 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
     return reply.code(500).send({ error: "Interner Fehler" });
   });
 
-  await app.register(fastifyStatic, { root: PUBLIC_DIR, prefix: "/", index: ["index.html"] });
+  if (deps.serveStatic !== false && existsSync(PUBLIC_DIR)) {
+    await app.register(fastifyStatic, { root: PUBLIC_DIR, prefix: "/", index: ["index.html"] });
+  }
+
+  /**
+   * Streams agent progress as NDJSON: {"type":"action",…} lines while tools run,
+   * then one {"type":"reply",…} line (or {"type":"error"}).
+   */
+  async function streamAgent(reply: FastifyReply, work: (emit: (e: AgentEvent) => void) => Promise<AgentReply>) {
+    reply.hijack();
+    const raw = reply.raw;
+    raw.writeHead(200, {
+      "content-type": "application/x-ndjson; charset=utf-8",
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "x-accel-buffering": "no",
+    });
+    const write = (obj: unknown) => raw.write(`${JSON.stringify(obj)}\n`);
+    try {
+      const result = await work((e) => write(e));
+      write({ type: "reply", reply: result });
+    } catch (err) {
+      app.log.error(err);
+      write({ type: "error", error: "Bei der Verarbeitung ist ein Fehler aufgetreten. Es wurde nichts Unbestätigtes ausgeführt." });
+    }
+    raw.end();
+  }
 
   // ─── Session ──────────────────────────────────────────────────────────
+  app.get("/api/health", async () => ({ ok: true }));
+
   app.post("/api/login", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
     const { token } = z.object({ token: z.string().min(1).max(512) }).parse(req.body);
     if (!safeEqual(token, config.accessToken)) return reply.code(401).send({ error: "Ungültiges Zugangstoken" });
-    const s = sessions.create();
-    reply.setCookie(SESSION_COOKIE, s.sessionId, { httpOnly: true, sameSite: "strict", secure: secureCookie, path: "/", maxAge: 12 * 3600 });
+    const s = await sessions.create();
+    reply.setCookie(SESSION_COOKIE, s.sessionId, { httpOnly: true, sameSite: "strict", secure: secureCookie, path: "/", maxAge: SessionStore.ttlSeconds });
     return { authenticated: true, csrfToken: s.csrfToken };
   });
 
   app.get("/api/session", async (req) => {
-    const s = sessions.get(req.cookies[SESSION_COOKIE]);
-    return s ? { authenticated: true, csrfToken: s.csrfToken } : { authenticated: false };
+    const s = await sessions.get(req.cookies[SESSION_COOKIE]);
+    return s ? { authenticated: true, csrfToken: s.csrfToken, userName: config.userName ?? null } : { authenticated: false };
   });
 
   app.post("/api/logout", async (req, reply) => {
-    sessions.destroy(req.cookies[SESSION_COOKIE]);
+    await sessions.destroy(req.cookies[SESSION_COOKIE]);
     reply.clearCookie(SESSION_COOKIE, { path: "/" });
     return { ok: true };
   });
 
   // ─── Setup / onboarding ───────────────────────────────────────────────
   app.get("/api/setup", async () => {
-    const integrations = providers.status();
+    const integrations = await providers.status();
     const google = integrations.find((i) => i.id === "google")!;
-    const prefs = memory.list("preference").length;
+    const prefs = (await memory.list("preference")).length;
+    const permsSaved = (await db.one("SELECT 1 AS x FROM settings WHERE key = 'permissions'")) !== undefined;
     const steps = [
-      { id: "llm", title: "Sprachmodell (Claude API)", done: deps.llmConfigured, hint: deps.llmConfigured ? `Modell: ${config.model}` : "ANTHROPIC_API_KEY in .env setzen und neu starten." },
+      { id: "llm", title: "Sprachmodell (Claude API)", done: deps.llmConfigured, hint: deps.llmConfigured ? `Modell: ${config.model}` : "ANTHROPIC_API_KEY setzen und neu deployen." },
       { id: "email", title: "E-Mail verbinden", done: google.state === "connected", hint: google.detail },
       { id: "calendar", title: "Kalender verbinden", done: google.state === "connected", hint: google.detail },
       { id: "contacts", title: "Kontakte verbinden", done: google.state === "connected", hint: google.detail },
-      { id: "permissions", title: "Berechtigungen prüfen", done: db.prepare("SELECT 1 FROM settings WHERE key = 'permissions'").get() !== undefined, hint: "Einstellungen → Berechtigungen" },
+      { id: "permissions", title: "Berechtigungen prüfen", done: permsSaved, hint: "Einstellungen → Berechtigungen" },
       { id: "memory", title: "Präferenzen hinterlegen", done: prefs > 0, hint: "z.B. Arbeitszeiten, Meetingdauer, Signatur (Gedächtnis)" },
     ];
     return { steps, complete: steps.every((s) => s.done) };
   });
 
+  // ─── Briefing (dashboard) ─────────────────────────────────────────────
+  app.get("/api/briefing", async () => {
+    const tz = config.timezone;
+    const today = localDate(new Date(), tz);
+    const dayStart = zonedToUtc(today, "00:00", tz).toISOString();
+    const dayEnd = zonedToUtc(addDaysYmd(today, 1), "00:00", tz).toISOString();
+    const settle = async <T>(fn: () => Promise<T>) => {
+      try {
+        return { ok: true as const, data: await fn() };
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err), code: err instanceof ToolError ? err.code : undefined };
+      }
+    };
+    const [events, emails, tasks, reminders, pending] = await Promise.all([
+      settle(async () => (await providers.calendar()).listEvents({ timeMin: dayStart, timeMax: dayEnd })),
+      settle(async () => (await providers.email()).listEmails({ inboxOnly: true, unreadOnly: true, maxResults: 8 })),
+      settle(() => providers.tasks.list({ status: "open" })),
+      settle(() => providers.reminders.list("scheduled")),
+      settle(async () => (await agent.confirmations.listPending()).map(toView)),
+    ]);
+    return { date: today, timezone: tz, userName: config.userName ?? null, events, emails, tasks, reminders, pending };
+  });
+
   // ─── Chat ─────────────────────────────────────────────────────────────
+  const chatBody = z.object({ conversationId: z.uuid().optional(), message: z.string().trim().min(1).max(8000) });
+
   app.post("/api/chat", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req) => {
-    const body = z.object({ conversationId: z.uuid().optional(), message: z.string().trim().min(1).max(8000) }).parse(req.body);
+    const body = chatBody.parse(req.body);
     return agent.handleUserMessage(body.conversationId, body.message);
+  });
+
+  app.post("/api/chat/stream", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req, reply) => {
+    const body = chatBody.parse(req.body);
+    await streamAgent(reply, (emit) => agent.handleUserMessage(body.conversationId, body.message, emit));
   });
 
   app.get("/api/conversations", async () => agent.conversations.list());
 
   app.get("/api/conversations/:id/messages", async (req, reply) => {
     const { id } = z.object({ id: z.uuid() }).parse(req.params);
-    const conv = agent.conversations.get(id);
+    const conv = await agent.conversations.get(id);
     if (!conv) return reply.code(404).send({ error: "Nicht gefunden" });
     return {
       conversation: conv,
-      messages: agent.conversations.display(id),
-      pendingActions: agent.confirmations.listPending(id).map(toView),
+      messages: await agent.conversations.display(id),
+      pendingActions: (await agent.confirmations.listPending(id)).map(toView),
     };
+  });
+
+  app.delete("/api/conversations/:id", async (req, reply) => {
+    const { id } = z.object({ id: z.uuid() }).parse(req.params);
+    return (await agent.conversations.delete(id)) ? { ok: true } : reply.code(404).send({ error: "Nicht gefunden" });
   });
 
   // ─── Confirmations & activity ─────────────────────────────────────────
   app.get("/api/confirmations", async () =>
-    agent.confirmations.listPending().map((p) => ({ ...toView(p), conversationId: p.conversationId, input: p.input })),
+    (await agent.confirmations.listPending()).map((p) => ({ ...toView(p), conversationId: p.conversationId, input: p.input })),
   );
 
   app.post("/api/confirmations/:id", async (req, reply) => {
     const { id } = z.object({ id: z.uuid() }).parse(req.params);
-    const { approve } = z.object({ approve: z.boolean() }).parse(req.body);
-    if (!agent.confirmations.get(id)) return reply.code(404).send({ error: "Nicht gefunden" });
+    const { approve, stream } = z.object({ approve: z.boolean(), stream: z.boolean().optional() }).parse(req.body);
+    if (!(await agent.confirmations.get(id))) return reply.code(404).send({ error: "Nicht gefunden" });
+    if (stream) return streamAgent(reply, (emit) => agent.resolveConfirmation(id, approve, undefined, emit));
     return agent.resolveConfirmation(id, approve);
   });
 
@@ -172,45 +252,73 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.post("/api/memory", async (req) => memory.upsert({ ...memoryInput.parse(req.body), source: "user" }));
   app.patch("/api/memory/:id", async (req, reply) => {
     const { id } = z.object({ id: z.uuid() }).parse(req.params);
-    const updated = memory.update(id, memoryInput.partial().parse(req.body));
+    const updated = await memory.update(id, memoryInput.partial().parse(req.body));
     return updated ?? reply.code(404).send({ error: "Nicht gefunden" });
   });
   app.delete("/api/memory/:id", async (req, reply) => {
     const { id } = z.object({ id: z.uuid() }).parse(req.params);
-    return memory.delete(id) ? { ok: true } : reply.code(404).send({ error: "Nicht gefunden" });
+    return (await memory.delete(id)) ? { ok: true } : reply.code(404).send({ error: "Nicht gefunden" });
   });
 
   // ─── Tasks, reminders, notifications (direct UI access) ───────────────
+  const idParam = z.object({ id: z.uuid() });
   app.get("/api/tasks", async (req) => {
     const { status } = z.object({ status: z.enum(["open", "done", "all"]).optional() }).parse(req.query);
     return providers.tasks.list({ status: status ?? "all" });
   });
   app.post("/api/tasks", async (req) => {
     const body = z
-      .object({ title: z.string().trim().min(1).max(300), due: z.string().max(40).optional(), priority: z.enum(["low", "normal", "high"]).optional() })
+      .object({
+        title: z.string().trim().min(1).max(300),
+        due: z.iso.date().optional(),
+        priority: z.enum(["low", "normal", "high"]).optional(),
+        project: z.string().trim().max(200).optional(),
+      })
       .parse(req.body);
     return providers.tasks.create(body);
   });
-  app.post("/api/tasks/:id/complete", async (req) => providers.tasks.complete(z.object({ id: z.uuid() }).parse(req.params).id));
+  app.post("/api/tasks/:id/complete", async (req) => providers.tasks.complete(idParam.parse(req.params).id));
+  app.post("/api/tasks/:id/reopen", async (req) => providers.tasks.reopen(idParam.parse(req.params).id));
   app.delete("/api/tasks/:id", async (req) => {
-    await providers.tasks.delete(z.object({ id: z.uuid() }).parse(req.params).id);
+    await providers.tasks.delete(idParam.parse(req.params).id);
     return { ok: true };
   });
   app.get("/api/reminders", async () => providers.reminders.list("all"));
-  app.get("/api/notifications", async () => (providers.notifications as InAppNotificationProvider).list(false));
+  app.delete("/api/reminders/:id", async (req) => ({ ok: await providers.reminders.cancel(idParam.parse(req.params).id) }));
+
+  app.get("/api/notifications", async () => {
+    // Serverless has no background loop: fire due reminders opportunistically.
+    await scheduler.tick().catch((err) => app.log.warn({ err }, "reminder tick failed"));
+    return providers.notifications.list(false);
+  });
   app.post("/api/notifications/:id/read", async (req) => {
-    providers.notifications.markRead(z.object({ id: z.uuid() }).parse(req.params).id);
+    await providers.notifications.markRead(idParam.parse(req.params).id);
     return { ok: true };
+  });
+  app.post("/api/notifications/read-all", async () => {
+    await providers.notifications.markAllRead();
+    return { ok: true };
+  });
+
+  // ─── Cron (Vercel Cron / external scheduler) ──────────────────────────
+  app.get("/api/cron/tick", async (req, reply) => {
+    const auth = req.headers.authorization ?? "";
+    if (!config.cronSecret || !safeEqual(auth, `Bearer ${config.cronSecret}`)) return reply.code(401).send({ error: "Unauthorized" });
+    return { fired: await scheduler.tick() };
   });
 
   // ─── Calendar & email views (read-only, level 0) ──────────────────────
   app.get("/api/calendar", async (req) => {
     const q = z.object({ from: z.iso.datetime({ offset: true }), to: z.iso.datetime({ offset: true }) }).parse(req.query);
-    return providers.calendar().listEvents({ timeMin: q.from, timeMax: q.to });
+    return (await providers.calendar()).listEvents({ timeMin: q.from, timeMax: q.to });
   });
   app.get("/api/email", async (req) => {
     const q = z.object({ unread: z.enum(["true", "false"]).optional(), q: z.string().max(200).optional() }).parse(req.query);
-    return providers.email().listEmails({ inboxOnly: true, unreadOnly: q.unread === "true", text: q.q, maxResults: 30 });
+    return (await providers.email()).listEmails({ inboxOnly: true, unreadOnly: q.unread === "true", text: q.q, maxResults: 30 });
+  });
+  app.get("/api/email/:id", async (req) => {
+    const { id } = z.object({ id: z.string().min(1).max(256) }).parse(req.params);
+    return (await providers.email()).readEmail(id);
   });
 
   // ─── Integrations ─────────────────────────────────────────────────────
@@ -218,7 +326,7 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   app.get("/api/integrations/google/connect", async (_req, reply) => {
     if (!providers.googleAuth) return reply.code(409).send({ error: "GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET fehlen. Siehe docs/SETUP_GOOGLE.md." });
-    return reply.redirect(providers.googleAuth.createAuthUrl());
+    return reply.redirect(await providers.googleAuth.createAuthUrl());
   });
 
   app.get("/api/integrations/google/callback", async (req, reply) => {
@@ -241,7 +349,7 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // ─── Settings ─────────────────────────────────────────────────────────
   app.get("/api/settings/permissions", async () => ({
-    settings: loadPermissionSettings(db),
+    settings: await loadPermissionSettings(db),
     defaults: DEFAULT_PERMISSION_SETTINGS,
     tools: registry
       .all()
@@ -258,14 +366,20 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
       .parse(req.body);
     const known = new Set(registry.all().map((t) => t.name));
     const settings = { autoApproveLowRisk: body.autoApproveLowRisk, disabledTools: body.disabledTools.filter((n) => known.has(n)) };
-    savePermissionSettings(db, settings);
+    await savePermissionSettings(db, settings);
     return { settings };
   });
 
-  app.get("/api/status", async () => ({ model: config.model, llmConfigured: deps.llmConfigured, timezone: config.timezone }));
+  app.get("/api/status", async () => ({
+    model: config.model,
+    llmConfigured: deps.llmConfigured,
+    timezone: config.timezone,
+    database: config.databaseUrl ? "Postgres (Neon)" : "PGlite (lokal)",
+    hosting: process.env.VERCEL ? "Vercel" : "lokal",
+  }));
 
   app.setNotFoundHandler((req: FastifyRequest, reply: FastifyReply) => {
-    if (req.url.startsWith("/api/")) return reply.code(404).send({ error: "Nicht gefunden" });
+    if (req.url.startsWith("/api/") || deps.serveStatic === false) return reply.code(404).send({ error: "Nicht gefunden" });
     return reply.sendFile("index.html");
   });
 

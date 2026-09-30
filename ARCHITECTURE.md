@@ -43,7 +43,10 @@ Bestätigung zurückhält.
 
 | Pfad | Verantwortung |
 |---|---|
-| `src/server.ts` | HTTP-API, Auth, CSRF, Rate-Limit, statische UI |
+| `src/server.ts` | HTTP-API, Auth, CSRF, Rate-Limit, NDJSON-Streaming, Briefing, Cron, statische UI |
+| `src/app.ts` | Verdrahtung aller Komponenten — gemeinsam für lokalen Server und Vercel |
+| `src/index.ts` | Lokaler Server (inkl. Hintergrund-Scheduler) |
+| `api/index.ts` | Vercel Serverless Function (baut die App einmal pro Instanz) |
 | `src/core/agent.ts` | Agent Loop, Tool-Ausführung, Bestätigungs-Handling, Ergebnisverifikation |
 | `src/core/llm.ts` | Abstraktion `LlmClient` + Implementierung für die Claude Messages API |
 | `src/core/prompt.ts` | Systemprompt (Persönlichkeit, Regeln, Sicherheitsgrenzen) |
@@ -55,9 +58,9 @@ Bestätigung zurückhält.
 | `src/tools/*` | Tool-Definitionen (Schema, Risiko, Handler, Zusammenfassung) |
 | `src/providers/*` | Provider-Interfaces und konkrete Integrationen |
 | `src/memory/*` | Strukturiertes, kontrollierbares Gedächtnis |
-| `src/db/*` | Persistenz, Migrationen |
+| `src/db/*` | Postgres-Schicht (Neon via `pg`, lokal PGlite), Migrationen |
 | `src/security/*` | Token-Verschlüsselung (AES-256-GCM), Sessions |
-| `public/` | Web-UI (ohne Build-Schritt) |
+| `public/` | Web-UI ohne Build-Schritt: Heute-Dashboard, Chat mit Live-Schritten, Kalender, E-Mail, Aufgaben, Gedächtnis, Einstellungen; PWA-fähig |
 
 ## 3. Agent Loop
 
@@ -126,18 +129,32 @@ stillen Fake-Provider.
 | Aufgaben | Lokal (SQLite) | Google Tasks, Microsoft To Do |
 | Erinnerungen | Lokal + In-App-Benachrichtigung | Push / E-Mail / Voice |
 
-## 6. Datenhaltung
+## 6. Datenhaltung & Hosting
 
-**Entscheidung:** SQLite über das in Node ≥ 22.5 eingebaute `node:sqlite`.
+**Entscheidung:** PostgreSQL überall — ein SQL-Dialekt, zwei Laufzeiten:
 
-* Begründung: null native Abhängigkeiten, kein separater Datenbankserver für ein
-  Single-User-System, transaktional, eine Datei → einfach zu sichern.
-* Alle Zugriffe laufen über kleine Repository-Klassen mit SQL. Ein Wechsel auf
-  PostgreSQL ist ein Austausch der Datenbankschicht, nicht des Agent Core
-  (ROADMAP, Phase 5 / Multi-Device).
+| Umgebung | Datenbank | Scheduler |
+|---|---|---|
+| **Vercel (Produktion)** | Neon Serverless Postgres über `DATABASE_URL` (`pg`-Pool, TLS) | Vercel Cron + opportunistisch bei jedem UI-Poll + optional externer Cron (`/api/cron/tick`, `CRON_SECRET`) |
+| **Lokal / Tests** | PGlite (Postgres als WASM im Prozess), Daten in `JARVIS_DB_PATH` bzw. im Speicher | In-Process-Intervall (30 s) |
+
+* Begründung: Vercel-Funktionen haben kein dauerhaftes Dateisystem; Neon ist
+  serverless, im Free-Tier ausreichend und direkt in Vercel integrierbar. PGlite
+  erspart lokal und in Tests jeden Datenbankserver, ohne einen zweiten Dialekt.
+* Migrationen laufen beim Kaltstart unter einem Postgres-Advisory-Lock auf einer
+  festen Verbindung (sicher bei parallelen Instanzen).
+* Mehrinstanz-sicher: Bestätigungen (`UPDATE … WHERE status='pending'`),
+  Erinnerungen (`UPDATE … RETURNING`) und OAuth-States (`DELETE … RETURNING`)
+  werden atomar genau einmal verarbeitet.
 * Tabellen: `conversations`, `messages`, `pending_actions`, `activity`,
   `audit_log`, `memory`, `tasks`, `reminders`, `notifications`,
-  `automations`, `oauth_tokens` (verschlüsselt), `settings`, `sessions`.
+  `oauth_tokens` (verschlüsselt), `oauth_states`, `settings`, `sessions`.
+
+### Live-Fortschritt
+
+`POST /api/chat/stream` (und Bestätigungen mit `stream: true`) liefern NDJSON:
+`{"type":"thinking"}`, `{"type":"action", …}` pro Tool-Statuswechsel, zuletzt
+`{"type":"reply", …}`. Die UI zeigt so in Echtzeit, was JARVIS gerade tut.
 
 ## 7. Gedächtnis
 
@@ -160,9 +177,11 @@ Antworttext → Text-to-Speech. Bestätigungen laufen über dieselbe
 | 1 | TypeScript, Node 22, ESM | vom Nutzer bevorzugt, typisierte Interfaces |
 | 2 | Claude Messages API, manueller Agent Loop | volle Kontrolle über Permission-Gate zwischen Modell und Tool |
 | 3 | Modell `claude-opus-5-5`, per `ANTHROPIC_MODEL` änderbar | aktuellstes Standardmodell; Kosten sind Nutzerentscheidung |
-| 4 | SQLite (`node:sqlite`) | einfachste robuste Persistenz ohne Zusatzdienst |
+| 4 | PostgreSQL: Neon (Vercel) / PGlite (lokal, Tests) | Vercel hat kein dauerhaftes Dateisystem; ein Dialekt für alle Umgebungen (ersetzt SQLite aus Phase 1) |
 | 5 | Fastify | schnell, Schema-freundlich, gute Security-Plugins |
 | 6 | UI ohne Build-Schritt (Vanilla JS) | minimale Angriffsfläche und Toolchain in Phase 1 |
 | 7 | Google-APIs direkt per REST/`fetch` statt `googleapis` | kleine Abhängigkeit, volle Kontrolle über Scopes/Retry |
 | 8 | Bestätigte Aktionen führt der Server aus, nicht das Modell | verhindert Änderungen nach der Zustimmung |
 | 9 | Tokens AES-256-GCM-verschlüsselt, Schlüssel nur aus Env | kein Klartext-Secret auf Platte |
+| 10 | Hosting auf Vercel (Fastify in einer Serverless Function, UI über CDN) | vom Nutzer gewählt; erreichbar von überall, kostenlos startbar |
+| 11 | NDJSON-Streaming statt WebSockets | funktioniert in Serverless-Funktionen, kein Verbindungszustand |

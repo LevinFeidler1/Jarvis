@@ -1,10 +1,10 @@
 import { randomBytes } from "node:crypto";
+import { testDb } from "./helpers.js";
 import { describe, expect, it } from "vitest";
 import { maskEmail, redact } from "../src/core/audit.js";
 import { detectSensitiveContent, scanForInjection, wrapExternal } from "../src/core/injection.js";
 import { DEFAULT_PERMISSION_SETTINGS, decidePermission } from "../src/core/permissions.js";
 import { RiskLevel } from "../src/core/types.js";
-import { openDatabase } from "../src/db/database.js";
 import { decrypt, encrypt } from "../src/security/crypto.js";
 import { TokenStore } from "../src/security/token-store.js";
 import { createDefaultRegistry } from "../src/tools/registry.js";
@@ -138,13 +138,13 @@ describe("token encryption", () => {
     expect(() => decrypt(c, randomBytes(32))).toThrow();
   });
 
-  it("stores OAuth tokens only encrypted", () => {
-    const db = openDatabase(":memory:");
+  it("stores OAuth tokens only encrypted", async () => {
+    const db = await testDb();
     const store = new TokenStore(db, randomBytes(32));
-    store.save("google", { accessToken: "ya29.secret", refreshToken: "1//refresh", expiresAt: 1 }, ["s"], "me@example.com");
-    const raw = JSON.stringify(db.prepare("SELECT * FROM oauth_tokens").all());
+    await store.save("google", { accessToken: "ya29.secret", refreshToken: "1//refresh", expiresAt: 1 }, ["s"], "me@example.com");
+    const raw = JSON.stringify(await db.query("SELECT * FROM oauth_tokens"));
     expect(raw).not.toContain("ya29.secret");
     expect(raw).not.toContain("1//refresh");
-    expect(store.load("google")?.tokens.refreshToken).toBe("1//refresh");
+    expect((await store.load("google"))?.tokens.refreshToken).toBe("1//refresh");
   });
 });

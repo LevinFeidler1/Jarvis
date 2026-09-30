@@ -19,7 +19,9 @@ const EnvSchema = z.object({
   JARVIS_HOST: z.string().default("127.0.0.1"),
   JARVIS_PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   JARVIS_PUBLIC_URL: z.url().default("http://localhost:3000"),
-  JARVIS_DB_PATH: z.string().default("./data/jarvis.db"),
+  DATABASE_URL: optionalString,
+  JARVIS_DB_PATH: z.string().default("./data/pglite"),
+  CRON_SECRET: optionalString,
   JARVIS_TIMEZONE: z.string().default("Europe/Berlin"),
   JARVIS_LANGUAGE: z.string().default("de"),
   JARVIS_USER_NAME: optionalString,
@@ -37,7 +39,12 @@ export interface AppConfig {
   host: string;
   port: number;
   publicUrl: string;
+  /** Postgres connection string (Neon). If unset, local PGlite is used. */
+  databaseUrl?: string;
+  /** PGlite data directory for local development. */
   dbPath: string;
+  /** Protects the cron endpoint (Vercel sends it as Bearer token). */
+  cronSecret?: string;
   timezone: string;
   language: string;
   userName?: string;
@@ -53,6 +60,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error(`Ungültige Konfiguration:\n${issues}\nSiehe .env.example`);
   }
   const e = parsed.data;
+  if (env.VERCEL && !e.DATABASE_URL) {
+    throw new Error("Auf Vercel ist DATABASE_URL (Neon Postgres) erforderlich — das Dateisystem ist nicht dauerhaft. Siehe docs/DEPLOY_VERCEL.md");
+  }
   try {
     new Intl.DateTimeFormat("de-DE", { timeZone: e.JARVIS_TIMEZONE });
   } catch {
@@ -66,7 +76,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     host: e.JARVIS_HOST,
     port: e.JARVIS_PORT,
     publicUrl: e.JARVIS_PUBLIC_URL.replace(/\/$/, ""),
+    databaseUrl: e.DATABASE_URL,
     dbPath: e.JARVIS_DB_PATH,
+    cronSecret: e.CRON_SECRET,
     timezone: e.JARVIS_TIMEZONE,
     language: e.JARVIS_LANGUAGE,
     userName: e.JARVIS_USER_NAME,

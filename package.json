@@ -5,7 +5,7 @@
   "description": "JARVIS — persönlicher, tool-nutzender KI-Assistent",
   "type": "module",
   "engines": {
-    "node": ">=22.5"
+    "node": ">=22.5 <25"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -13,21 +13,25 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "setup:secrets": "tsx scripts/generate-secrets.ts"
+    "setup:secrets": "tsx scripts/generate-secrets.ts",
+    "vercel-build": "npm run typecheck"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.129.0",
+    "@electric-sql/pglite": "^0.5.8",
     "@fastify/cookie": "^11.1.2",
     "@fastify/rate-limit": "^11.2.0",
     "@fastify/static": "^10.1.5",
     "dotenv": "^18.0.5",
     "fastify": "^5.12.5",
+    "pg": "^8.23.1",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^22.20.4",
+    "@types/pg": "^8.23.1",
     "tsx": "^4.23.15",
-    "typescript": "^7.0.2",
+    "typescript": "^5.9.3",
     "vitest": "^5.0.3"
   }
 }

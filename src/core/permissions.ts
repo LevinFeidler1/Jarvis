@@ -86,10 +86,8 @@ export function decidePermission<I>(tool: ToolDefinition<I>, input: I, ctx: Perm
 
 const SETTINGS_KEY = "permissions";
 
-export function loadPermissionSettings(db: Db): PermissionSettings {
-  const row = db.prepare("SELECT value_json FROM settings WHERE key = ?").get(SETTINGS_KEY) as
-    | { value_json: string }
-    | undefined;
+export async function loadPermissionSettings(db: Db): Promise<PermissionSettings> {
+  const row = await db.one<{ value_json: string }>("SELECT value_json FROM settings WHERE key = $1", [SETTINGS_KEY]);
   if (!row) return structuredClone(DEFAULT_PERMISSION_SETTINGS);
   const stored = JSON.parse(row.value_json) as Partial<PermissionSettings>;
   return {
@@ -98,8 +96,9 @@ export function loadPermissionSettings(db: Db): PermissionSettings {
   };
 }
 
-export function savePermissionSettings(db: Db, settings: PermissionSettings): void {
-  db.prepare(
-    "INSERT INTO settings (key, value_json) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json",
-  ).run(SETTINGS_KEY, JSON.stringify(settings));
+export async function savePermissionSettings(db: Db, settings: PermissionSettings): Promise<void> {
+  await db.run(
+    "INSERT INTO settings (key, value_json) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value_json = excluded.value_json",
+    [SETTINGS_KEY, JSON.stringify(settings)],
+  );
 }

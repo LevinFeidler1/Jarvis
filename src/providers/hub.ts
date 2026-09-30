@@ -8,7 +8,7 @@ import { GoogleHttp } from "./google/http.js";
 import { GoogleAuth } from "./google/oauth.js";
 import { GoogleContactsProvider } from "./google/people.js";
 import { InAppNotificationProvider, LocalTaskProvider, ReminderStore } from "./local/local.js";
-import type { CalendarProvider, ContactProvider, EmailProvider, TaskProvider } from "./types.js";
+import type { CalendarProvider, ContactProvider, EmailProvider } from "./types.js";
 
 export interface IntegrationStatus {
   id: string;
@@ -26,7 +26,7 @@ const SETUP_HINT = "Einrichtung: Einstellungen → Integrationen (Anleitung: doc
  * connected: missing integrations raise NOT_CONFIGURED with setup guidance.
  */
 export class ProviderHub {
-  readonly tasks: TaskProvider;
+  readonly tasks: LocalTaskProvider;
   readonly reminders: ReminderStore;
   readonly notifications: InAppNotificationProvider;
   readonly googleAuth?: GoogleAuth;
@@ -57,29 +57,29 @@ export class ProviderHub {
     this.overrides = { ...this.overrides, ...p };
   }
 
-  private googleReady(): boolean {
-    return !!this.google && !!this.googleAuth?.isConnected();
+  private async googleReady(): Promise<boolean> {
+    return !!this.google && !!(await this.googleAuth?.isConnected());
   }
 
-  email(): EmailProvider {
+  async email(): Promise<EmailProvider> {
     if (this.overrides.email) return this.overrides.email;
-    if (this.googleReady()) return this.google!.email;
+    if (await this.googleReady()) return this.google!.email;
     throw new ToolError(`E-Mail ist noch nicht konfiguriert. ${SETUP_HINT}`, "NOT_CONFIGURED");
   }
 
-  calendar(): CalendarProvider {
+  async calendar(): Promise<CalendarProvider> {
     if (this.overrides.calendar) return this.overrides.calendar;
-    if (this.googleReady()) return this.google!.calendar;
+    if (await this.googleReady()) return this.google!.calendar;
     throw new ToolError(`Der Kalender ist noch nicht konfiguriert. ${SETUP_HINT}`, "NOT_CONFIGURED");
   }
 
-  contacts(): ContactProvider {
+  async contacts(): Promise<ContactProvider> {
     if (this.overrides.contacts) return this.overrides.contacts;
-    if (this.googleReady()) return this.google!.contacts;
+    if (await this.googleReady()) return this.google!.contacts;
     throw new ToolError(`Kontakte sind noch nicht konfiguriert. ${SETUP_HINT}`, "NOT_CONFIGURED");
   }
 
-  status(): IntegrationStatus[] {
+  async status(): Promise<IntegrationStatus[]> {
     let google: IntegrationStatus;
     if (!this.googleAuth) {
       google = {
@@ -90,7 +90,7 @@ export class ProviderHub {
         detail: "GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET fehlen in .env. Siehe docs/SETUP_GOOGLE.md.",
       };
     } else {
-      const s = this.googleAuth.status();
+      const s = await this.googleAuth.status();
       google = {
         id: "google",
         name: "Google (Gmail, Kalender, Kontakte)",

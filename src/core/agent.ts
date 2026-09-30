@@ -42,6 +42,13 @@ export interface AgentReply {
   securityWarning: boolean;
 }
 
+/** Live progress events for the UI (streamed while the agent works). */
+export type AgentEvent =
+  | { type: "thinking" }
+  | { type: "action"; action: ActionReport & { risk: RiskLevel } };
+
+export type AgentEventListener = (e: AgentEvent) => void;
+
 export interface AgentDeps {
   config: AppConfig;
   db: Db;
@@ -56,7 +63,10 @@ interface RunState {
   conversationId: string;
   tainted: boolean;
   actions: ActionReport[];
+  emit: AgentEventListener;
 }
+
+const noop: AgentEventListener = () => undefined;
 
 const APPROVE_RE = /^\s*(ja|jap|jo|yes|ok(ay)?|klar|bestätig\w*|genehmig\w*|send(e|en)?|abschicken|buch(e|en)?|mach( das| es)?|passt|einverstanden|go|do it)\b[\s!.]*$/i;
 const REJECT_RE = /^\s*(nein|nö|no|nope|abbrechen|abbruch|stopp?|nicht senden|lass (es|das)|verwerfen|cancel)\b[\s!.]*$/i;
@@ -82,18 +92,18 @@ export class Agent {
 
   // ─── Public entry points ────────────────────────────────────────────────
 
-  async handleUserMessage(conversationId: string | undefined, text: string): Promise<AgentReply> {
-    const conv = (conversationId && this.conversations.get(conversationId)) || this.conversations.create();
-    this.expireStale(conv.id);
+  async handleUserMessage(conversationId: string | undefined, text: string, emit: AgentEventListener = noop): Promise<AgentReply> {
+    const conv = (conversationId && (await this.conversations.get(conversationId))) || (await this.conversations.create());
+    await this.expireStale(conv.id);
 
     // A short "ja"/"nein" answers the open confirmation directly (server-side),
     // but only if exactly one action is waiting — otherwise it is ambiguous.
-    const pending = this.confirmations.listPending(conv.id);
+    const pending = await this.confirmations.listPending(conv.id);
     if (pending.length > 0 && (APPROVE_RE.test(text) || REJECT_RE.test(text))) {
-      if (pending.length === 1) return this.resolveConfirmation(pending[0]!.id, APPROVE_RE.test(text), text);
+      if (pending.length === 1) return this.resolveConfirmation(pending[0]!.id, APPROVE_RE.test(text), text, emit);
       const reply = `Es warten ${pending.length} Aktionen auf deine Bestätigung. Bitte bestätige oder verwirf sie einzeln in der Übersicht, damit nichts Falsches passiert.`;
-      this.conversations.append(conv.id, { role: "user", content: [{ type: "text", text }] }, text);
-      this.conversations.append(conv.id, { role: "assistant", content: [{ type: "text", text: reply }] }, reply);
+      await this.conversations.append(conv.id, { role: "user", content: [{ type: "text", text }] }, text);
+      await this.conversations.append(conv.id, { role: "assistant", content: [{ type: "text", text: reply }] }, reply);
       return this.reply(conv.id, reply, []);
     }
 
@@ -104,48 +114,48 @@ export class Agent {
         { type: "text", text },
       ],
     };
-    this.conversations.append(conv.id, userMessage, text);
-    return this.run({ conversationId: conv.id, tainted: conv.tainted, actions: [] });
+    await this.conversations.append(conv.id, userMessage, text);
+    return this.run({ conversationId: conv.id, tainted: conv.tainted, actions: [], emit });
   }
 
   /**
    * Executes (or rejects) a stored action exactly as it was prepared. The model
    * never gets a chance to alter the parameters after the user approved them.
    */
-  async resolveConfirmation(actionId: string, approve: boolean, userText?: string): Promise<AgentReply> {
-    const action = this.confirmations.get(actionId);
+  async resolveConfirmation(actionId: string, approve: boolean, userText?: string, emit: AgentEventListener = noop): Promise<AgentReply> {
+    const action = await this.confirmations.get(actionId);
     if (!action) throw new Error("Unbekannte Aktion");
-    const conv = this.conversations.get(action.conversationId);
+    const conv = await this.conversations.get(action.conversationId);
     if (!conv) throw new Error("Unbekannte Unterhaltung");
-    const state: RunState = { conversationId: conv.id, tainted: conv.tainted, actions: [] };
+    const state: RunState = { conversationId: conv.id, tainted: conv.tainted, actions: [], emit };
     const tool = this.deps.registry.get(action.toolName);
 
     if (action.status !== "pending") {
       return this.reply(conv.id, "Diese Aktion wurde bereits bearbeitet.", []);
     }
     if (this.confirmations.isExpired(action, this.now())) {
-      this.confirmations.resolve(action.id, "expired");
-      this.activity.update(action.activityId, "expired");
-      this.audit.record({ action: action.toolName, risk: action.risk, status: "EXPIRED", userConfirmation: false });
+      await this.confirmations.resolve(action.id, "expired");
+      await this.activity.update(action.activityId, "expired");
+      await this.audit.record({ action: action.toolName, risk: action.risk, status: "EXPIRED", userConfirmation: false });
       const text = "Die Bestätigung ist abgelaufen. Die Aktion wurde nicht ausgeführt. Sag Bescheid, wenn ich sie neu vorbereiten soll.";
-      this.appendSystemNote(conv.id, userText, `Aktion "${action.description}" ist abgelaufen und wurde nicht ausgeführt.`, text);
+      await this.appendSystemNote(conv.id, userText, `Aktion "${action.description}" ist abgelaufen und wurde nicht ausgeführt.`, text);
       return this.reply(conv.id, text, []);
     }
-    if (!this.confirmations.resolve(action.id, approve ? "approved" : "rejected")) {
+    if (!(await this.confirmations.resolve(action.id, approve ? "approved" : "rejected"))) {
       return this.reply(conv.id, "Diese Aktion wurde bereits bearbeitet.", []);
     }
 
     let note: string;
     if (!approve || !tool) {
-      this.activity.update(action.activityId, "rejected");
-      this.audit.record({
+      await this.activity.update(action.activityId, "rejected");
+      await this.audit.record({
         action: action.toolName,
         target: tool?.auditTarget?.(action.input),
         risk: action.risk,
         status: "REJECTED",
         userConfirmation: false,
       });
-      state.actions.push({ activityId: action.activityId, toolName: action.toolName, description: action.description, status: "rejected" });
+      this.track(state, { activityId: action.activityId, toolName: action.toolName, description: action.description, status: "rejected" }, action.risk);
       note = `Der Benutzer hat die Aktion ABGELEHNT; sie wurde nicht ausgeführt: ${action.description}`;
     } else {
       const outcome = await this.executeTool(tool, action.input, state, action.activityId, true, action.risk);
@@ -156,7 +166,7 @@ export class Agent {
 
     // Record the decision as a user turn, then let the agent continue the
     // workflow (e.g. next step after the event was created).
-    this.conversations.append(
+    await this.conversations.append(
       conv.id,
       {
         role: "user",
@@ -175,12 +185,13 @@ export class Agent {
   private async run(state: RunState): Promise<AgentReply> {
     const { config, llm, registry, memory } = this.deps;
     const tools = registry.toAnthropicTools();
-    const system = buildSystem(memory);
+    const system = await buildSystem(memory);
 
     for (let step = 0; step < config.maxAgentSteps; step++) {
       let response;
+      state.emit({ type: "thinking" });
       try {
-        response = await llm.create({ system, messages: this.conversations.history(state.conversationId), tools });
+        response = await llm.create({ system, messages: await this.conversations.history(state.conversationId), tools });
       } catch (err) {
         const msg =
           err instanceof LlmUnavailableError ? err.message : "Bei der Verarbeitung ist ein unerwarteter Fehler aufgetreten.";
@@ -195,8 +206,8 @@ export class Agent {
         return this.reply(state.conversationId, "Dabei kann ich nicht helfen.", state.actions);
       }
 
-      this.conversations.append(state.conversationId, { role: "assistant", content: response.content }, extractText(response.content) || null);
-      this.recordServerTools(response.content, state);
+      await this.conversations.append(state.conversationId, { role: "assistant", content: response.content }, extractText(response.content) || null);
+      await this.recordServerTools(response.content, state);
 
       if (response.stop_reason === "pause_turn") continue;
       if (response.stop_reason === "max_tokens") {
@@ -210,7 +221,7 @@ export class Agent {
 
       // Independent tool calls run concurrently; all results go back in ONE user message.
       const results = await Promise.all(toolUses.map((tu) => this.handleToolUse(tu, state)));
-      this.conversations.append(state.conversationId, { role: "user", content: results }, null);
+      await this.conversations.append(state.conversationId, { role: "user", content: results }, null);
     }
 
     const text = `Ich habe die Bearbeitung nach ${config.maxAgentSteps} Schritten gestoppt, um keine Endlosschleife zu riskieren. Bisherige Ergebnisse siehe Aktivität.`;
@@ -241,29 +252,29 @@ export class Agent {
     // 3. Permission check.
     const decision = decidePermission(tool, input, {
       tainted: state.tainted,
-      settings: loadPermissionSettings(this.deps.db),
+      settings: await loadPermissionSettings(this.deps.db),
     });
 
     if (decision.decision === "deny") {
-      const act = this.activity.create({ conversationId: state.conversationId, toolName: tool.name, description, risk: decision.risk, status: "denied" });
-      this.audit.record({ action: tool.name, target: tool.auditTarget?.(input), risk: decision.risk, status: "DENIED", userConfirmation: false });
-      state.actions.push({ activityId: act.id, toolName: tool.name, description, status: "denied" });
+      const act = await this.activity.create({ conversationId: state.conversationId, toolName: tool.name, description, risk: decision.risk, status: "denied" });
+      await this.audit.record({ action: tool.name, target: tool.auditTarget?.(input), risk: decision.risk, status: "DENIED", userConfirmation: false });
+      this.track(state, { activityId: act.id, toolName: tool.name, description, status: "denied" }, decision.risk);
       return result(JSON.stringify({ ok: false, status: "denied", reasons: decision.reasons }), true);
     }
 
     if (decision.decision === "confirm") {
-      const act = this.activity.create({
+      const act = await this.activity.create({
         conversationId: state.conversationId,
         toolName: tool.name,
         description,
         risk: decision.risk,
         status: "awaiting_confirmation",
       });
-      const pending = this.confirmations.create(
+      const pending = await this.confirmations.create(
         { conversationId: state.conversationId, activityId: act.id, toolName: tool.name, input, description, risk: decision.risk, reasons: decision.reasons },
         this.now(),
       );
-      state.actions.push({ activityId: act.id, toolName: tool.name, description, status: "awaiting_confirmation" });
+      this.track(state, { activityId: act.id, toolName: tool.name, description, status: "awaiting_confirmation" }, decision.risk);
       return result(
         JSON.stringify({
           ok: false,
@@ -280,7 +291,7 @@ export class Agent {
     }
 
     // 4. Execute + verify.
-    const act = this.activity.create({ conversationId: state.conversationId, toolName: tool.name, description, risk: decision.risk, status: "planned" });
+    const act = await this.activity.create({ conversationId: state.conversationId, toolName: tool.name, description, risk: decision.risk, status: "planned" });
     const outcome = await this.executeTool(tool, input, state, act.id, false, decision.risk);
     return result(outcome.content, outcome.isError);
   }
@@ -294,7 +305,8 @@ export class Agent {
     risk: RiskLevel,
   ): Promise<{ content: string; isError: boolean }> {
     const description = safeDescribe(tool, input);
-    this.activity.update(activityId, "executing");
+    await this.activity.update(activityId, "executing");
+    state.emit({ type: "action", action: { activityId, toolName: tool.name, description, status: "executing", risk } });
     const ctx: ToolContext = {
       config: this.deps.config,
       db: this.deps.db,
@@ -315,11 +327,11 @@ export class Agent {
     }
 
     const status: ActionStatus = !res.ok ? "failed" : res.partial ? "partially_succeeded" : "succeeded";
-    this.activity.update(activityId, status, res.ok ? undefined : res.error);
-    state.actions.push({ activityId, toolName: tool.name, description, status, error: res.ok ? undefined : res.error });
+    await this.activity.update(activityId, status, res.ok ? undefined : res.error);
+    this.track(state, { activityId, toolName: tool.name, description, status, error: res.ok ? undefined : res.error }, risk);
     if (risk >= RiskLevel.LOW || confirmed) {
       const auditStatus: AuditStatus = !res.ok ? "FAILED" : res.partial ? "PARTIAL" : "SUCCESS";
-      this.audit.record({
+      await this.audit.record({
         action: tool.name,
         target: tool.auditTarget?.(input),
         risk,
@@ -339,7 +351,7 @@ export class Agent {
       const scan = scanForInjection(...res.externalData.texts);
       if (scan.suspicious && !state.tainted) {
         state.tainted = true;
-        this.conversations.markTainted(state.conversationId);
+        await this.conversations.markTainted(state.conversationId);
       }
       payload = wrapExternal(res.externalData.source, payload, scan);
     }
@@ -347,41 +359,47 @@ export class Agent {
   }
 
   /** Server-side tools (web search) run at Anthropic; log them for transparency. */
-  private recordServerTools(content: Anthropic.Beta.BetaContentBlock[], state: RunState): void {
+  private async recordServerTools(content: Anthropic.Beta.BetaContentBlock[], state: RunState): Promise<void> {
     for (const block of content) {
       if (block.type !== "server_tool_use") continue;
       const query = (block.input as { query?: string })?.query;
       const description = query ? `Websuche: "${query}"` : `Server-Tool ${block.name}`;
-      const act = this.activity.create({ conversationId: state.conversationId, toolName: block.name, description, risk: RiskLevel.READ, status: "succeeded" });
-      state.actions.push({ activityId: act.id, toolName: block.name, description, status: "succeeded" });
+      const act = await this.activity.create({ conversationId: state.conversationId, toolName: block.name, description, risk: RiskLevel.READ, status: "succeeded" });
+      this.track(state, { activityId: act.id, toolName: block.name, description, status: "succeeded" }, RiskLevel.READ);
     }
   }
 
-  private appendSystemNote(conversationId: string, userText: string | undefined, note: string, replyText: string): void {
-    this.conversations.append(
+  /** Records an action outcome for the reply and streams it to the UI. */
+  private track(state: RunState, report: ActionReport, risk: RiskLevel): void {
+    state.actions.push(report);
+    state.emit({ type: "action", action: { ...report, risk } });
+  }
+
+  private async appendSystemNote(conversationId: string, userText: string | undefined, note: string, replyText: string): Promise<void> {
+    await this.conversations.append(
       conversationId,
       { role: "user", content: [{ type: "text", text: `${userText ? `${userText}\n` : ""}[Bestätigungssystem] ${note}` }] },
       userText ?? null,
     );
-    this.conversations.append(conversationId, { role: "assistant", content: [{ type: "text", text: replyText }] }, replyText);
+    await this.conversations.append(conversationId, { role: "assistant", content: [{ type: "text", text: replyText }] }, replyText);
   }
 
-  private expireStale(conversationId: string): void {
-    for (const p of this.confirmations.listPending(conversationId)) {
-      if (this.confirmations.isExpired(p, this.now()) && this.confirmations.resolve(p.id, "expired")) {
-        this.activity.update(p.activityId, "expired");
-        this.audit.record({ action: p.toolName, risk: p.risk, status: "EXPIRED", userConfirmation: false });
+  private async expireStale(conversationId: string): Promise<void> {
+    for (const p of await this.confirmations.listPending(conversationId)) {
+      if (this.confirmations.isExpired(p, this.now()) && (await this.confirmations.resolve(p.id, "expired"))) {
+        await this.activity.update(p.activityId, "expired");
+        await this.audit.record({ action: p.toolName, risk: p.risk, status: "EXPIRED", userConfirmation: false });
       }
     }
   }
 
-  private reply(conversationId: string, text: string, actions: ActionReport[]): AgentReply {
+  private async reply(conversationId: string, text: string, actions: ActionReport[]): Promise<AgentReply> {
     return {
       conversationId,
       text: text.trim() || "Erledigt.",
       actions,
-      pendingActions: this.confirmations.listPending(conversationId).map(toView),
-      securityWarning: this.conversations.get(conversationId)?.tainted ?? false,
+      pendingActions: (await this.confirmations.listPending(conversationId)).map(toView),
+      securityWarning: (await this.conversations.get(conversationId))?.tainted ?? false,
     };
   }
 }

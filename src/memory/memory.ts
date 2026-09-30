@@ -17,7 +17,7 @@ export interface MemoryEntry {
   updatedAt: string;
 }
 
-const SELECT = `SELECT id, category, key, value, source, confidence, created_at AS createdAt, updated_at AS updatedAt FROM memory`;
+const SELECT = `SELECT id, category, key, value, source, confidence, created_at AS "createdAt", updated_at AS "updatedAt" FROM memory`;
 
 /**
  * Structured, user-controllable memory (ARCHITECTURE.md §7).
@@ -26,65 +26,64 @@ const SELECT = `SELECT id, category, key, value, source, confidence, created_at 
 export class MemoryStore {
   constructor(private readonly db: Db) {}
 
-  upsert(input: { category: MemoryCategory; key: string; value: string; source: MemorySource; confidence?: number }): MemoryEntry {
+  async upsert(input: { category: MemoryCategory; key: string; value: string; source: MemorySource; confidence?: number }): Promise<MemoryEntry> {
     const key = input.key.trim();
     const confidence = input.confidence ?? (input.source === "user" ? 1 : 0.6);
-    const existing = this.db.prepare(`${SELECT} WHERE category = ? AND key = ?`).get(input.category, key) as
-      | MemoryEntry
-      | undefined;
+    const existing = await this.db.one<MemoryEntry>(`${SELECT} WHERE category = $1 AND key = $2`, [input.category, key]);
     const ts = nowIso();
     if (existing) {
       // An inferred fact never overwrites something the user stated explicitly.
       if (existing.source === "user" && input.source === "inferred") return existing;
-      this.db
-        .prepare("UPDATE memory SET value = ?, source = ?, confidence = ?, updated_at = ? WHERE id = ?")
-        .run(input.value, input.source, confidence, ts, existing.id);
+      await this.db.run("UPDATE memory SET value = $1, source = $2, confidence = $3, updated_at = $4 WHERE id = $5", [
+        input.value,
+        input.source,
+        confidence,
+        ts,
+        existing.id,
+      ]);
       return { ...existing, value: input.value, source: input.source, confidence, updatedAt: ts };
     }
     const id = randomUUID();
-    this.db
-      .prepare(
-        "INSERT INTO memory (id, category, key, value, source, confidence, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      )
-      .run(id, input.category, key, input.value, input.source, confidence, ts, ts);
+    await this.db.run(
+      "INSERT INTO memory (id, category, key, value, source, confidence, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+      [id, input.category, key, input.value, input.source, confidence, ts, ts],
+    );
     return { id, category: input.category, key, value: input.value, source: input.source, confidence, createdAt: ts, updatedAt: ts };
   }
 
-  list(category?: MemoryCategory): MemoryEntry[] {
-    const rows = category
-      ? this.db.prepare(`${SELECT} WHERE category = ? ORDER BY key`).all(category)
-      : this.db.prepare(`${SELECT} ORDER BY category, key`).all();
-    return rows as unknown as MemoryEntry[];
+  list(category?: MemoryCategory): Promise<MemoryEntry[]> {
+    return category
+      ? this.db.query<MemoryEntry>(`${SELECT} WHERE category = $1 ORDER BY key`, [category])
+      : this.db.query<MemoryEntry>(`${SELECT} ORDER BY category, key`);
   }
 
-  search(query: string): MemoryEntry[] {
+  search(query: string): Promise<MemoryEntry[]> {
     const q = `%${query.trim().toLowerCase()}%`;
-    return this.db
-      .prepare(`${SELECT} WHERE lower(key) LIKE ? OR lower(value) LIKE ? ORDER BY category, key LIMIT 50`)
-      .all(q, q) as unknown as MemoryEntry[];
+    return this.db.query<MemoryEntry>(`${SELECT} WHERE lower(key) LIKE $1 OR lower(value) LIKE $1 ORDER BY category, key LIMIT 50`, [q]);
   }
 
-  get(id: string): MemoryEntry | undefined {
-    return this.db.prepare(`${SELECT} WHERE id = ?`).get(id) as MemoryEntry | undefined;
+  get(id: string): Promise<MemoryEntry | undefined> {
+    return this.db.one<MemoryEntry>(`${SELECT} WHERE id = $1`, [id]);
   }
 
-  update(id: string, patch: { value?: string; key?: string; category?: MemoryCategory }): MemoryEntry | undefined {
-    const existing = this.get(id);
+  async update(id: string, patch: { value?: string; key?: string; category?: MemoryCategory }): Promise<MemoryEntry | undefined> {
+    const existing = await this.get(id);
     if (!existing) return undefined;
     const next = { ...existing, ...patch, source: "user" as const, confidence: 1, updatedAt: nowIso() };
-    this.db
-      .prepare("UPDATE memory SET category = ?, key = ?, value = ?, source = ?, confidence = ?, updated_at = ? WHERE id = ?")
-      .run(next.category, next.key, next.value, next.source, next.confidence, next.updatedAt, id);
+    await this.db.run(
+      "UPDATE memory SET category = $1, key = $2, value = $3, source = $4, confidence = $5, updated_at = $6 WHERE id = $7",
+      [next.category, next.key, next.value, next.source, next.confidence, next.updatedAt, id],
+    );
     return next;
   }
 
-  delete(id: string): boolean {
-    return Number(this.db.prepare("DELETE FROM memory WHERE id = ?").run(id).changes) === 1;
+  async delete(id: string): Promise<boolean> {
+    return (await this.db.run("DELETE FROM memory WHERE id = $1", [id])) === 1;
   }
 
   /** Compact memory block for the system context. Uncertain entries are labelled. */
-  renderForPrompt(limit = 200): string {
-    const entries = this.list().slice(0, limit);
+  async renderForPrompt(limit = 200): Promise<string> {
+    const entries = (await this.list()).slice(0, limit);
     if (entries.length === 0) return "(noch keine Einträge)";
     return entries
       .map((e) => {

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
+import { testDb } from "./helpers.js";
 import { describe, expect, it } from "vitest";
-import { openDatabase } from "../src/db/database.js";
 import { GmailProvider, toGmailQuery } from "../src/providers/google/gmail.js";
 import { GoogleHttp } from "../src/providers/google/http.js";
 import { buildRawMessage } from "../src/providers/google/mime.js";
@@ -22,10 +22,10 @@ function parseBody(body: unknown): unknown {
   }
 }
 
-function setup(responder: (call: Call) => Response) {
-  const db = openDatabase(":memory:");
+async function setup(responder: (call: Call) => Response) {
+  const db = await testDb();
   const tokens = new TokenStore(db, randomBytes(32));
-  tokens.save("google", { accessToken: "at", refreshToken: "rt", expiresAt: Date.now() + 3_600_000 }, GOOGLE_SCOPES);
+  await tokens.save("google", { accessToken: "at", refreshToken: "rt", expiresAt: Date.now() + 3_600_000 }, GOOGLE_SCOPES);
   const calls: Call[] = [];
   const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
     const call = { url: String(input), method: init?.method ?? "GET", body: parseBody(init?.body) };
@@ -46,7 +46,7 @@ describe("Gmail provider", () => {
   });
 
   it("sends a plain email with UTF-8 subject", async () => {
-    const { calls, gmail } = setup(() => json({ id: "s1", threadId: "t1" }));
+    const { calls, gmail } = await setup(() => json({ id: "s1", threadId: "t1" }));
     await gmail.sendEmail({ to: ["anna@example.com"], subject: "Grüße", body: "Donnerstag passt." });
     expect(calls[0]!.url).toContain("/messages/send");
     const raw = decodeRaw((calls[0]!.body as { raw: string }).raw);
@@ -56,7 +56,7 @@ describe("Gmail provider", () => {
   });
 
   it("replies in-thread with In-Reply-To/References", async () => {
-    const { calls, gmail } = setup((c) =>
+    const { calls, gmail } = await setup((c) =>
       c.method === "GET"
         ? json({
             id: "m1",
@@ -79,23 +79,23 @@ describe("Gmail provider", () => {
 
   it("retries idempotent reads on 503 but never retries sending", async () => {
     let n = 0;
-    const read = setup(() => (++n < 3 ? json({ error: "busy" }, 503) : json({ messages: [] })));
+    const read = await setup(() => (++n < 3 ? json({ error: "busy" }, 503) : json({ messages: [] })));
     await expect(read.gmail.listEmails({})).resolves.toEqual([]);
     expect(read.calls).toHaveLength(3);
 
-    const send = setup(() => json({ error: { message: "busy" } }, 503));
+    const send = await setup(() => json({ error: { message: "busy" } }, 503));
     await expect(send.gmail.sendEmail({ to: ["a@b.de"], subject: "x", body: "y" })).rejects.toMatchObject({ code: "UPSTREAM_ERROR" });
     expect(send.calls).toHaveLength(1);
   });
 
   it("maps 429 to RATE_LIMITED after retries", async () => {
-    const { gmail } = setup(() => json({}, 429));
+    const { gmail } = await setup(() => json({}, 429));
     await expect(gmail.listEmails({})).rejects.toMatchObject({ code: "RATE_LIMITED" });
   });
 
   it("extracts plain text from multipart messages and detects newsletters", async () => {
     const b64 = (s: string) => Buffer.from(s).toString("base64url");
-    const { gmail } = setup(() =>
+    const { gmail } = await setup(() =>
       json({
         id: "m1",
         threadId: "t1",
@@ -118,9 +118,9 @@ describe("Gmail provider", () => {
 });
 
 describe("Google OAuth", () => {
-  it("builds a least-privilege consent URL with state and PKCE", () => {
-    const { auth } = setup(() => json({}));
-    const url = new URL(auth.createAuthUrl());
+  it("builds a least-privilege consent URL with state and PKCE", async () => {
+    const { auth } = await setup(() => json({}));
+    const url = new URL(await auth.createAuthUrl());
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
     expect(url.searchParams.get("state")).toBeTruthy();
     expect(url.searchParams.get("access_type")).toBe("offline");
@@ -130,20 +130,20 @@ describe("Google OAuth", () => {
   });
 
   it("rejects callbacks with unknown state", async () => {
-    const { auth } = setup(() => json({}));
+    const { auth } = await setup(() => json({}));
     await expect(auth.handleCallback("code", "forged")).rejects.toThrow(/State/);
   });
 
   it("refreshes expired tokens and handles revoked access", async () => {
-    const { auth, calls } = setup(() => json({ access_token: "new", expires_in: 3600 }));
+    const { auth, calls } = await setup(() => json({ access_token: "new", expires_in: 3600 }));
     // Force expiry
     const store = (auth as unknown as { tokens: TokenStore }).tokens;
-    store.save("google", { accessToken: "old", refreshToken: "rt", expiresAt: 0 }, GOOGLE_SCOPES);
+    await store.save("google", { accessToken: "old", refreshToken: "rt", expiresAt: 0 }, GOOGLE_SCOPES);
     expect(await auth.getAccessToken()).toBe("new");
     expect(calls[0]!.url).toContain("oauth2.googleapis.com/token");
 
-    const revoked = setup(() => json({ error: "invalid_grant" }, 400));
-    (revoked.auth as unknown as { tokens: TokenStore }).tokens.save("google", { accessToken: "old", refreshToken: "rt", expiresAt: 0 }, []);
+    const revoked = await setup(() => json({ error: "invalid_grant" }, 400));
+    await (revoked.auth as unknown as { tokens: TokenStore }).tokens.save("google", { accessToken: "old", refreshToken: "rt", expiresAt: 0 }, []);
     await expect(revoked.auth.getAccessToken()).rejects.toMatchObject({ code: "AUTH_FAILED" });
   });
 });

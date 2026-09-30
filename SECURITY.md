@@ -60,17 +60,25 @@ Umsetzung: `src/core/permissions.ts`. Die Stufe steht fest im Tool-Code.
 
 * Zugriff nur mit `JARVIS_ACCESS_TOKEN` (≥ 32 Zeichen). Login erzeugt eine
   zufällige Session-ID (256 Bit), gespeichert als SHA-256-Hash;
-  Cookie `HttpOnly`, `SameSite=Strict`, `Secure` bei HTTPS.
+  Cookie `HttpOnly`, `SameSite=Strict`, `Secure` bei HTTPS; Ablauf nach 7 Tagen.
+* `/api/cron/tick` ist nur mit `Authorization: Bearer <CRON_SECRET>` nutzbar;
+  ohne gesetztes Secret ist der Endpunkt deaktiviert.
+* Der OAuth-Callback ist ohne Session erreichbar (Cross-Site-Redirect von Google
+  sendet kein `SameSite=Strict`-Cookie), aber nur mit einem einmaligen,
+  10 Minuten gültigen `state` samt PKCE-Verifier nutzbar.
 * **CSRF:** Alle zustandsändernden Requests benötigen den Header
   `X-Jarvis-CSRF` mit dem sessiongebundenen CSRF-Token und einen
   passenden `Origin`-Header. Cross-Origin-Requests werden abgelehnt.
 * **Rate-Limit:** global und strenger für `/api/login` und `/api/chat`.
 * **Input-Validierung:** Jede API-Route und jede Tool-Eingabe wird mit zod
   validiert. Tool-Eingaben des Modells sind nicht vertrauenswürdig.
-* Server bindet standardmäßig an `127.0.0.1`. Für Fernzugriff: Reverse Proxy mit
-  TLS vorschalten.
-* Security-Header: CSP (`default-src 'self'`), `X-Frame-Options: DENY`,
-  `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`.
+* Lokal bindet der Server an `127.0.0.1`. Produktion läuft auf Vercel mit TLS
+  und HSTS; Rate-Limits gelten dort pro Serverless-Instanz.
+* Security-Header (Server und `vercel.json` für CDN-Dateien): strikte CSP ohne
+  Inline-Skripte und ohne Drittquellen, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, HSTS.
+* Die UI rendert alle Fremddaten (E-Mails, Termine, Modellantworten) über
+  DOM-Knoten/`textContent`, nie als HTML — auch der Markdown-Renderer.
 
 ## 5. Secrets & Tokens
 

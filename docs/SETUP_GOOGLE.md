@@ -51,12 +51,13 @@ Dauer: ca. 10 Minuten. Du brauchst nur dein eigenes Google-Konto.
 4. **OAuth-Client erstellen**
    *Clients* (bzw. *Anmeldedaten*) → *Client erstellen* → **Webanwendung**
    - Name: `JARVIS local`
-   - *Autorisierte Weiterleitungs-URIs*:
+   - *Autorisierte Weiterleitungs-URIs* (beide eintragen, wenn du lokal und auf Vercel arbeitest):
      `http://localhost:3000/api/integrations/google/callback`
+     `https://<projektname>.vercel.app/api/integrations/google/callback`
      (muss exakt `JARVIS_PUBLIC_URL` + `/api/integrations/google/callback` sein)
    - *Erstellen* → Client-ID und Clientschlüssel kopieren.
 
-5. **In `.env` eintragen** (nie committen — `.env` steht in `.gitignore`)
+5. **In `.env` eintragen** — bzw. auf Vercel unter *Settings → Environment Variables* (nie committen)
 
    ```dotenv
    GOOGLE_CLIENT_ID=123456789-abc.apps.googleusercontent.com
@@ -64,7 +65,7 @@ Dauer: ca. 10 Minuten. Du brauchst nur dein eigenes Google-Konto.
    JARVIS_PUBLIC_URL=http://localhost:3000
    ```
 
-6. **JARVIS neu starten** (`npm start`) → *Einstellungen → Integrationen →
+6. **JARVIS neu starten** (`npm start`, auf Vercel: *Redeploy*) → *Einstellungen → Integrationen →
    Google → Verbinden* → Konto wählen → alle Berechtigungen bestätigen.
    Danach steht dort „verbunden" mit deiner Adresse.
 
@@ -81,9 +82,7 @@ Dauer: ca. 10 Minuten. Du brauchst nur dein eigenes Google-Konto.
 - *Trennen* in den Einstellungen löscht die Tokens und widerruft den Zugriff bei Google.
   Zusätzlich jederzeit möglich unter <https://myaccount.google.com/permissions>.
 - Der Clientschlüssel gehört nur in `.env` bzw. deinen Secret-Manager.
-- Für Zugriff von außerhalb deines Rechners: HTTPS-Reverse-Proxy (z.B. Caddy)
-  vorschalten, `JARVIS_PUBLIC_URL` auf die HTTPS-Adresse setzen und diese URL
-  zusätzlich als Weiterleitungs-URI im OAuth-Client eintragen.
+- Für Zugriff von überall: Deployment auf Vercel, siehe [DEPLOY_VERCEL.md](DEPLOY_VERCEL.md).
 
 ## Fehlerbehebung
 

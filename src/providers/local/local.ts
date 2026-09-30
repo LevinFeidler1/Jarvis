@@ -4,10 +4,10 @@ import { nowIso } from "../../db/database.js";
 import { ToolError } from "../../core/types.js";
 import type { NotificationProvider, Reminder, Task, TaskPriority, TaskProvider, TaskStatus } from "../types.js";
 
-const TASK_SELECT = `SELECT id, title, notes, due, priority, status, project, created_at AS createdAt,
-  updated_at AS updatedAt, completed_at AS completedAt FROM tasks`;
+const TASK_SELECT = `SELECT id, title, notes, due, priority, status, project, created_at AS "createdAt",
+  updated_at AS "updatedAt", completed_at AS "completedAt" FROM tasks`;
 
-/** Real, persistent task list stored in the local database. */
+/** Real, persistent task list stored in the JARVIS database. */
 export class LocalTaskProvider implements TaskProvider {
   readonly name = "JARVIS (lokal)";
   constructor(private readonly db: Db) {}
@@ -17,24 +17,24 @@ export class LocalTaskProvider implements TaskProvider {
     const params: string[] = [];
     const status = filter.status ?? "open";
     if (status !== "all") {
-      where.push("status = ?");
       params.push(status);
+      where.push(`status = $${params.length}`);
     }
     if (filter.dueBefore) {
-      where.push("due IS NOT NULL AND due <= ?");
       params.push(filter.dueBefore);
+      where.push(`due IS NOT NULL AND due <= $${params.length}`);
     }
     if (filter.project) {
-      where.push("lower(project) = lower(?)");
       params.push(filter.project);
+      where.push(`lower(project) = lower($${params.length})`);
     }
     const sql = `${TASK_SELECT} ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-      ORDER BY status, CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END, due IS NULL, due, created_at`;
-    return this.db.prepare(sql).all(...params) as unknown as Task[];
+      ORDER BY status DESC, CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END, due IS NULL, due, created_at`;
+    return this.db.query<Task>(sql, params);
   }
 
-  private get(id: string): Task {
-    const t = this.db.prepare(`${TASK_SELECT} WHERE id = ?`).get(id) as Task | undefined;
+  private async get(id: string): Promise<Task> {
+    const t = await this.db.one<Task>(`${TASK_SELECT} WHERE id = $1`, [id]);
     if (!t) throw new ToolError(`Aufgabe ${id} nicht gefunden`, "NOT_FOUND");
     return t;
   }
@@ -42,11 +42,10 @@ export class LocalTaskProvider implements TaskProvider {
   async create(input: { title: string; notes?: string; due?: string; priority?: TaskPriority; project?: string }): Promise<Task> {
     const id = randomUUID();
     const ts = nowIso();
-    this.db
-      .prepare(
-        "INSERT INTO tasks (id, title, notes, due, priority, status, project, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?)",
-      )
-      .run(id, input.title, input.notes ?? null, input.due ?? null, input.priority ?? "normal", input.project ?? null, ts, ts);
+    await this.db.run(
+      "INSERT INTO tasks (id, title, notes, due, priority, status, project, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, 'open', $6, $7, $8)",
+      [id, input.title, input.notes ?? null, input.due ?? null, input.priority ?? "normal", input.project ?? null, ts, ts],
+    );
     return this.get(id);
   }
 
@@ -54,60 +53,73 @@ export class LocalTaskProvider implements TaskProvider {
     id: string,
     patch: { title?: string; notes?: string | null; due?: string | null; priority?: TaskPriority; project?: string | null },
   ): Promise<Task> {
-    const t = this.get(id);
+    const t = await this.get(id);
     const next = { ...t, ...patch };
-    this.db
-      .prepare("UPDATE tasks SET title = ?, notes = ?, due = ?, priority = ?, project = ?, updated_at = ? WHERE id = ?")
-      .run(next.title, next.notes, next.due, next.priority, next.project, nowIso(), id);
+    await this.db.run("UPDATE tasks SET title = $1, notes = $2, due = $3, priority = $4, project = $5, updated_at = $6 WHERE id = $7", [
+      next.title,
+      next.notes,
+      next.due,
+      next.priority,
+      next.project,
+      nowIso(),
+      id,
+    ]);
     return this.get(id);
   }
 
   async complete(id: string): Promise<Task> {
-    this.get(id);
+    await this.get(id);
     const ts = nowIso();
-    this.db.prepare("UPDATE tasks SET status = 'done', completed_at = ?, updated_at = ? WHERE id = ?").run(ts, ts, id);
+    await this.db.run("UPDATE tasks SET status = 'done', completed_at = $1, updated_at = $1 WHERE id = $2", [ts, id]);
+    return this.get(id);
+  }
+
+  async reopen(id: string): Promise<Task> {
+    await this.get(id);
+    await this.db.run("UPDATE tasks SET status = 'open', completed_at = NULL, updated_at = $1 WHERE id = $2", [nowIso(), id]);
     return this.get(id);
   }
 
   async delete(id: string): Promise<void> {
-    this.get(id);
-    this.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
+    await this.get(id);
+    await this.db.run("DELETE FROM tasks WHERE id = $1", [id]);
   }
 }
 
-const REMINDER_SELECT = "SELECT id, text, remind_at AS remindAt, status, created_at AS createdAt FROM reminders";
+const REMINDER_SELECT = `SELECT id, text, remind_at AS "remindAt", status, created_at AS "createdAt" FROM reminders`;
 
 export class ReminderStore {
   constructor(private readonly db: Db) {}
 
-  create(text: string, remindAt: string): Reminder {
+  async create(text: string, remindAt: string): Promise<Reminder> {
     const id = randomUUID();
     const ts = nowIso();
-    this.db
-      .prepare("INSERT INTO reminders (id, text, remind_at, status, created_at) VALUES (?, ?, ?, 'scheduled', ?)")
-      .run(id, text, remindAt, ts);
+    await this.db.run("INSERT INTO reminders (id, text, remind_at, status, created_at) VALUES ($1, $2, $3, 'scheduled', $4)", [
+      id,
+      text,
+      remindAt,
+      ts,
+    ]);
     return { id, text, remindAt, status: "scheduled", createdAt: ts };
   }
 
-  list(status: Reminder["status"] | "all" = "scheduled"): Reminder[] {
-    return (
-      status === "all"
-        ? this.db.prepare(`${REMINDER_SELECT} ORDER BY remind_at`).all()
-        : this.db.prepare(`${REMINDER_SELECT} WHERE status = ? ORDER BY remind_at`).all(status)
-    ) as unknown as Reminder[];
+  list(status: Reminder["status"] | "all" = "scheduled"): Promise<Reminder[]> {
+    return status === "all"
+      ? this.db.query<Reminder>(`${REMINDER_SELECT} ORDER BY remind_at`)
+      : this.db.query<Reminder>(`${REMINDER_SELECT} WHERE status = $1 ORDER BY remind_at`, [status]);
   }
 
-  cancel(id: string): boolean {
-    return Number(this.db.prepare("UPDATE reminders SET status = 'cancelled' WHERE id = ? AND status = 'scheduled'").run(id).changes) === 1;
+  async cancel(id: string): Promise<boolean> {
+    return (await this.db.run("UPDATE reminders SET status = 'cancelled' WHERE id = $1 AND status = 'scheduled'", [id])) === 1;
   }
 
-  /** Marks due reminders as fired and returns them. */
-  takeDue(now: Date): Reminder[] {
-    const due = this.db
-      .prepare(`${REMINDER_SELECT} WHERE status = 'scheduled' AND remind_at <= ? ORDER BY remind_at`)
-      .all(now.toISOString()) as unknown as Reminder[];
-    const mark = this.db.prepare("UPDATE reminders SET status = 'fired' WHERE id = ? AND status = 'scheduled'");
-    return due.filter((r) => Number(mark.run(r.id).changes) === 1);
+  /** Atomically marks due reminders as fired and returns them (safe across instances). */
+  takeDue(now: Date): Promise<Reminder[]> {
+    return this.db.query<Reminder>(
+      `UPDATE reminders SET status = 'fired' WHERE status = 'scheduled' AND remind_at <= $1
+       RETURNING id, text, remind_at AS "remindAt", status, created_at AS "createdAt"`,
+      [now.toISOString()],
+    );
   }
 }
 
@@ -126,22 +138,28 @@ export class InAppNotificationProvider implements NotificationProvider {
 
   async notify(title: string, body?: string): Promise<{ id: string }> {
     const id = randomUUID();
-    this.db
-      .prepare("INSERT INTO notifications (id, title, body, read, created_at) VALUES (?, ?, ?, 0, ?)")
-      .run(id, title, body ?? null, nowIso());
+    await this.db.run("INSERT INTO notifications (id, title, body, read, created_at) VALUES ($1, $2, $3, FALSE, $4)", [
+      id,
+      title,
+      body ?? null,
+      nowIso(),
+    ]);
     return { id };
   }
 
-  list(unreadOnly = false, limit = 50): AppNotification[] {
-    const rows = this.db
-      .prepare(
-        `SELECT id, title, body, read, created_at AS createdAt FROM notifications ${unreadOnly ? "WHERE read = 0" : ""} ORDER BY created_at DESC LIMIT ?`,
-      )
-      .all(limit) as Array<Omit<AppNotification, "read"> & { read: number }>;
-    return rows.map((r) => ({ ...r, read: r.read === 1 }));
+  list(unreadOnly = false, limit = 50): Promise<AppNotification[]> {
+    return this.db.query<AppNotification>(
+      `SELECT id, title, body, read, created_at AS "createdAt" FROM notifications ${unreadOnly ? "WHERE read = FALSE" : ""}
+       ORDER BY created_at DESC LIMIT $1`,
+      [limit],
+    );
   }
 
-  markRead(id: string): void {
-    this.db.prepare("UPDATE notifications SET read = 1 WHERE id = ?").run(id);
+  async markRead(id: string): Promise<void> {
+    await this.db.run("UPDATE notifications SET read = TRUE WHERE id = $1", [id]);
+  }
+
+  async markAllRead(): Promise<void> {
+    await this.db.run("UPDATE notifications SET read = TRUE WHERE read = FALSE");
   }
 }

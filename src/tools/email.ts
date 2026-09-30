@@ -30,7 +30,7 @@ const listInput = z.object({
 });
 
 async function listEmails(input: z.infer<typeof listInput>, ctx: Parameters<ToolDefinition["execute"]>[1], inboxDefault: boolean) {
-  const mails = await ctx.providers.email().listEmails({
+  const mails = await (await ctx.providers.email()).listEmails({
     text: input.query,
     from: input.from,
     unreadOnly: input.unread_only,
@@ -90,7 +90,7 @@ export const emailTools: ToolDefinition[] = [
     input: z.object({ message_id: id }),
     describe: () => "E-Mail lesen",
     async execute(input, ctx) {
-      const m = await ctx.providers.email().readEmail(input.message_id);
+      const m = await (await ctx.providers.email()).readEmail(input.message_id);
       return external(
         `email:${m.from.email}`,
         {
@@ -116,7 +116,7 @@ export const emailTools: ToolDefinition[] = [
     describe: (i) => `Entwurf an ${recipients(i)} — Betreff: "${i.subject}"`,
     auditTarget: (i) => recipients(i),
     async execute(input, ctx) {
-      const d = await ctx.providers.email().draftEmail({ ...input, replyToMessageId: input.reply_to_message_id });
+      const d = await (await ctx.providers.email()).draftEmail({ ...input, replyToMessageId: input.reply_to_message_id });
       return ok({ draftId: d.id, status: "Entwurf gespeichert, nicht gesendet" });
     },
   }),
@@ -132,7 +132,7 @@ export const emailTools: ToolDefinition[] = [
     auditTarget: (i) => recipients(i),
     outgoingText: (i) => `${i.subject}\n${i.body}`,
     async execute(input, ctx) {
-      const r = await ctx.providers.email().sendEmail(input);
+      const r = await (await ctx.providers.email()).sendEmail(input);
       return ok({ sent: true, messageId: r.id });
     },
   }),
@@ -147,9 +147,7 @@ export const emailTools: ToolDefinition[] = [
     auditTarget: (i) => recipients(i),
     outgoingText: (i) => `${i.subject ?? ""}\n${i.body}`,
     async execute(input, ctx) {
-      const r = await ctx.providers
-        .email()
-        .sendEmail({ to: input.to, cc: input.cc, subject: input.subject ?? "", body: input.body, replyToMessageId: input.message_id });
+      const r = await (await ctx.providers.email()).sendEmail({ to: input.to, cc: input.cc, subject: input.subject ?? "", body: input.body, replyToMessageId: input.message_id });
       return ok({ sent: true, messageId: r.id });
     },
   }),
@@ -164,7 +162,7 @@ export const emailTools: ToolDefinition[] = [
     auditTarget: (i) => i.to.join(", "),
     outgoingText: (i) => i.note ?? "",
     async execute(input, ctx) {
-      const r = await ctx.providers.email().forwardEmail(input.message_id, input.to, input.note);
+      const r = await (await ctx.providers.email()).forwardEmail(input.message_id, input.to, input.note);
       return ok({ forwarded: true, messageId: r.id });
     },
   }),
@@ -176,7 +174,8 @@ export const emailTools: ToolDefinition[] = [
     input: z.object({ message_ids: z.array(id).min(1).max(100) }),
     describe: (i) => `${i.message_ids.length} E-Mail(s) archivieren`,
     async execute(input, ctx) {
-      return bulk(input.message_ids, (mid) => ctx.providers.email().archive(mid));
+      const mail = await ctx.providers.email();
+      return bulk(input.message_ids, (mid) => mail.archive(mid));
     },
   }),
   defineTool({
@@ -187,7 +186,8 @@ export const emailTools: ToolDefinition[] = [
     input: z.object({ message_ids: z.array(id).min(1).max(100) }),
     describe: (i) => `${i.message_ids.length} E-Mail(s) als gelesen markieren`,
     async execute(input, ctx) {
-      return bulk(input.message_ids, (mid) => ctx.providers.email().markRead(mid, true));
+      const mail = await ctx.providers.email();
+      return bulk(input.message_ids, (mid) => mail.markRead(mid, true));
     },
   }),
   defineTool({
@@ -198,7 +198,8 @@ export const emailTools: ToolDefinition[] = [
     input: z.object({ message_ids: z.array(id).min(1).max(100) }),
     describe: (i) => `${i.message_ids.length} E-Mail(s) als ungelesen markieren`,
     async execute(input, ctx) {
-      return bulk(input.message_ids, (mid) => ctx.providers.email().markRead(mid, false));
+      const mail = await ctx.providers.email();
+      return bulk(input.message_ids, (mid) => mail.markRead(mid, false));
     },
   }),
   defineTool({
@@ -214,7 +215,8 @@ export const emailTools: ToolDefinition[] = [
     describe: (i) =>
       `${i.message_ids.length} E-Mail(s) labeln${i.add?.length ? ` +${i.add.join(", +")}` : ""}${i.remove?.length ? ` -${i.remove.join(", -")}` : ""}`,
     async execute(input, ctx) {
-      return bulk(input.message_ids, (mid) => ctx.providers.email().modifyLabels(mid, { add: input.add, remove: input.remove }));
+      const mail = await ctx.providers.email();
+      return bulk(input.message_ids, (mid) => mail.modifyLabels(mid, { add: input.add, remove: input.remove }));
     },
   }),
   defineTool({
@@ -225,7 +227,8 @@ export const emailTools: ToolDefinition[] = [
     input: z.object({ message_ids: z.array(id).min(1).max(100), reason: z.string().max(300).optional() }),
     describe: (i) => `${i.message_ids.length} E-Mail(s) in den Papierkorb verschieben${i.reason ? ` (${i.reason})` : ""}`,
     async execute(input, ctx) {
-      return bulk(input.message_ids, (mid) => ctx.providers.email().trash(mid));
+      const mail = await ctx.providers.email();
+      return bulk(input.message_ids, (mid) => mail.trash(mid));
     },
   }),
 ];

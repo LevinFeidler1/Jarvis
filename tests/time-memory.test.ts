@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { Scheduler } from "../src/core/scheduler.js";
 import { findFreeSlots, toLocalIso, zonedToUtc } from "../src/core/time.js";
-import { openDatabase } from "../src/db/database.js";
 import { MemoryStore } from "../src/memory/memory.js";
-import { harness } from "./helpers.js";
+import { harness, testDb } from "./helpers.js";
 
 const TZ = "Europe/Berlin";
 const ms = (iso: string) => new Date(iso).getTime();
@@ -71,30 +70,30 @@ describe("findFreeSlots", () => {
 });
 
 describe("memory", () => {
-  it("inferred entries never overwrite user statements", () => {
-    const m = new MemoryStore(openDatabase(":memory:"));
-    m.upsert({ category: "preference", key: "Meetingdauer", value: "30 Minuten", source: "user" });
-    m.upsert({ category: "preference", key: "Meetingdauer", value: "60 Minuten", source: "inferred" });
-    expect(m.list()[0]).toMatchObject({ value: "30 Minuten", source: "user" });
+  it("inferred entries never overwrite user statements", async () => {
+    const m = new MemoryStore(await testDb());
+    await m.upsert({ category: "preference", key: "Meetingdauer", value: "30 Minuten", source: "user" });
+    await m.upsert({ category: "preference", key: "Meetingdauer", value: "60 Minuten", source: "inferred" });
+    expect((await m.list())[0]).toMatchObject({ value: "30 Minuten", source: "user" });
   });
 
-  it("marks uncertain entries in the prompt and user edits make them certain", () => {
-    const m = new MemoryStore(openDatabase(":memory:"));
-    const e = m.upsert({ category: "person", key: "Max", value: "Kollege", source: "inferred" });
-    expect(m.renderForPrompt()).toContain("[unsicher");
-    m.update(e.id, { value: "Teamleiter" });
-    expect(m.renderForPrompt()).not.toContain("[unsicher");
+  it("marks uncertain entries in the prompt and user edits make them certain", async () => {
+    const m = new MemoryStore(await testDb());
+    const e = await m.upsert({ category: "person", key: "Max", value: "Kollege", source: "inferred" });
+    expect(await m.renderForPrompt()).toContain("[unsicher");
+    await m.update(e.id, { value: "Teamleiter" });
+    expect(await m.renderForPrompt()).not.toContain("[unsicher");
   });
 });
 
 describe("reminders & scheduler", () => {
   it("fires due reminders exactly once as notifications", async () => {
-    const h = harness([]);
-    h.providers.reminders.create("Zahnarzt anrufen", "2026-09-30T07:00:00.000Z");
-    h.providers.reminders.create("Später", "2026-12-01T07:00:00.000Z");
+    const h = await harness([]);
+    await h.providers.reminders.create("Zahnarzt anrufen", "2026-09-30T07:00:00.000Z");
+    await h.providers.reminders.create("Später", "2026-12-01T07:00:00.000Z");
     const s = new Scheduler(h.providers);
     expect(await s.tick(new Date("2026-09-30T08:00:00Z"))).toBe(1);
     expect(await s.tick(new Date("2026-09-30T08:01:00Z"))).toBe(0);
-    expect(h.providers.notifications.list()).toEqual([expect.objectContaining({ title: "Erinnerung", body: "Zahnarzt anrufen" })]);
+    expect(await h.providers.notifications.list()).toEqual([expect.objectContaining({ title: "Erinnerung", body: "Zahnarzt anrufen" })]);
   });
 });

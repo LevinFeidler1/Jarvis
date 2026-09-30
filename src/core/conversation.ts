@@ -18,6 +18,8 @@ export interface DisplayMessage {
   createdAt: string;
 }
 
+const SELECT = `SELECT id, title, tainted, created_at AS "createdAt", updated_at AS "updatedAt" FROM conversations`;
+
 /**
  * Append-only conversation history. Assistant content (incl. thinking blocks)
  * is stored verbatim so it can be replayed unchanged to the API.
@@ -25,58 +27,60 @@ export interface DisplayMessage {
 export class ConversationStore {
   constructor(private readonly db: Db) {}
 
-  create(title?: string): ConversationInfo {
+  async create(title?: string): Promise<ConversationInfo> {
     const id = randomUUID();
     const ts = nowIso();
-    this.db
-      .prepare("INSERT INTO conversations (id, title, tainted, created_at, updated_at) VALUES (?, ?, 0, ?, ?)")
-      .run(id, title ?? null, ts, ts);
+    await this.db.run("INSERT INTO conversations (id, title, tainted, created_at, updated_at) VALUES ($1, $2, FALSE, $3, $4)", [
+      id,
+      title ?? null,
+      ts,
+      ts,
+    ]);
     return { id, title: title ?? null, tainted: false, createdAt: ts, updatedAt: ts };
   }
 
-  get(id: string): ConversationInfo | undefined {
-    const r = this.db
-      .prepare("SELECT id, title, tainted, created_at AS createdAt, updated_at AS updatedAt FROM conversations WHERE id = ?")
-      .get(id) as (Omit<ConversationInfo, "tainted"> & { tainted: number }) | undefined;
-    return r ? { ...r, tainted: r.tainted === 1 } : undefined;
+  get(id: string): Promise<ConversationInfo | undefined> {
+    return this.db.one<ConversationInfo>(`${SELECT} WHERE id = $1`, [id]);
   }
 
-  list(limit = 50): ConversationInfo[] {
-    const rows = this.db
-      .prepare("SELECT id, title, tainted, created_at AS createdAt, updated_at AS updatedAt FROM conversations ORDER BY updated_at DESC LIMIT ?")
-      .all(limit) as Array<Omit<ConversationInfo, "tainted"> & { tainted: number }>;
-    return rows.map((r) => ({ ...r, tainted: r.tainted === 1 }));
+  list(limit = 50): Promise<ConversationInfo[]> {
+    return this.db.query<ConversationInfo>(`${SELECT} ORDER BY updated_at DESC LIMIT $1`, [limit]);
   }
 
-  markTainted(id: string): void {
-    this.db.prepare("UPDATE conversations SET tainted = 1 WHERE id = ?").run(id);
+  async delete(id: string): Promise<boolean> {
+    await this.db.run("DELETE FROM pending_actions WHERE conversation_id = $1 AND status = 'pending'", [id]);
+    return (await this.db.run("DELETE FROM conversations WHERE id = $1", [id])) === 1;
   }
 
-  append(conversationId: string, message: LlmMessage, displayText: string | null): void {
+  async markTainted(id: string): Promise<void> {
+    await this.db.run("UPDATE conversations SET tainted = TRUE WHERE id = $1", [id]);
+  }
+
+  async append(conversationId: string, message: LlmMessage, displayText: string | null): Promise<void> {
     const ts = nowIso();
-    this.db
-      .prepare("INSERT INTO messages (conversation_id, role, content_json, display_text, created_at) VALUES (?, ?, ?, ?, ?)")
-      .run(conversationId, message.role, JSON.stringify(message.content), displayText, ts);
-    this.db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(ts, conversationId);
+    await this.db.run(
+      "INSERT INTO messages (conversation_id, role, content_json, display_text, created_at) VALUES ($1, $2, $3, $4, $5)",
+      [conversationId, message.role, JSON.stringify(message.content), displayText, ts],
+    );
+    await this.db.run("UPDATE conversations SET updated_at = $1 WHERE id = $2", [ts, conversationId]);
     if (displayText && message.role === "user") {
-      this.db
-        .prepare("UPDATE conversations SET title = ? WHERE id = ? AND title IS NULL")
-        .run(displayText.slice(0, 80), conversationId);
+      await this.db.run("UPDATE conversations SET title = $1 WHERE id = $2 AND title IS NULL", [displayText.slice(0, 80), conversationId]);
     }
   }
 
-  history(conversationId: string): LlmMessage[] {
-    const rows = this.db
-      .prepare("SELECT role, content_json FROM messages WHERE conversation_id = ? ORDER BY id")
-      .all(conversationId) as Array<{ role: "user" | "assistant"; content_json: string }>;
+  async history(conversationId: string): Promise<LlmMessage[]> {
+    const rows = await this.db.query<{ role: "user" | "assistant"; content_json: string }>(
+      "SELECT role, content_json FROM messages WHERE conversation_id = $1 ORDER BY id",
+      [conversationId],
+    );
     return rows.map((r) => ({ role: r.role, content: JSON.parse(r.content_json) }));
   }
 
-  display(conversationId: string): DisplayMessage[] {
-    return this.db
-      .prepare(
-        "SELECT id, role, display_text AS text, created_at AS createdAt FROM messages WHERE conversation_id = ? AND display_text IS NOT NULL ORDER BY id",
-      )
-      .all(conversationId) as unknown as DisplayMessage[];
+  display(conversationId: string): Promise<DisplayMessage[]> {
+    return this.db.query<DisplayMessage>(
+      `SELECT id, role, display_text AS text, created_at AS "createdAt" FROM messages
+       WHERE conversation_id = $1 AND display_text IS NOT NULL ORDER BY id`,
+      [conversationId],
+    );
   }
 }

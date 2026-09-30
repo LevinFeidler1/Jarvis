@@ -59,16 +59,14 @@ export class ConfirmationStore {
     private readonly ttlMinutes: number,
   ) {}
 
-  create(input: Omit<PendingAction, "id" | "status" | "createdAt" | "expiresAt">, now = new Date()): PendingAction {
+  async create(input: Omit<PendingAction, "id" | "status" | "createdAt" | "expiresAt">, now = new Date()): Promise<PendingAction> {
     const id = randomUUID();
     const createdAt = now.toISOString();
     const expiresAt = new Date(now.getTime() + this.ttlMinutes * 60_000).toISOString();
-    this.db
-      .prepare(
-        `INSERT INTO pending_actions (id, conversation_id, activity_id, tool_name, input_json, description, risk, reasons_json, status, created_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-      )
-      .run(
+    await this.db.run(
+      `INSERT INTO pending_actions (id, conversation_id, activity_id, tool_name, input_json, description, risk, reasons_json, status, created_at, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, $10)`,
+      [
         id,
         input.conversationId,
         input.activityId,
@@ -79,31 +77,31 @@ export class ConfirmationStore {
         JSON.stringify(input.reasons),
         createdAt,
         expiresAt,
-      );
+      ],
+    );
     return { ...input, id, status: "pending", createdAt, expiresAt };
   }
 
-  get(id: string): PendingAction | undefined {
-    const row = this.db.prepare("SELECT * FROM pending_actions WHERE id = ?").get(id) as Row | undefined;
+  async get(id: string): Promise<PendingAction | undefined> {
+    const row = await this.db.one<Row>("SELECT * FROM pending_actions WHERE id = $1", [id]);
     return row ? fromRow(row) : undefined;
   }
 
-  /** Pending actions, oldest first. Expired ones are returned with status "expired" once. */
-  listPending(conversationId?: string): PendingAction[] {
-    const rows = (
-      conversationId
-        ? this.db.prepare("SELECT * FROM pending_actions WHERE status = 'pending' AND conversation_id = ? ORDER BY created_at").all(conversationId)
-        : this.db.prepare("SELECT * FROM pending_actions WHERE status = 'pending' ORDER BY created_at").all()
-    ) as unknown as Row[];
+  /** Pending actions, oldest first. */
+  async listPending(conversationId?: string): Promise<PendingAction[]> {
+    const rows = conversationId
+      ? await this.db.query<Row>("SELECT * FROM pending_actions WHERE status = 'pending' AND conversation_id = $1 ORDER BY created_at", [conversationId])
+      : await this.db.query<Row>("SELECT * FROM pending_actions WHERE status = 'pending' ORDER BY created_at");
     return rows.map(fromRow);
   }
 
   /** Atomically moves pending → new status. Returns false if it was not pending. */
-  resolve(id: string, status: Exclude<PendingStatus, "pending">): boolean {
-    const res = this.db
-      .prepare("UPDATE pending_actions SET status = ?, resolved_at = ? WHERE id = ? AND status = 'pending'")
-      .run(status, nowIso(), id);
-    return Number(res.changes) === 1;
+  async resolve(id: string, status: Exclude<PendingStatus, "pending">): Promise<boolean> {
+    const changed = await this.db.run(
+      "UPDATE pending_actions SET status = $1, resolved_at = $2 WHERE id = $3 AND status = 'pending'",
+      [status, nowIso(), id],
+    );
+    return changed === 1;
   }
 
   isExpired(action: PendingAction, now = new Date()): boolean {

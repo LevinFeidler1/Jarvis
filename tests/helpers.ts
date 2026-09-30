@@ -3,6 +3,7 @@ import type { AppConfig } from "../src/config.js";
 import { Agent } from "../src/core/agent.js";
 import type { LlmClient, LlmRequest, LlmResponse } from "../src/core/llm.js";
 import { openDatabase, type Db } from "../src/db/database.js";
+import { Scheduler } from "../src/core/scheduler.js";
 import { MemoryStore } from "../src/memory/memory.js";
 import { ProviderHub } from "../src/providers/hub.js";
 import type {
@@ -34,6 +35,22 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     confirmationTtlMinutes: 30,
     ...overrides,
   };
+}
+
+// ─── Database ──────────────────────────────────────────────────────────────
+
+let shared: Promise<Db> | undefined;
+const TABLES = [
+  "messages", "conversations", "pending_actions", "activity", "audit_log", "memory", "tasks",
+  "reminders", "notifications", "oauth_tokens", "oauth_states", "settings", "sessions",
+];
+
+/** One in-process Postgres (PGlite) per test worker, emptied for every test. */
+export async function testDb(): Promise<Db> {
+  shared ??= openDatabase({ localPath: ":memory:" });
+  const db = await shared;
+  await db.exec(`TRUNCATE ${TABLES.join(", ")} RESTART IDENTITY CASCADE`);
+  return db;
 }
 
 // ─── Scripted LLM ──────────────────────────────────────────────────────────
@@ -216,14 +233,15 @@ export interface Harness {
   calendar: FakeCalendar;
   contacts: FakeContacts;
   clock: { now: Date };
+  scheduler: Scheduler;
 }
 
-export function harness(
+export async function harness(
   steps: Step[],
   opts: { connect?: boolean; emails?: Email[]; events?: CalendarEvent[]; contacts?: Contact[]; now?: Date; config?: Partial<AppConfig> } = {},
-): Harness {
+): Promise<Harness> {
   const config = testConfig(opts.config);
-  const db = openDatabase(":memory:");
+  const db = await testDb();
   const memory = new MemoryStore(db);
   const providers = new ProviderHub(config, db, new TokenStore(db, config.encryptionKey));
   const email = new FakeEmail(opts.emails);
@@ -233,5 +251,5 @@ export function harness(
   const llm = new ScriptedLlm(steps);
   const clock = { now: opts.now ?? new Date("2026-09-30T08:00:00+02:00") };
   const agent = new Agent({ config, db, llm, registry: createDefaultRegistry(), providers, memory, now: () => clock.now });
-  return { db, config, agent, llm, providers, memory, email, calendar, contacts, clock };
+  return { db, config, agent, llm, providers, memory, email, calendar, contacts, clock, scheduler: new Scheduler(providers) };
 }
