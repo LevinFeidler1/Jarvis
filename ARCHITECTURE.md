@@ -164,11 +164,14 @@ Kategorien: `preference`, `person`, `project`, `rule`, `fact`. Jeder Eintrag hat
 löschbar. `inferred`-Einträge werden im Prompt als unsicher markiert; der Agent
 darf auf ihrer Grundlage keine externen Aktionen ohne Rückfrage durchführen.
 
-## 8. Voice (vorbereitet)
+## 8. Voice (Sprach-Chat)
 
-Voice ist nur ein weiterer Client: Speech-to-Text → `POST /api/chat` →
-Antworttext → Text-to-Speech. Bestätigungen laufen über dieselbe
-`PendingAction`-Mechanik; es gibt keinen Voice-spezifischen Bypass.
+Voice ist nur ein weiterer Client: Speech-to-Text → `POST /api/chat/stream` →
+Antworttext → Text-to-Speech. Umgesetzt im Browser mit der Web Speech API
+(`public/app.js`, Modul `voice`): 🎤-Knopf, Vorlesen, Gesprächsmodus. Der Server
+merkt nicht, ob Text getippt oder gesprochen wurde. Bestätigungen laufen über
+dieselbe `PendingAction`-Mechanik; es gibt keinen Voice-spezifischen Bypass —
+kritische Aktionen (Stufe 3) lassen sich generell nicht per „Ja" im Chat bestätigen.
 
 ## 9. Architekturentscheidungen (ADR-Kurzform)
 

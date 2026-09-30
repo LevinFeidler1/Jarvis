@@ -100,7 +100,15 @@ export class Agent {
     // but only if exactly one action is waiting — otherwise it is ambiguous.
     const pending = await this.confirmations.listPending(conv.id);
     if (pending.length > 0 && (APPROVE_RE.test(text) || REJECT_RE.test(text))) {
-      if (pending.length === 1) return this.resolveConfirmation(pending[0]!.id, APPROVE_RE.test(text), text, emit);
+      const only = pending[0]!;
+      // Critical actions (level 3) are never approved by a typed/spoken "ja" — only by the explicit button.
+      if (pending.length === 1 && APPROVE_RE.test(text) && only.risk >= RiskLevel.CRITICAL) {
+        const reply = `Das ist eine kritische Aktion (${only.description.split("\n")[0]}). Bitte bestätige sie ausdrücklich über den Knopf „Trotzdem ausführen“ — ein „Ja“ per Chat oder Sprache reicht dafür nicht.`;
+        await this.conversations.append(conv.id, { role: "user", content: [{ type: "text", text }] }, text);
+        await this.conversations.append(conv.id, { role: "assistant", content: [{ type: "text", text: reply }] }, reply);
+        return this.reply(conv.id, reply, []);
+      }
+      if (pending.length === 1) return this.resolveConfirmation(only.id, APPROVE_RE.test(text), text, emit);
       const reply = `Es warten ${pending.length} Aktionen auf deine Bestätigung. Bitte bestätige oder verwirf sie einzeln in der Übersicht, damit nichts Falsches passiert.`;
       await this.conversations.append(conv.id, { role: "user", content: [{ type: "text", text }] }, text);
       await this.conversations.append(conv.id, { role: "assistant", content: [{ type: "text", text: reply }] }, reply);

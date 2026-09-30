@@ -13,6 +13,15 @@ JARVIS: ✓ E-Mail gelesen  ✓ Kalender geprüft
         Soll ich sie senden?              [Bestätigen & ausführen] [Ablehnen]
 ```
 
+## Sprach-Chat
+
+Im Chat auf 🎤 tippen und sprechen — JARVIS liest die Antwort vor.
+**Gespräch** oben im Chat schaltet den Freisprech-Modus ein (hört nach jeder
+Antwort wieder zu; „Stopp" oder „Danke, das war's" beendet ihn).
+Stimme und Tempo: *Einstellungen → Sprache*. Läuft in Chrome, Edge und Safari
+(auch iPhone/Android); Firefox kann nur vorlesen. Bestätigen per „Ja" geht auch
+gesprochen — außer bei kritischen Aktionen, die brauchen immer den Knopf.
+
 ## Online nutzen (Vercel)
 
 Schritt-für-Schritt: **[docs/DEPLOY_VERCEL.md](docs/DEPLOY_VERCEL.md)** —

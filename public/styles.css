@@ -473,3 +473,12 @@ details.fold > summary::-webkit-details-marker { display: none; }
 .hostport { display: grid; grid-template-columns: 1fr 90px; gap: 6px; }
 .mail-item .acct { font-size: 11px; color: var(--accent); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+
+/* Voice */
+.composer .mic { border-radius: 12px; color: var(--text-2); }
+.composer .mic.on { background: var(--err); color: #fff; animation: pulse-rec 1.2s ease-in-out infinite; }
+.composer.listening { border-color: color-mix(in srgb, var(--err) 60%, transparent); box-shadow: 0 0 0 4px var(--err-soft), var(--shadow); }
+@keyframes pulse-rec { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--err) 50%, transparent); } 50% { box-shadow: 0 0 0 8px transparent; } }
+.btn.active-chip { color: var(--accent); background: var(--accent-soft); }
+@media (max-width: 860px) { .chat-top .head-actions .btn span { display: none; } }
+@media (prefers-reduced-motion: reduce) { .composer .mic.on, .orb.xl, .orb.busy { animation: none; } }

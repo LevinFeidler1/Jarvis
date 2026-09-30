@@ -67,6 +67,11 @@ const ICONS = {
   bell2: '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>',
   new: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   dot: '<circle cx="12" cy="12" r="3"/>',
+  mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/>',
+  volume: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/>',
+  mute: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="m22 9-6 6M16 9l6 6"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+  headset: '<path d="M3 14v-2a9 9 0 0 1 18 0v2"/><path d="M21 16a2 2 0 0 1-2 2h-1v-6h1a2 2 0 0 1 2 2zM3 16a2 2 0 0 0 2 2h1v-6H5a2 2 0 0 0-2 2z"/>',
 };
 function icon(name, cls = "") {
   const span = document.createElement("span");
@@ -356,6 +361,8 @@ function go(view, params = "") {
 }
 
 async function route() {
+  if (voice.listening) voice.stopListening();
+  if (voice.speaking) voice.stopSpeaking();
   const [view, query = ""] = location.hash.replace(/^#/, "").split("?");
   state.view = VIEWS[view] ? view : "today";
   document.querySelectorAll("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === state.view));
@@ -379,6 +386,182 @@ function cardHead(title, ic, ...actions) {
 
 const notConfigured = (msg) =>
   h("div", { class: "empty" }, h("div", {}, msg), h("button", { class: "btn sm", onclick: () => go("settings") }, icon("plug"), "Integration verbinden"));
+
+// ─── Voice (Sprach-Chat) ─────────────────────────────────────────────────────
+// Browser speech recognition + speech synthesis. Same agent, same permission
+// rules as typing: a spoken "ja" is sent as a normal message; critical actions
+// are refused server-side and need the button.
+const voice = {
+  SR: window.SpeechRecognition || window.webkitSpeechRecognition || null,
+  rec: null,
+  listening: false,
+  speaking: false,
+  unlocked: false,
+  prefs: (() => {
+    const d = { speak: true, conversation: false, voiceURI: null, rate: 1.05 };
+    try { return { ...d, ...JSON.parse(localStorage.getItem("jarvis-voice") || "{}") }; } catch { return d; }
+  })(),
+  save() { try { localStorage.setItem("jarvis-voice", JSON.stringify(this.prefs)); } catch { /* ignore */ } },
+  get canListen() { return !!this.SR; },
+  get canSpeak() { return "speechSynthesis" in window; },
+
+  voices() {
+    if (!this.canSpeak) return [];
+    return speechSynthesis.getVoices().filter((v) => v.lang?.toLowerCase().startsWith("de"));
+  },
+  pickVoice() {
+    const list = this.voices();
+    return list.find((v) => v.voiceURI === this.prefs.voiceURI)
+      ?? list.find((v) => /google deutsch|markus|conrad|yannick|killian|anna|helena|katja|petra|vicki/i.test(v.name))
+      ?? list[0] ?? null;
+  },
+
+  /** iOS/Safari only allow speech after a user gesture: prime it once. */
+  unlock() {
+    if (this.unlocked || !this.canSpeak) return;
+    try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; speechSynthesis.speak(u); } catch { /* ignore */ }
+    this.unlocked = true;
+  },
+
+  toSpeech(text) {
+    let t = String(text ?? "")
+      .replace(/```[\s\S]*?```/g, " ")
+      .replace(/\[([^\]]+)\]\((?:https?:[^)]+)\)/g, "$1")
+      .replace(/https?:\/\/\S+/g, "")
+      .replace(/[*_`#>]/g, "")
+      .replace(/^\s*[-•]\s+/gm, "")
+      .replace(/^\s*\d+[.)]\s+/gm, "")
+      .replace(/\s*\n+\s*/g, ". ")
+      .replace(/\.\s*\./g, ".")
+      .replace(/([:!?;,])\s*\./g, "$1")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+    if (t.length > 700) {
+      const cut = t.slice(0, 700);
+      t = `${cut.slice(0, Math.max(cut.lastIndexOf(". "), 400) + 1)} Den Rest findest du im Chat.`;
+    }
+    return t;
+  },
+
+  speak(text, onEnd) {
+    if (!this.canSpeak || !text) { onEnd?.(); return; }
+    this.stopSpeaking();
+    let finished = false;
+    const done = () => { if (finished) return; finished = true; this.speaking = false; voiceUi(); onEnd?.(); };
+    try {
+      const u = new SpeechSynthesisUtterance(this.toSpeech(text));
+      const v = this.pickVoice();
+      try { if (v) u.voice = v; } catch { /* keep default voice */ }
+      u.lang = v?.lang ?? "de-DE";
+      u.rate = this.prefs.rate;
+      u.onstart = () => { this.speaking = true; voiceUi(); };
+      u.onend = done;
+      u.onerror = done;
+      speechSynthesis.speak(u);
+    } catch {
+      done(); // speech output must never break the chat
+    }
+  },
+  stopSpeaking() {
+    if (this.canSpeak) speechSynthesis.cancel();
+    this.speaking = false;
+    voiceUi();
+  },
+
+  listen({ onInterim, onFinal }) {
+    if (!this.canListen) { toast("Spracheingabe wird von diesem Browser nicht unterstützt (Chrome, Edge oder Safari verwenden).", "err"); return; }
+    this.stopSpeaking();
+    this.stopListening();
+    const rec = new this.SR();
+    rec.lang = "de-DE";
+    rec.interimResults = true;
+    rec.continuous = false;
+    rec.maxAlternatives = 1;
+    let finalText = "";
+    rec.onresult = (e) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) finalText += r[0].transcript;
+        else interim += r[0].transcript;
+      }
+      onInterim?.((finalText + interim).trim());
+    };
+    rec.onerror = (e) => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        toast("Mikrofon-Zugriff verweigert. Erlaube das Mikrofon in den Browser-Einstellungen für diese Seite.", "err");
+        this.prefs.conversation = false;
+      } else if (e.error === "network") toast("Spracherkennung nicht erreichbar (Netzwerk).", "err");
+      else if (e.error !== "no-speech" && e.error !== "aborted") toast(`Spracherkennung: ${e.error}`, "err");
+    };
+    rec.onend = () => {
+      this.listening = false;
+      this.rec = null;
+      voiceUi();
+      const text = finalText.trim();
+      if (text) onFinal?.(text);
+      else if (this.prefs.conversation) { this.prefs.conversation = false; voiceUi(); toast("Gesprächsmodus beendet (nichts gehört)."); }
+    };
+    this.rec = rec;
+    this.listening = true;
+    voiceUi();
+    try { rec.start(); } catch { this.listening = false; voiceUi(); }
+  },
+  stopListening() {
+    try { this.rec?.stop(); } catch { /* ignore */ }
+  },
+};
+if (voice.canSpeak) speechSynthesis.onvoiceschanged = () => { /* voices load async */ };
+
+const END_WORDS = /^(stopp?|ende|beenden|danke,? das war'?s|das war'?s|tschüss|gesprächsmodus aus)[.! ]*$/i;
+
+/** Reflects voice state in the chat UI. */
+function voiceUi() {
+  const mic = $("#mic-btn");
+  if (mic) {
+    mic.classList.toggle("on", voice.listening);
+    mic.setAttribute("aria-pressed", String(voice.listening));
+    mic.title = voice.listening ? "Zuhören beenden" : "Sprechen";
+  }
+  $(".composer")?.classList.toggle("listening", voice.listening);
+  const input = $("#chat-input");
+  if (input) input.placeholder = voice.listening ? "Ich höre zu …" : "Frag JARVIS oder gib einen Auftrag …";
+  $(".chat-top .orb")?.classList.toggle("busy", voice.speaking);
+  const spk = $("#speak-btn");
+  if (spk) {
+    set(spk, icon(voice.speaking ? "stop" : voice.prefs.speak ? "volume" : "mute"), h("span", {}, voice.speaking ? "Stopp" : voice.prefs.speak ? "Vorlesen an" : "Vorlesen aus"));
+    spk.classList.toggle("active-chip", voice.prefs.speak);
+  }
+  const conv = $("#conv-btn");
+  if (conv) conv.classList.toggle("active-chip", voice.prefs.conversation);
+}
+
+function startVoiceInput() {
+  voice.unlock();
+  const input = $("#chat-input");
+  voice.listen({
+    onInterim: (t) => { if (input) { input.value = t; input.dispatchEvent(new Event("input")); } },
+    onFinal: (t) => {
+      if (input) { input.value = ""; input.dispatchEvent(new Event("input")); }
+      if (voice.prefs.conversation && END_WORDS.test(t.trim())) {
+        voice.prefs.conversation = false; voice.save(); voiceUi();
+        voice.speak("Gesprächsmodus beendet.");
+        return;
+      }
+      sendMessage(t, { viaVoice: true });
+    },
+  });
+}
+
+/** Speak the reply if the request came by voice; keep the conversation going. */
+function speakReply(reply) {
+  let text = reply.text;
+  const crit = (reply.pendingActions ?? []).some((p) => p.risk >= 3);
+  if (crit) text += " Achtung: Das ist eine kritische Aktion. Bitte bestätige sie per Knopf auf dem Bildschirm.";
+  const again = () => { if (voice.prefs.conversation && !crit && state.view === "chat") setTimeout(startVoiceInput, 250); };
+  if (voice.prefs.speak) voice.speak(text, again);
+  else again();
+}
 
 // ─── View: Heute ────────────────────────────────────────────────────────────
 function greeting() {
@@ -491,7 +674,11 @@ async function viewChat(main) {
   const scroll = h("div", { class: "chat-scroll", id: "chat-scroll" }, thread);
   const input = h("textarea", { id: "chat-input", rows: 1, placeholder: "Frag JARVIS oder gib einen Auftrag …", maxlength: 8000, "aria-label": "Nachricht" });
   const sendBtn = h("button", { class: "btn primary icon", type: "submit", title: "Senden", "aria-label": "Senden" }, icon("send"));
-  const form = h("form", { class: "composer", onsubmit: (e) => { e.preventDefault(); const t = input.value; input.value = ""; autosize(); sendMessage(t); } }, input, sendBtn);
+  const micBtn = voice.canListen
+    ? h("button", { class: "btn ghost icon mic", id: "mic-btn", type: "button", title: "Sprechen", "aria-label": "Sprechen", "aria-pressed": "false",
+        onclick: () => (voice.listening ? voice.stopListening() : startVoiceInput()) }, icon("mic"))
+    : null;
+  const form = h("form", { class: "composer", onsubmit: (e) => { e.preventDefault(); voice.unlock(); const t = input.value; input.value = ""; autosize(); sendMessage(t); } }, micBtn, input, sendBtn);
   const autosize = () => { input.style.height = "auto"; input.style.height = `${Math.min(input.scrollHeight, 220)}px`; };
   input.addEventListener("input", autosize);
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); } });
@@ -500,6 +687,11 @@ async function viewChat(main) {
   const top = h("div", { class: "chat-top" },
     h("div", { style: "display:flex;align-items:center;gap:10px;min-width:0" }, h("div", { class: "orb" }), title),
     h("div", { class: "head-actions" },
+      voice.canSpeak ? h("button", { class: "btn ghost sm", id: "speak-btn", title: "Antworten auf Spracheingaben vorlesen",
+        onclick: () => { if (voice.speaking) return voice.stopSpeaking(); voice.prefs.speak = !voice.prefs.speak; voice.save(); voiceUi(); } }) : null,
+      voice.canListen ? h("button", { class: "btn ghost sm", id: "conv-btn", title: "Gesprächsmodus: nach jeder Antwort automatisch weiter zuhören. Beenden mit „Stopp“.",
+        onclick: () => { voice.prefs.conversation = !voice.prefs.conversation; voice.save(); voiceUi(); if (voice.prefs.conversation && !voice.listening) startVoiceInput(); else if (!voice.prefs.conversation) voice.stopListening(); } },
+        icon("headset"), h("span", {}, "Gespräch")) : null,
       h("button", { class: "btn ghost sm", onclick: openHistory }, icon("history"), h("span", {}, "Verlauf")),
       h("button", { class: "btn sm", onclick: () => { state.conversationId = null; route(); } }, icon("plus"), h("span", {}, "Neu"))));
 
@@ -507,9 +699,10 @@ async function viewChat(main) {
     h("div", {}, h("b", {}, "Sicherheitshinweis: "), "In dieser Unterhaltung wurde ein möglicher Manipulationsversuch (Prompt Injection) erkannt. Externe Aktionen erfordern erhöhte Bestätigung."));
 
   set(main, h("div", { class: "view chat" }, top, scroll,
-    h("div", { class: "composer-wrap" }, secBanner, form, h("div", { class: "composer-hint" }, "Enter zum Senden · Shift+Enter für neue Zeile · Externe Aktionen immer erst nach deiner Bestätigung"))));
+    h("div", { class: "composer-wrap" }, secBanner, form, h("div", { class: "composer-hint" }, voice.canListen ? "Enter zum Senden · 🎤 zum Sprechen · Externe Aktionen immer erst nach deiner Bestätigung" : "Enter zum Senden · Shift+Enter für neue Zeile · Externe Aktionen immer erst nach deiner Bestätigung"))));
 
   state.renderedPending = new Set();
+  voiceUi();
   if (state.conversationId) {
     const data = await api(`/api/conversations/${state.conversationId}/messages`);
     title.textContent = data.conversation.title ?? "Unterhaltung";
@@ -588,17 +781,18 @@ function addAssistant() {
   };
 }
 
-function handleReply(reply, turn) {
+function handleReply(reply, turn, opts = {}) {
   const isNew = state.conversationId !== reply.conversationId;
   state.conversationId = reply.conversationId;
   turn.finish(reply.text, reply.actions, new Date().toISOString());
   renderPendingCards(reply.pendingActions);
   $("#sec-banner")?.classList.toggle("hidden", !reply.securityWarning);
+  if (opts.viaVoice) { try { speakReply(reply); } catch { /* never break the reply */ } }
   if (isNew) api(`/api/conversations/${reply.conversationId}/messages`).then((d) => { const t = $(".chat-top .title"); if (t) t.textContent = d.conversation.title ?? "Unterhaltung"; }).catch(() => {});
   refreshCounts();
 }
 
-async function sendMessage(text) {
+async function sendMessage(text, opts = {}) {
   text = text.trim();
   if (!text || state.busy) return;
   state.busy = true;
@@ -606,18 +800,25 @@ async function sendMessage(text) {
   const turn = addAssistant();
   try {
     const reply = await apiStream("/api/chat/stream", { conversationId: state.conversationId ?? undefined, message: text }, (ev) => ev.type === "action" && turn.step(ev.action));
-    handleReply(reply, turn);
+    handleReply(reply, turn, opts);
   } catch (err) {
     turn.error(err.message);
+    if (opts.viaVoice) voice.speak(`Fehler: ${err.message}`);
   } finally {
     state.busy = false;
-    $("#chat-input")?.focus();
+    if (!voice.listening) $("#chat-input")?.focus();
   }
 }
 
 function renderPendingCards(list) {
   const thread = $("#thread");
   if (!thread) return;
+  // Cards resolved elsewhere (e.g. by a spoken "ja") no longer offer buttons.
+  const open = new Set((list ?? []).map((p) => p.id));
+  thread.querySelectorAll(".confirm[data-pending-id]").forEach((c) => {
+    const foot = c.querySelector(".confirm-foot");
+    if (foot && !open.has(c.dataset.pendingId)) foot.replaceWith(h("div", { class: "resolved" }, icon("check"), "Erledigt"));
+  });
   for (const p of list ?? []) {
     if (state.renderedPending.has(p.id)) continue;
     state.renderedPending.add(p.id);
@@ -637,7 +838,7 @@ function confirmCard(p, onDone, inChat = false) {
   const crit = p.risk >= 3;
   const { headline, body } = describePreview(p.description);
   const foot = h("div", { class: "confirm-foot" });
-  const card = h("div", { class: `confirm ${crit ? "crit" : ""}` },
+  const card = h("div", { class: `confirm ${crit ? "crit" : ""}`, "data-pending-id": p.id },
     h("div", { class: "confirm-head" }, icon(crit ? "alert" : "shield"), h("span", {}, headline),
       h("span", { class: `badge ${crit ? "crit" : "warn"}` }, crit ? "Kritisch" : "Bestätigung")),
     body ? h("div", { class: "confirm-preview" }, body) : null,
@@ -1019,6 +1220,8 @@ async function viewSettings(main, params) {
           h("span", { class: `badge ${RISK[t.risk]?.[1] ?? ""}` }, `Stufe ${t.risk}`),
           sw(!settings.disabledTools.includes(t.name), (v) => { settings.disabledTools = v ? settings.disabledTools.filter((n) => n !== t.name) : [...settings.disabledTools, t.name]; save(); }))))),
 
+    h("div", { class: "section-title" }, icon("mic"), "Sprache"),
+    voiceSettingsCard(),
     h("div", { class: "section-title" }, icon("settings"), "System"),
     h("div", { class: "card" }, h("dl", { class: "kv" },
       h("dt", {}, "Modell"), h("dd", {}, `${status.model} ${status.llmConfigured ? "" : "(nicht konfiguriert)"}`),
@@ -1108,6 +1311,36 @@ function mailAccountsCard(main) {
     set(card, ...(rows.length ? rows : [h("div", { class: "card-body", style: "padding:18px" }, h("div", { class: "muted" }, "Noch kein Postfach verbunden."))]), h("details", { class: "fold", open: rows.length === 0 }, h("summary", { class: "integration", style: "cursor:pointer" }, icon("plus"), h("div", { class: "main title" }, "Postfach hinzufügen")), form));
   }).catch((e) => set(card, h("div", { class: "card-body" }, h("div", { class: "empty" }, e.message))));
   return card;
+}
+
+// ─── Sprach-Einstellungen ──────────────────────────────────────────────────
+function voiceSettingsCard() {
+  if (!voice.canSpeak && !voice.canListen) {
+    return h("div", { class: "card" }, h("div", { class: "card-body", style: "padding:18px" }, h("div", { class: "muted" }, "Dieser Browser unterstützt keine Sprachfunktionen. Chrome, Edge oder Safari verwenden.")));
+  }
+  const sel = h("select", { class: "field", id: "voice-select", "aria-label": "Stimme" });
+  const fill = () => {
+    const list = voice.voices();
+    const cur = voice.pickVoice();
+    set(sel, ...(list.length ? list.map((v) => h("option", { value: v.voiceURI, selected: cur?.voiceURI === v.voiceURI }, `${v.name}${v.localService ? "" : " (online)"}`)) : [h("option", {}, "Keine deutsche Stimme gefunden")]));
+  };
+  fill();
+  if (voice.canSpeak) speechSynthesis.addEventListener?.("voiceschanged", fill);
+  sel.addEventListener("change", () => { voice.prefs.voiceURI = sel.value; voice.save(); });
+  const rate = h("input", { type: "range", id: "voice-rate", min: "0.8", max: "1.4", step: "0.05", value: String(voice.prefs.rate), style: "width:100%" });
+  const rateLabel = h("span", { class: "muted small" }, `${voice.prefs.rate.toFixed(2)}×`);
+  rate.addEventListener("input", () => { voice.prefs.rate = Number(rate.value); rateLabel.textContent = `${voice.prefs.rate.toFixed(2)}×`; voice.save(); });
+  return h("div", { class: "card" },
+    h("div", { class: "card-body", style: "padding:18px;display:grid;gap:12px" },
+      h("div", { class: "grid2" },
+        h("div", {}, h("label", { class: "small muted", for: "voice-select" }, "Stimme"), sel),
+        h("div", {}, h("label", { class: "small muted", for: "voice-rate" }, "Sprechtempo "), rateLabel, rate)),
+      h("div", {}, h("button", { class: "btn sm", onclick: () => { voice.unlock(); voice.speak(`Guten Tag${state.userName ? `, ${state.userName}` : ""}. So klinge ich. Was kann ich für dich tun?`); } }, icon("volume"), "Probe anhören")),
+      h("div", { class: "muted small" },
+        `Spracheingabe: ${voice.canListen ? "verfügbar" : "nicht verfügbar in diesem Browser"} · Sprachausgabe: ${voice.canSpeak ? "verfügbar" : "nicht verfügbar"}. `,
+        "Im Chat: 🎤 zum Sprechen, „Gespräch“ für freihändigen Dialog (beenden mit „Stopp“). ",
+        "Datenschutz: In Chrome/Edge wird die Aufnahme zur Erkennung an den Browser-Hersteller (Google/Microsoft) gesendet; Safari erkennt teils auf dem Gerät. ",
+        "Sicherheit: Ein gesprochenes „Ja“ bestätigt nur normale Aktionen, die JARVIS vorher vorgelesen hat. Kritische Aktionen immer per Knopf.")));
 }
 
 // ─── Notifications drawer ───────────────────────────────────────────────────

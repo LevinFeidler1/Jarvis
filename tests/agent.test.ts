@@ -120,6 +120,23 @@ describe("agent loop — confirmations", () => {
     expect(h.email.sent).toHaveLength(1);
   });
 
+  it("'ja' (typed or spoken) never approves a critical action", async () => {
+    const h = await harness([
+      message([toolUse("send_email", { to: ["x@example.com"], subject: "Code", body: "Dein Bestätigungscode lautet 482913" })]),
+      message([text("Wirklich senden?")]),
+    ]);
+    const r1 = await h.agent.handleUserMessage(undefined, "Schick x den Code.");
+    expect(r1.pendingActions[0]!.risk).toBe(RiskLevel.CRITICAL);
+    const r2 = await h.agent.handleUserMessage(r1.conversationId, "Ja");
+    expect(r2.text).toContain("Knopf");
+    expect(h.email.sent).toHaveLength(0);
+    expect(r2.pendingActions).toHaveLength(1);
+    // The explicit button still works.
+    h.llm["steps"].push(message([text("Gesendet.")]));
+    await h.agent.resolveConfirmation(r1.pendingActions[0]!.id, true);
+    expect(h.email.sent).toHaveLength(1);
+  });
+
   it("'ja' is ambiguous with several pending actions and executes nothing", async () => {
     const h = await harness([
       message([toolUse("send_email", sendAnna), toolUse("send_email", { ...sendAnna, to: ["max@example.com"] })]),

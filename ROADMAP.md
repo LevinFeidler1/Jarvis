@@ -62,8 +62,10 @@ Iterativ, jede Phase ist für sich lauffähig und getestet.
 
 ## Phase 5 — Voice, Proaktivität, fortgeschrittenes Memory
 
-- [ ] Voice-Client: Wake-Word/Push-to-Talk → STT → `/api/chat` → TTS; gleiche Bestätigungslogik
-      (Bestätigungen per Sprache nur mit Wiederholung der Kernparameter)
+- [x] Sprach-Chat im Browser (Web Speech API): 🎤 Spracheingabe (de-DE), Vorlesen der Antworten,
+      Gesprächsmodus (hört nach jeder Antwort wieder zu, „Stopp" beendet), Stimme/Tempo in den Einstellungen;
+      gleiche Bestätigungslogik — kritische Aktionen (Stufe 3) nie per gesprochenem „Ja"
+- [ ] Wake-Word („Hey Jarvis"), Server-STT/TTS (z.B. Whisper/ElevenLabs) für Browser ohne Web Speech, Telefon-Bot
 - [ ] Proaktive Briefings (Morgen, Wochenstart) als Automationen
 - [ ] Proaktive Hinweise aus neuen E-Mails (Terminvorschlag erkannt → „Du bist frei. Soll ich zusagen?")
 - [ ] Memory: automatische Vorschläge („Soll ich mir merken, dass …?"), Verfallsdaten, Quellenlinks

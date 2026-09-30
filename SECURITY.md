@@ -38,6 +38,10 @@ Umsetzung: `src/core/permissions.ts`. Die Stufe steht fest im Tool-Code.
 * Ausstehende Aktionen verfallen nach `JARVIS_CONFIRMATION_TTL_MINUTES` (Standard 30).
 * Ein bloßes „ja" im Chat bestätigt nur, wenn **genau eine** Aktion aussteht.
   Bei mehreren muss in der UI gezielt bestätigt werden.
+* **Kritische Aktionen (Stufe 3) werden nie durch ein „ja" im Chat bestätigt** — weder getippt
+  noch gesprochen (Spracherkennung kann sich verhören). Nur der Knopf „Trotzdem ausführen".
+* Sprach-Chat: Die Spracherkennung läuft im Browser (Chrome sendet Audio dafür an Google,
+  Safari an Apple); JARVIS selbst speichert kein Audio, nur den erkannten Text.
 
 ## 3. Prompt-Injection-Schutz
 
