@@ -28,7 +28,7 @@ export async function buildJarvis(opts: { serveStatic?: boolean } = {}): Promise
   const registry = createDefaultRegistry();
   const llmConfigured = !!config.anthropicApiKey;
   const llm = llmConfigured
-    ? new AnthropicLlm({ apiKey: config.anthropicApiKey, model: config.model, enableWebSearch: process.env.JARVIS_WEB_SEARCH !== "false" })
+    ? new AnthropicLlm({ apiKey: config.anthropicApiKey, workspaceId: config.anthropicWorkspaceId, model: config.model, enableWebSearch: process.env.JARVIS_WEB_SEARCH !== "false" })
     : new UnconfiguredLlm();
 
   const agent = new Agent({ config, db, llm, registry, providers, memory });

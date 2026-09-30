@@ -8,6 +8,8 @@ const optionalString = z
 const EnvSchema = z.object({
   ANTHROPIC_API_KEY: optionalString,
   ANTHROPIC_MODEL: optionalString.transform((v) => v ?? "claude-opus-5-5"),
+  /** Needed for user-scoped keys (sk-ant-usr-…) that are not bound to a workspace. */
+  ANTHROPIC_WORKSPACE_ID: optionalString,
   JARVIS_ACCESS_TOKEN: z
     .string({ error: "JARVIS_ACCESS_TOKEN fehlt (npm run setup:secrets)" })
     .min(32, "JARVIS_ACCESS_TOKEN muss mindestens 32 Zeichen lang sein"),
@@ -33,6 +35,7 @@ const EnvSchema = z.object({
 
 export interface AppConfig {
   anthropicApiKey?: string;
+  anthropicWorkspaceId?: string;
   model: string;
   accessToken: string;
   encryptionKey: Buffer;
@@ -70,6 +73,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
   return {
     anthropicApiKey: e.ANTHROPIC_API_KEY,
+    anthropicWorkspaceId: e.ANTHROPIC_WORKSPACE_ID,
     model: e.ANTHROPIC_MODEL,
     accessToken: e.JARVIS_ACCESS_TOKEN,
     encryptionKey: Buffer.from(e.JARVIS_ENCRYPTION_KEY, "base64"),
