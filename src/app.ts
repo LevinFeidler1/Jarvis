@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { type AppConfig, loadConfig } from "./config.js";
 import { Agent } from "./core/agent.js";
 import { AnthropicLlm, UnconfiguredLlm } from "./core/llm.js";
+import { AutomationRunner } from "./core/automations.js";
 import { Scheduler } from "./core/scheduler.js";
 import { type Db, openDatabase } from "./db/database.js";
 import { MemoryStore } from "./memory/memory.js";
@@ -28,11 +29,12 @@ export async function buildJarvis(opts: { serveStatic?: boolean } = {}): Promise
   const registry = createDefaultRegistry();
   const llmConfigured = !!config.anthropicApiKey;
   const llm = llmConfigured
-    ? new AnthropicLlm({ apiKey: config.anthropicApiKey, workspaceId: config.anthropicWorkspaceId, model: config.model, enableWebSearch: process.env.JARVIS_WEB_SEARCH !== "false" })
+    ? new AnthropicLlm({ apiKey: config.anthropicApiKey, workspaceId: config.anthropicWorkspaceId, model: config.model, enableWebSearch: process.env.JARVIS_WEB_SEARCH !== "false", compactAtTokens: config.compactAtTokens })
     : new UnconfiguredLlm();
 
   const agent = new Agent({ config, db, llm, registry, providers, memory });
   const scheduler = new Scheduler(providers);
+  scheduler.setAutomationRunner(new AutomationRunner(providers.automations, agent, providers));
   const app = await createServer({ config, db, agent, providers, memory, registry, scheduler, llmConfigured, serveStatic: opts.serveStatic });
   return { app, config, db, providers, scheduler, llmConfigured };
 }

@@ -33,13 +33,26 @@ export interface AnthropicLlmOptions {
   workspaceId?: string;
   model: string;
   enableWebSearch?: boolean;
+  /** Server-side compaction threshold (input tokens, API minimum 50 000). */
+  compactAtTokens?: number;
+  /** Test hook: custom fetch implementation. */
+  fetch?: typeof fetch;
 }
+
+/** Summarizer instructions for server-side compaction (replaces the default prompt). */
+export const COMPACTION_INSTRUCTIONS =
+  "Fasse die bisherige Unterhaltung zwischen dem Benutzer und seinem Assistenten JARVIS auf Deutsch zusammen, " +
+  "damit das Gespräch nahtlos weitergehen kann. Behalte unbedingt: offene Aufträge und Zusagen, vorbereitete oder " +
+  "wartende Aktionen, genannte Personen mit E-Mail-Adressen, Termine mit Datum/Uhrzeit, E-Mail-IDs, Aufgaben-/Termin-IDs, " +
+  "Entscheidungen und Vorlieben des Benutzers sowie Sicherheitshinweise (z.B. erkannte Manipulationsversuche). " +
+  "Lass Smalltalk und bereits vollständig erledigte Details weg. Schreib nur die Zusammenfassung und rufe kein Werkzeug auf.";
 
 /** Claude Messages API with adaptive thinking, streaming and refusal fallback. */
 export class AnthropicLlm implements LlmClient {
   readonly model: string;
   private readonly client: Anthropic;
   private readonly enableWebSearch: boolean;
+  private readonly compactAtTokens: number;
 
   constructor(opts: AnthropicLlmOptions) {
     this.model = opts.model;
@@ -47,27 +60,59 @@ export class AnthropicLlm implements LlmClient {
       apiKey: opts.apiKey,
       maxRetries: 2,
       defaultHeaders: opts.workspaceId ? { "anthropic-workspace-id": opts.workspaceId } : undefined,
+      ...(opts.fetch ? { fetch: opts.fetch } : {}),
     });
     this.enableWebSearch = opts.enableWebSearch ?? true;
+    this.compactAtTokens = Math.max(50_000, opts.compactAtTokens ?? 60_000);
+  }
+
+  /** Set when the API rejected the optional extras once; the process then continues without them. */
+  private extrasDisabled = false;
+
+  private async send(req: LlmRequest, tools: LlmTool[], extras: boolean): Promise<LlmResponse> {
+    const stream = this.client.beta.messages.stream({
+      model: this.model,
+      max_tokens: 32_000,
+      betas: extras
+        ? ["server-side-fallback-2026-07-01", "compact-2026-01-12", "thinking-binding-controls-2026-08-01"]
+        : ["server-side-fallback-2026-07-01"],
+      fallbacks: "default",
+      // A thinking block whose conversation prefix no longer matches is dropped instead of failing the request.
+      thinking: extras ? { type: "adaptive", block_binding: { prefix_mismatch_behavior: "drop_block" } } : { type: "adaptive" },
+      // Long conversations are summarized server-side (append-only for us, cheaper per request afterwards).
+      ...(extras
+        ? {
+            context_management: {
+              edits: [{ type: "compact_20260112", trigger: { type: "input_tokens", value: this.compactAtTokens }, instructions: COMPACTION_INSTRUCTIONS }],
+            },
+          }
+        : {}),
+      output_config: { effort: "medium" },
+      cache_control: { type: "ephemeral" },
+      system: req.system,
+      tools,
+      messages: req.messages,
+    });
+    return stream.finalMessage();
   }
 
   async create(req: LlmRequest): Promise<LlmResponse> {
     const tools: LlmTool[] = [...req.tools];
     if (this.enableWebSearch) tools.push({ type: "web_search_20260209", name: "web_search", max_uses: 5 });
     try {
-      const stream = this.client.beta.messages.stream({
-        model: this.model,
-        max_tokens: 32_000,
-        betas: ["server-side-fallback-2026-07-01"],
-        fallbacks: "default",
-        thinking: { type: "adaptive" },
-        output_config: { effort: "medium" },
-        cache_control: { type: "ephemeral" },
-        system: req.system,
-        tools,
-        messages: req.messages,
-      });
-      return await stream.finalMessage();
+      if (this.extrasDisabled) return await this.send(req, tools, false);
+      try {
+        return await this.send(req, tools, true);
+      } catch (err) {
+        // Compaction / thinking-binding are optimizations: if this account or model rejects them,
+        // continue without instead of failing every request.
+        if (err instanceof Anthropic.BadRequestError && /context_management|compact|block_binding|thinking-binding|beta/i.test(err.message)) {
+          console.warn("[llm] optional API features rejected, continuing without:", err.message);
+          this.extrasDisabled = true;
+          return await this.send(req, tools, false);
+        }
+        throw err;
+      }
     } catch (err) {
       if (err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError) {
         throw new LlmUnavailableError("Der Claude-API-Schlüssel ist ungültig oder hat keine Berechtigung.", false);

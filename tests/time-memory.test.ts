@@ -94,6 +94,6 @@ describe("reminders & scheduler", () => {
     const s = new Scheduler(h.providers);
     expect(await s.tick(new Date("2026-09-30T08:00:00Z"))).toBe(1);
     expect(await s.tick(new Date("2026-09-30T08:01:00Z"))).toBe(0);
-    expect(await h.providers.notifications.list()).toEqual([expect.objectContaining({ title: "Erinnerung", body: "Zahnarzt anrufen" })]);
+    expect(await h.providers.notifications.list()).toEqual([expect.objectContaining({ title: "⏰ Erinnerung", body: "Zahnarzt anrufen" })]);
   });
 });

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { RiskLevel, type ToolDefinition } from "../core/types.js";
 import { formatHuman, toLocalIso } from "../core/time.js";
+import { CombinedContacts } from "../providers/combined-contacts.js";
 import { MEMORY_CATEGORIES } from "../memory/memory.js";
 import { defineTool, emailAddress, external, fail, id, isoDateOrDateTime, isoDateTime, ok, singleLine } from "./common.js";
 
@@ -17,11 +18,18 @@ export const contactTools: ToolDefinition[] = [
     input: z.object({ query: z.string().min(1).max(200), max_results: z.number().int().min(1).max(20).optional() }),
     describe: (i) => `Kontakt suchen: "${i.query}"`,
     async execute(input, ctx) {
-      const contacts = await (await ctx.providers.contacts()).searchContacts(input.query, input.max_results ?? 10);
+      const provider = await ctx.providers.contacts();
+      const contacts = await provider.searchContacts(input.query, input.max_results ?? 10);
       const people = (await ctx.memory.search(input.query)).filter((m) => m.category === "person");
+      const failure = provider instanceof CombinedContacts ? provider.lastFailure : undefined;
       return external(
         "contacts",
-        { count: contacts.length, contacts, memoryNotes: people.map((p) => ({ key: p.key, value: p.value, source: p.source })) },
+        {
+          count: contacts.length,
+          contacts,
+          memoryNotes: people.map((p) => ({ key: p.key, value: p.value, source: p.source })),
+          ...(failure ? { warning: `${failure} — nur JARVIS-Kontakte durchsucht.` } : {}),
+        },
         contacts.map((c) => c.name),
       );
     },
@@ -40,7 +48,9 @@ export const contactTools: ToolDefinition[] = [
   }),
   defineTool({
     name: "create_contact",
-    description: "Legt einen neuen Kontakt an.",
+    description:
+      "Legt einen neuen Kontakt an. Standardmäßig in den JARVIS-Kontakten (funktioniert immer); " +
+      "save_to='google' nur, wenn der Benutzer es ausdrücklich in Google Kontakte haben will.",
     category: "contacts",
     risk: RiskLevel.LOW,
     input: z.object({
@@ -48,10 +58,15 @@ export const contactTools: ToolDefinition[] = [
       emails: z.array(emailAddress).max(10).optional(),
       phones: z.array(singleLine(40)).max(10).optional(),
       organization: singleLine(200).optional(),
+      role: singleLine(200).optional(),
+      notes: z.string().max(2000).optional(),
+      save_to: z.enum(["jarvis", "google"]).optional(),
     }),
-    describe: (i) => `Kontakt anlegen: ${i.name}`,
-    async execute(input, ctx) {
-      return ok(await (await ctx.providers.contacts()).createContact(input));
+    describe: (i) => `Kontakt anlegen: ${i.name}${i.save_to === "google" ? " (Google Kontakte)" : ""}`,
+    async execute({ save_to, ...input }, ctx) {
+      const provider = await ctx.providers.contacts();
+      if (provider instanceof CombinedContacts) return ok(await provider.createContact({ ...input, target: save_to }));
+      return ok(await provider.createContact(input));
     },
   }),
   defineTool({
@@ -65,6 +80,8 @@ export const contactTools: ToolDefinition[] = [
       emails: z.array(emailAddress).max(10).optional(),
       phones: z.array(singleLine(40)).max(10).optional(),
       organization: singleLine(200).optional(),
+      role: singleLine(200).optional(),
+      notes: z.string().max(2000).optional(),
     }),
     describe: (i) => `Kontakt aktualisieren (${i.contact_id})`,
     async execute({ contact_id, ...patch }, ctx) {

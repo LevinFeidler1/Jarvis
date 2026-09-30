@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
+import { waitUntil } from "@vercel/functions";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { AppConfig } from "./config.js";
@@ -14,6 +15,11 @@ import { addDaysYmd, localDate, zonedToUtc } from "./core/time.js";
 import { RISK_LABELS, ToolError } from "./core/types.js";
 import type { Db } from "./db/database.js";
 import { MEMORY_CATEGORIES, type MemoryStore } from "./memory/memory.js";
+import { AUTOMATION_TEMPLATES, type Automation, type AutomationInput, AutomationRunner, describeTrigger } from "./core/automations.js";
+import { buildWeekReview } from "./core/review.js";
+import { automationTriggerSchema } from "./tools/automation.js";
+import { CombinedContacts } from "./providers/combined-contacts.js";
+import { parseVCards, toVCards } from "./providers/local/vcard.js";
 import { MAIL_PRESETS } from "./providers/imap/accounts.js";
 import { ImapEmailProvider } from "./providers/imap/imap.js";
 import { MultiAccountEmail } from "./providers/multi-email.js";
@@ -99,7 +105,7 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
       return reply.code(400).send({ error: "Ungültige Eingabe", issues: err.issues.map((i) => `${i.path.join(".")}: ${i.message}`) });
     }
     if (err instanceof ToolError) {
-      const code = err.code === "NOT_CONFIGURED" ? 409 : err.code === "NOT_FOUND" ? 404 : 502;
+      const code = err.code === "NOT_CONFIGURED" ? 409 : err.code === "NOT_FOUND" ? 404 : err.code === "INVALID_INPUT" ? 400 : 502;
       return reply.code(code).send({ error: err.message, code: err.code });
     }
     if (err.statusCode && err.statusCode < 500) return reply.code(err.statusCode).send({ error: err.message });
@@ -290,12 +296,50 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
     await providers.tasks.delete(idParam.parse(req.params).id);
     return { ok: true };
   });
+  // ─── Contacts (JARVIS-own; Google only searched) ──────────────────────
+  const contactInput = z.object({
+    name: z.string().trim().min(1).max(200),
+    emails: z.array(z.email().max(320)).max(10).optional(),
+    phones: z.array(z.string().trim().min(1).max(40)).max(10).optional(),
+    organization: z.string().trim().max(200).optional(),
+    role: z.string().trim().max(200).optional(),
+    notes: z.string().max(2000).optional(),
+  });
+  const contactId = z.object({ id: z.string().regex(/^jarvis:[0-9a-f-]{36}$/) });
+  app.get("/api/contacts", async (req) => {
+    const { q } = z.object({ q: z.string().trim().max(200).optional() }).parse(req.query);
+    const combined = await providers.contacts();
+    const google = combined instanceof CombinedContacts && combined.hasGoogle;
+    if (!q) return { contacts: await providers.localContacts.list(), google };
+    const contacts = await combined.searchContacts(q, 50);
+    return { contacts, google, warning: combined instanceof CombinedContacts ? combined.lastFailure : undefined };
+  });
+  app.post("/api/contacts", async (req) => providers.localContacts.createContact(contactInput.parse(req.body)));
+  app.patch("/api/contacts/:id", async (req) =>
+    providers.localContacts.updateContact(contactId.parse(req.params).id, contactInput.partial().parse(req.body)),
+  );
+  app.delete("/api/contacts/:id", async (req, reply) =>
+    (await providers.localContacts.deleteContact(contactId.parse(req.params).id)) ? { ok: true } : reply.code(404).send({ error: "Nicht gefunden" }),
+  );
+  app.post("/api/contacts/import", { bodyLimit: 4 * 1024 * 1024 }, async (req, reply) => {
+    const { vcf } = z.object({ vcf: z.string().min(1).max(4 * 1024 * 1024) }).parse(req.body);
+    const parsed = parseVCards(vcf);
+    if (parsed.length === 0) return reply.code(400).send({ error: "Keine Kontakte in der Datei gefunden (erwartet: vCard/.vcf)." });
+    return providers.localContacts.importContacts(parsed);
+  });
+  app.get("/api/contacts/export", async (_req, reply) =>
+    reply
+      .header("content-type", "text/vcard; charset=utf-8")
+      .header("content-disposition", 'attachment; filename="jarvis-kontakte.vcf"')
+      .send(toVCards(await providers.localContacts.list())),
+  );
+
   app.get("/api/reminders", async () => providers.reminders.list("all"));
   app.delete("/api/reminders/:id", async (req) => ({ ok: await providers.reminders.cancel(idParam.parse(req.params).id) }));
 
   app.get("/api/notifications", async () => {
     // Serverless has no background loop: fire due reminders opportunistically.
-    await scheduler.tick().catch((err) => app.log.warn({ err }, "reminder tick failed"));
+    await scheduler.tick().catch((err) => app.log.warn({ err }, "reminder tick failed")); // reminders only; automations run via cron
     return providers.notifications.list(false);
   });
   app.post("/api/notifications/:id/read", async (req) => {
@@ -311,7 +355,77 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get("/api/cron/tick", async (req, reply) => {
     const auth = req.headers.authorization ?? "";
     if (!config.cronSecret || !safeEqual(auth, `Bearer ${config.cronSecret}`)) return reply.code(401).send({ error: "Unauthorized" });
-    return { fired: await scheduler.tick() };
+    const now = new Date();
+    const fired = await scheduler.tick(now);
+    const automations = scheduler.runAutomations(now).catch((err) => {
+      app.log.error({ err }, "automations failed");
+      return 0;
+    });
+    // External cron services give up after ~30 s; on Vercel the automations keep
+    // running after the response (up to maxDuration), locally we simply wait.
+    if (process.env.VERCEL) {
+      waitUntil(automations);
+      return { fired, automations: "started" };
+    }
+    return { fired, automations: await automations };
+  });
+
+  // ─── Push notifications ───────────────────────────────────────────────
+  const pushSub = z.object({
+    endpoint: z.url().max(2000),
+    keys: z.object({ p256dh: z.string().min(10).max(200), auth: z.string().min(8).max(100) }),
+  });
+  app.get("/api/push", async () => ({ publicKey: await providers.push.publicKey(), devices: await providers.push.devices() }));
+  app.post("/api/push/subscribe", async (req, reply) => {
+    const body = z.object({ subscription: pushSub, label: z.string().trim().max(80).optional() }).parse(req.body);
+    try {
+      await providers.push.subscribe(body.subscription, body.label);
+    } catch (err) {
+      return reply.code(400).send({ error: (err as Error).message });
+    }
+    return { ok: true };
+  });
+  app.post("/api/push/unsubscribe", async (req) => {
+    const { endpoint } = z.object({ endpoint: z.string().max(2000) }).parse(req.body);
+    return { ok: await providers.push.unsubscribe(endpoint) };
+  });
+  app.delete("/api/push/devices/:id", async (req) => ({ ok: await providers.push.removeDevice(idParam.parse(req.params).id) }));
+  app.post("/api/push/test", { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } }, async () => {
+    const r = await providers.notifications.notify("🔔 Test von JARVIS", "Push-Benachrichtigungen funktionieren auf diesem Gerät.", { url: "/#settings", tag: "push-test" });
+    return { pushed: r.pushed ?? 0 };
+  });
+
+  // ─── Automations ──────────────────────────────────────────────────────
+  const automationRunner = new AutomationRunner(providers.automations, agent, providers);
+  const automationInput = z.object({
+    name: z.string().trim().min(1).max(80),
+    prompt: z.string().trim().min(5).max(2000),
+    trigger: automationTriggerSchema,
+    enabled: z.boolean().optional(),
+  });
+  const withText = (a: Automation) => ({ ...a, triggerText: describeTrigger(a.trigger) });
+  app.get("/api/automations", async () => ({
+    automations: (await providers.automations.list()).map(withText),
+    templates: AUTOMATION_TEMPLATES.map((t) => ({ ...t, triggerText: describeTrigger(t.trigger) })),
+    pushDevices: (await providers.push.devices()).length,
+    cronConfigured: !!config.cronSecret,
+  }));
+  app.post("/api/automations", async (req) => withText(await providers.automations.create(automationInput.parse(req.body) as AutomationInput)));
+  app.patch("/api/automations/:id", async (req, reply) => {
+    const a = await providers.automations.update(idParam.parse(req.params).id, automationInput.partial().parse(req.body) as Partial<AutomationInput>);
+    return a ? withText(a) : reply.code(404).send({ error: "Nicht gefunden" });
+  });
+  app.delete("/api/automations/:id", async (req, reply) =>
+    (await providers.automations.delete(idParam.parse(req.params).id)) ? { ok: true } : reply.code(404).send({ error: "Nicht gefunden" }),
+  );
+  app.post("/api/automations/:id/run", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) =>
+    automationRunner.runNow(idParam.parse(req.params).id),
+  );
+
+  // ─── Weekly review ────────────────────────────────────────────────────
+  app.get("/api/review", async (req) => {
+    const { offset } = z.object({ offset: z.coerce.number().int().min(-52).max(0).optional() }).parse(req.query);
+    return buildWeekReview({ db: deps.db, providers, config }, offset ?? 0);
   });
 
   // ─── Calendar & email views (read-only, level 0) ──────────────────────

@@ -34,6 +34,8 @@ Iterativ, jede Phase ist für sich lauffähig und getestet.
       Antworten vom richtigen Postfach, ehrliche Meldung nicht erreichbarer Postfächer (docs/SETUP_MAIL.md);
       gegen echten IMAP-Server (Dovecot) getestet
 - [ ] Live-Test mit den echten Postfächern levin@feidler.de (1&1) und levin.feidler@fa-automations.de (All-Inkl)
+- [x] Eigene Kontakte in JARVIS (ohne Google): Seite *Kontakte*, vCard-Import/-Export (iPhone, Android, Outlook, 1&1),
+      gemeinsame Suche mit Google Kontakte, ehrliche Meldung bei Google-Ausfall
 - [ ] Kalender der IMAP-Anbieter (CalDAV) — aktuell nur Google Calendar
 - [ ] Microsoft Graph: Outlook, Kalender, Kontakte (`MicrosoftEmailProvider` etc. gegen dieselben Interfaces)
 - [ ] Google Drive / OneDrive (`FileProvider`, Tools `search_files`, `read_file`, …)
@@ -43,14 +45,15 @@ Iterativ, jede Phase ist für sich lauffähig und getestet.
 ## Phase 3 — Aufgaben, Erinnerungen, Automationen
 
 - [x] Lokale Aufgaben, Erinnerungen, In-App-Benachrichtigungen, Scheduler
-- [ ] Automationen als eigene, in der UI verwaltete Objekte
-      (`trigger`: Zeitplan | neue E-Mail mit Bedingung; `action`: Agent-Prompt mit Tool-Allowlist;
-      aktivieren/deaktivieren; Stufe-2-Freigabe nur für explizit benannte Tools, Stufe 3 nie)
-  - „Jeden Montag 8 Uhr Wochenübersicht", „Jeden Morgen wichtige Mails prüfen",
-    „3 Tage vor wichtigen Terminen erinnern", „Rechnung per Mail → Aufgabe"
-- [ ] Gmail-Push (Pub/Sub) bzw. Polling für E-Mail-Trigger
+- [x] Automationen als eigene, in der UI verwaltete Objekte (Zeitplan + E-Mail-Auslöser, Vorlagen,
+      „Jetzt ausführen", Ergebnis als Push; per Chat anlegbar mit Bestätigung)
+- [x] Web-Push aufs Handy (iPhone als Home-Bildschirm-App, Android, Desktop)
+- [x] Wochenrückblick (Seite, Tool, Automation-Vorlage) inkl. geschätzter API-Kosten
+- [x] Lange Unterhaltungen: serverseitige Compaction, append-only Verlauf
+- [ ] Automationen: Stufe-2-Freigabe für ausdrücklich benannte Tools (z.B. „Rechnungen automatisch archivieren")
+- [ ] Gmail-Push (Pub/Sub) statt 5-Minuten-Polling für E-Mail-Auslöser
 - [ ] Google Tasks / Microsoft To Do als alternative `TaskProvider`
-- [ ] Benachrichtigungskanäle: Web Push, E-Mail an sich selbst, Telegram/Signal
+- [ ] Weitere Benachrichtigungskanäle: E-Mail an sich selbst, Telegram/Signal
 
 ## Phase 4 — Browser-Agent & komplexe Workflows
 
@@ -62,12 +65,13 @@ Iterativ, jede Phase ist für sich lauffähig und getestet.
 
 ## Phase 5 — Voice, Proaktivität, fortgeschrittenes Memory
 
-- [ ] Voice-Client: Wake-Word/Push-to-Talk → STT → `/api/chat` → TTS; gleiche Bestätigungslogik
-      (Bestätigungen per Sprache nur mit Wiederholung der Kernparameter)
-- [ ] Proaktive Briefings (Morgen, Wochenstart) als Automationen
+- [x] Sprach-Chat im Browser (Web Speech API): 🎤 Spracheingabe (de-DE), Vorlesen der Antworten,
+      Gesprächsmodus (hört nach jeder Antwort wieder zu, „Stopp" beendet), Stimme/Tempo in den Einstellungen;
+      gleiche Bestätigungslogik — kritische Aktionen (Stufe 3) nie per gesprochenem „Ja"
+- [ ] Wake-Word („Hey Jarvis"), Server-STT/TTS (z.B. Whisper/ElevenLabs) für Browser ohne Web Speech, Telefon-Bot
+- [x] Proaktive Briefings (Morgen, Wochenstart, Wochenrückblick) als Automationen
 - [ ] Proaktive Hinweise aus neuen E-Mails (Terminvorschlag erkannt → „Du bist frei. Soll ich zusagen?")
 - [ ] Memory: automatische Vorschläge („Soll ich mir merken, dass …?"), Verfallsdaten, Quellenlinks
-- [ ] Lange Unterhaltungen: Server-Compaction der Claude API
 - [ ] Mehrbenutzerbetrieb (Mandantentrennung)
 
 ## Bekannte Einschränkungen des aktuellen Stands
@@ -75,5 +79,6 @@ Iterativ, jede Phase ist für sich lauffähig und getestet.
 - Die Google-Integration ist gegen die offiziellen REST-APIs implementiert und mit
   simulierten HTTP-Antworten getestet, aber noch nicht gegen ein echtes Konto gelaufen.
 - Arbeitsschritte werden live gestreamt, der Antworttext selbst erscheint am Stück.
-- Auf Vercel Hobby läuft der Cron nur täglich; minutengenaue Erinnerungen über externen Cron (siehe DEPLOY_VERCEL.md).
-- Unterhaltungen werden ungekürzt an das Modell gesendet — für neue Themen „Neue Unterhaltung" nutzen.
+- Auf Vercel Hobby läuft der eingebaute Cron nur täglich; Erinnerungen und Automationen brauchen den
+  externen 5-Minuten-Cron (cron-job.org, siehe DEPLOY_VERCEL.md).
+- Kostenangaben im Wochenrückblick sind Schätzungen nach Listenpreisen.

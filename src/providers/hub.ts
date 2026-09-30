@@ -7,10 +7,14 @@ import { GmailProvider } from "./google/gmail.js";
 import { GoogleHttp } from "./google/http.js";
 import { GoogleAuth } from "./google/oauth.js";
 import { GoogleContactsProvider } from "./google/people.js";
+import { CombinedContacts } from "./combined-contacts.js";
 import { EmailAccountStore } from "./imap/accounts.js";
 import { type ImapDeps, ImapEmailProvider } from "./imap/imap.js";
+import { LocalContactProvider } from "./local/contacts.js";
 import { InAppNotificationProvider, LocalTaskProvider, ReminderStore } from "./local/local.js";
 import { type MailboxEntry, MultiAccountEmail } from "./multi-email.js";
+import { PushService } from "./push.js";
+import { AutomationStore } from "../core/automations.js";
 import type { CalendarProvider, ContactProvider, EmailProvider } from "./types.js";
 
 export interface IntegrationStatus {
@@ -32,7 +36,11 @@ export class ProviderHub {
   readonly tasks: LocalTaskProvider;
   readonly reminders: ReminderStore;
   readonly notifications: InAppNotificationProvider;
+  readonly push: PushService;
+  readonly automations: AutomationStore;
   readonly emailAccounts: EmailAccountStore;
+  /** Contacts maintained in JARVIS itself — always available, no Google needed. */
+  readonly localContacts: LocalContactProvider;
   readonly googleAuth?: GoogleAuth;
   private imapDeps: ImapDeps = {};
   private readonly google?: { email: GmailProvider; calendar: GoogleCalendarProvider; contacts: GoogleContactsProvider };
@@ -41,8 +49,11 @@ export class ProviderHub {
   constructor(config: AppConfig, db: Db, tokenStore: TokenStore) {
     this.tasks = new LocalTaskProvider(db);
     this.reminders = new ReminderStore(db);
-    this.notifications = new InAppNotificationProvider(db);
+    this.automations = new AutomationStore(db, config.timezone);
+    this.push = new PushService(db, config.encryptionKey, config.publicUrl);
+    this.notifications = new InAppNotificationProvider(db, this.push);
     this.emailAccounts = new EmailAccountStore(db, config.encryptionKey);
+    this.localContacts = new LocalContactProvider(db);
     if (config.google) {
       this.googleAuth = new GoogleAuth(
         { ...config.google, redirectUri: `${config.publicUrl}/api/integrations/google/callback` },
@@ -103,8 +114,7 @@ export class ProviderHub {
 
   async contacts(): Promise<ContactProvider> {
     if (this.overrides.contacts) return this.overrides.contacts;
-    if (await this.googleReady()) return this.google!.contacts;
-    throw new ToolError(`Kontakte sind noch nicht konfiguriert. ${SETUP_HINT}`, "NOT_CONFIGURED");
+    return new CombinedContacts(this.localContacts, (await this.googleReady()) ? this.google!.contacts : undefined);
   }
 
   async status(): Promise<IntegrationStatus[]> {
@@ -146,6 +156,7 @@ export class ProviderHub {
         state: "planned",
         detail: "Geplant für eine spätere Phase (siehe ROADMAP.md).",
       },
+      { id: "local-contacts", name: "Kontakte (JARVIS)", category: "contacts", state: "connected", detail: "Integriert — selbst pflegen oder vCard (.vcf) importieren; Google Kontakte werden zusätzlich durchsucht, wenn verbunden." },
       { id: "local-tasks", name: "Aufgaben (lokal)", category: "tasks", state: "connected", detail: "Integriert, keine Einrichtung nötig." },
       { id: "local-reminders", name: "Erinnerungen (In-App)", category: "reminders", state: "connected", detail: "Integriert." },
     ];

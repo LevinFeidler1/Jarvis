@@ -138,7 +138,7 @@ describe("HTTP API — streaming, cron, briefing", () => {
     expect((await app.inject({ url: "/api/cron/tick" })).statusCode).toBe(401);
     expect((await app.inject({ url: "/api/cron/tick", headers: { authorization: "Bearer wrong" } })).statusCode).toBe(401);
     const ok = await app.inject({ url: "/api/cron/tick", headers: { authorization: `Bearer ${"s".repeat(32)}` } });
-    expect(ok.json()).toEqual({ fired: 1 });
+    expect(ok.json()).toEqual({ fired: 1, automations: 0 });
   });
 
   it("cron endpoint is disabled when no secret is configured", async () => {

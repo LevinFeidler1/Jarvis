@@ -67,6 +67,18 @@ const ICONS = {
   bell2: '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>',
   new: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   dot: '<circle cx="12" cy="12" r="3"/>',
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  pin: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/>',
+  chart: '<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/>',
+  upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
+  phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/>',
+  mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/>',
+  volume: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/>',
+  mute: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="m22 9-6 6M16 9l6 6"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+  headset: '<path d="M3 14v-2a9 9 0 0 1 18 0v2"/><path d="M21 16a2 2 0 0 1-2 2h-1v-6h1a2 2 0 0 1 2 2zM3 16a2 2 0 0 0 2 2h1v-6H5a2 2 0 0 0-2 2z"/>',
 };
 function icon(name, cls = "") {
   const span = document.createElement("span");
@@ -292,10 +304,14 @@ const NAV = [
   ["calendar", "Kalender", "calendar"],
   ["email", "E-Mail", "mail"],
   ["tasks", "Aufgaben", "tasks"],
+  ["contacts", "Kontakte", "users"],
+  ["automations", "Automationen", "bolt"],
+  ["review", "Rückblick", "chart"],
   ["memory", "Gedächtnis", "memory"],
   ["settings", "Einstellungen", "settings"],
 ];
-const MOBILE_NAV = ["today", "chat", "calendar", "tasks", "settings"];
+const MOBILE_NAV = ["today", "chat", "calendar", "email"];
+const isMobile = () => matchMedia("(max-width: 860px)").matches;
 
 function renderShell() {
   const navBtn = (id, label, ic) =>
@@ -313,8 +329,9 @@ function renderShell() {
   const mobile = h("nav", { class: "mobile-bar", "aria-label": "Navigation" },
     MOBILE_NAV.map((id) => {
       const [, label, ic] = NAV.find((n) => n[0] === id);
-      return h("button", { "data-view": id, onclick: () => go(id) }, icon(ic), label, id === "today" ? h("span", { class: "count hidden", "data-count": "pending" }) : null);
-    }));
+      return h("button", { "data-view": id, onclick: () => go(id) }, icon(ic), h("span", {}, label), id === "today" ? h("span", { class: "count hidden", "data-count": "pending" }) : null);
+    }),
+    h("button", { id: "more-btn", onclick: openMoreSheet, "aria-haspopup": "dialog" }, icon("grid"), h("span", {}, "Mehr"), h("span", { class: "count hidden", "data-count": "notif" })));
   set($("#root"), h("div", { class: "shell" }, sidebar, h("main", { id: "main" }), mobile));
 }
 
@@ -351,14 +368,38 @@ async function logout() {
   renderLogin();
 }
 
+/** Mobile: everything that does not fit into the bottom bar. */
+function openMoreSheet() {
+  const close = () => wrap.remove();
+  const item = (ic, label, onclick, extra = null, active = false) =>
+    h("button", { class: `sheet-item ${active ? "active" : ""}`, onclick: () => { close(); onclick(); } }, h("span", { class: "sheet-ic" }, icon(ic)), h("span", {}, label), extra);
+  const views = NAV.filter(([id]) => !MOBILE_NAV.includes(id));
+  const themeLabel = { system: "System", dark: "Dunkel", light: "Hell" }[getTheme()];
+  const wrap = h("div", { class: "modal-wrap sheet-wrap", onclick: (e) => e.target === wrap && close() },
+    h("div", { class: "sheet", role: "dialog", "aria-modal": "true", "aria-label": "Mehr" },
+      h("div", { class: "sheet-grip" }),
+      h("div", { class: "sheet-grid" }, views.map(([id, label, ic]) =>
+        item(ic, label, () => go(id), id === "activity" && state.counts.pending ? h("span", { class: "count" }, state.counts.pending) : null, state.view === id))),
+      h("div", { class: "sheet-list" },
+        item("bell", "Benachrichtigungen", openNotifications, state.counts.notif ? h("span", { class: "count" }, state.counts.notif) : null),
+        item(getTheme() === "light" ? "sun" : "moon", `Design: ${themeLabel}`, cycleTheme),
+        item("logout", "Abmelden", logout))));
+  wrap.addEventListener("keydown", (e) => e.key === "Escape" && close());
+  document.body.append(wrap);
+  wrap.querySelector("button")?.focus();
+}
+
 function go(view, params = "") {
   location.hash = `${view}${params}`;
 }
 
 async function route() {
+  if (voice.listening) voice.stopListening();
+  if (voice.speaking) voice.stopSpeaking();
   const [view, query = ""] = location.hash.replace(/^#/, "").split("?");
   state.view = VIEWS[view] ? view : "today";
   document.querySelectorAll("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === state.view));
+  $("#more-btn")?.classList.toggle("active", !MOBILE_NAV.includes(state.view));
   const main = $("#main");
   if (!main) return;
   main.scrollTop = 0;
@@ -379,6 +420,182 @@ function cardHead(title, ic, ...actions) {
 
 const notConfigured = (msg) =>
   h("div", { class: "empty" }, h("div", {}, msg), h("button", { class: "btn sm", onclick: () => go("settings") }, icon("plug"), "Integration verbinden"));
+
+// ─── Voice (Sprach-Chat) ─────────────────────────────────────────────────────
+// Browser speech recognition + speech synthesis. Same agent, same permission
+// rules as typing: a spoken "ja" is sent as a normal message; critical actions
+// are refused server-side and need the button.
+const voice = {
+  SR: window.SpeechRecognition || window.webkitSpeechRecognition || null,
+  rec: null,
+  listening: false,
+  speaking: false,
+  unlocked: false,
+  prefs: (() => {
+    const d = { speak: true, conversation: false, voiceURI: null, rate: 1.05 };
+    try { return { ...d, ...JSON.parse(localStorage.getItem("jarvis-voice") || "{}") }; } catch { return d; }
+  })(),
+  save() { try { localStorage.setItem("jarvis-voice", JSON.stringify(this.prefs)); } catch { /* ignore */ } },
+  get canListen() { return !!this.SR; },
+  get canSpeak() { return "speechSynthesis" in window; },
+
+  voices() {
+    if (!this.canSpeak) return [];
+    return speechSynthesis.getVoices().filter((v) => v.lang?.toLowerCase().startsWith("de"));
+  },
+  pickVoice() {
+    const list = this.voices();
+    return list.find((v) => v.voiceURI === this.prefs.voiceURI)
+      ?? list.find((v) => /google deutsch|markus|conrad|yannick|killian|anna|helena|katja|petra|vicki/i.test(v.name))
+      ?? list[0] ?? null;
+  },
+
+  /** iOS/Safari only allow speech after a user gesture: prime it once. */
+  unlock() {
+    if (this.unlocked || !this.canSpeak) return;
+    try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; speechSynthesis.speak(u); } catch { /* ignore */ }
+    this.unlocked = true;
+  },
+
+  toSpeech(text) {
+    let t = String(text ?? "")
+      .replace(/```[\s\S]*?```/g, " ")
+      .replace(/\[([^\]]+)\]\((?:https?:[^)]+)\)/g, "$1")
+      .replace(/https?:\/\/\S+/g, "")
+      .replace(/[*_`#>]/g, "")
+      .replace(/^\s*[-•]\s+/gm, "")
+      .replace(/^\s*\d+[.)]\s+/gm, "")
+      .replace(/\s*\n+\s*/g, ". ")
+      .replace(/\.\s*\./g, ".")
+      .replace(/([:!?;,])\s*\./g, "$1")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+    if (t.length > 700) {
+      const cut = t.slice(0, 700);
+      t = `${cut.slice(0, Math.max(cut.lastIndexOf(". "), 400) + 1)} Den Rest findest du im Chat.`;
+    }
+    return t;
+  },
+
+  speak(text, onEnd) {
+    if (!this.canSpeak || !text) { onEnd?.(); return; }
+    this.stopSpeaking();
+    let finished = false;
+    const done = () => { if (finished) return; finished = true; this.speaking = false; voiceUi(); onEnd?.(); };
+    try {
+      const u = new SpeechSynthesisUtterance(this.toSpeech(text));
+      const v = this.pickVoice();
+      try { if (v) u.voice = v; } catch { /* keep default voice */ }
+      u.lang = v?.lang ?? "de-DE";
+      u.rate = this.prefs.rate;
+      u.onstart = () => { this.speaking = true; voiceUi(); };
+      u.onend = done;
+      u.onerror = done;
+      speechSynthesis.speak(u);
+    } catch {
+      done(); // speech output must never break the chat
+    }
+  },
+  stopSpeaking() {
+    if (this.canSpeak) speechSynthesis.cancel();
+    this.speaking = false;
+    voiceUi();
+  },
+
+  listen({ onInterim, onFinal }) {
+    if (!this.canListen) { toast("Spracheingabe wird von diesem Browser nicht unterstützt (Chrome, Edge oder Safari verwenden).", "err"); return; }
+    this.stopSpeaking();
+    this.stopListening();
+    const rec = new this.SR();
+    rec.lang = "de-DE";
+    rec.interimResults = true;
+    rec.continuous = false;
+    rec.maxAlternatives = 1;
+    let finalText = "";
+    rec.onresult = (e) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) finalText += r[0].transcript;
+        else interim += r[0].transcript;
+      }
+      onInterim?.((finalText + interim).trim());
+    };
+    rec.onerror = (e) => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        toast("Mikrofon-Zugriff verweigert. Erlaube das Mikrofon in den Browser-Einstellungen für diese Seite.", "err");
+        this.prefs.conversation = false;
+      } else if (e.error === "network") toast("Spracherkennung nicht erreichbar (Netzwerk).", "err");
+      else if (e.error !== "no-speech" && e.error !== "aborted") toast(`Spracherkennung: ${e.error}`, "err");
+    };
+    rec.onend = () => {
+      this.listening = false;
+      this.rec = null;
+      voiceUi();
+      const text = finalText.trim();
+      if (text) onFinal?.(text);
+      else if (this.prefs.conversation) { this.prefs.conversation = false; voiceUi(); toast("Gesprächsmodus beendet (nichts gehört)."); }
+    };
+    this.rec = rec;
+    this.listening = true;
+    voiceUi();
+    try { rec.start(); } catch { this.listening = false; voiceUi(); }
+  },
+  stopListening() {
+    try { this.rec?.stop(); } catch { /* ignore */ }
+  },
+};
+if (voice.canSpeak) speechSynthesis.onvoiceschanged = () => { /* voices load async */ };
+
+const END_WORDS = /^(stopp?|ende|beenden|danke,? das war'?s|das war'?s|tschüss|gesprächsmodus aus)[.! ]*$/i;
+
+/** Reflects voice state in the chat UI. */
+function voiceUi() {
+  const mic = $("#mic-btn");
+  if (mic) {
+    mic.classList.toggle("on", voice.listening);
+    mic.setAttribute("aria-pressed", String(voice.listening));
+    mic.title = voice.listening ? "Zuhören beenden" : "Sprechen";
+  }
+  $(".composer")?.classList.toggle("listening", voice.listening);
+  const input = $("#chat-input");
+  if (input) input.placeholder = voice.listening ? "Ich höre zu …" : isMobile() ? "Nachricht an JARVIS …" : "Frag JARVIS oder gib einen Auftrag …";
+  $(".chat-top .orb")?.classList.toggle("busy", voice.speaking);
+  const spk = $("#speak-btn");
+  if (spk) {
+    set(spk, icon(voice.speaking ? "stop" : voice.prefs.speak ? "volume" : "mute"), h("span", {}, voice.speaking ? "Stopp" : voice.prefs.speak ? "Vorlesen an" : "Vorlesen aus"));
+    spk.classList.toggle("active-chip", voice.prefs.speak);
+  }
+  const conv = $("#conv-btn");
+  if (conv) conv.classList.toggle("active-chip", voice.prefs.conversation);
+}
+
+function startVoiceInput() {
+  voice.unlock();
+  const input = $("#chat-input");
+  voice.listen({
+    onInterim: (t) => { if (input) { input.value = t; input.dispatchEvent(new Event("input")); } },
+    onFinal: (t) => {
+      if (input) { input.value = ""; input.dispatchEvent(new Event("input")); }
+      if (voice.prefs.conversation && END_WORDS.test(t.trim())) {
+        voice.prefs.conversation = false; voice.save(); voiceUi();
+        voice.speak("Gesprächsmodus beendet.");
+        return;
+      }
+      sendMessage(t, { viaVoice: true });
+    },
+  });
+}
+
+/** Speak the reply if the request came by voice; keep the conversation going. */
+function speakReply(reply) {
+  let text = reply.text;
+  const crit = (reply.pendingActions ?? []).some((p) => p.risk >= 3);
+  if (crit) text += " Achtung: Das ist eine kritische Aktion. Bitte bestätige sie per Knopf auf dem Bildschirm.";
+  const again = () => { if (voice.prefs.conversation && !crit && state.view === "chat") setTimeout(startVoiceInput, 250); };
+  if (voice.prefs.speak) voice.speak(text, again);
+  else again();
+}
 
 // ─── View: Heute ────────────────────────────────────────────────────────────
 function greeting() {
@@ -486,12 +703,17 @@ function startChat(text, { send = true, newConversation = true } = {}) {
   if (state.view === "chat") route(); else go("chat");
 }
 
-async function viewChat(main) {
+async function viewChat(main, params = new URLSearchParams()) {
+  if (params.get("c")) { state.conversationId = params.get("c"); history.replaceState(null, "", "#chat"); }
   const thread = h("div", { class: "thread", id: "thread" });
   const scroll = h("div", { class: "chat-scroll", id: "chat-scroll" }, thread);
-  const input = h("textarea", { id: "chat-input", rows: 1, placeholder: "Frag JARVIS oder gib einen Auftrag …", maxlength: 8000, "aria-label": "Nachricht" });
+  const input = h("textarea", { id: "chat-input", rows: 1, placeholder: isMobile() ? "Nachricht an JARVIS …" : "Frag JARVIS oder gib einen Auftrag …", enterkeyhint: "send", maxlength: 8000, "aria-label": "Nachricht" });
   const sendBtn = h("button", { class: "btn primary icon", type: "submit", title: "Senden", "aria-label": "Senden" }, icon("send"));
-  const form = h("form", { class: "composer", onsubmit: (e) => { e.preventDefault(); const t = input.value; input.value = ""; autosize(); sendMessage(t); } }, input, sendBtn);
+  const micBtn = voice.canListen
+    ? h("button", { class: "btn ghost icon mic", id: "mic-btn", type: "button", title: "Sprechen", "aria-label": "Sprechen", "aria-pressed": "false",
+        onclick: () => (voice.listening ? voice.stopListening() : startVoiceInput()) }, icon("mic"))
+    : null;
+  const form = h("form", { class: "composer", onsubmit: (e) => { e.preventDefault(); voice.unlock(); const t = input.value; input.value = ""; autosize(); sendMessage(t); } }, micBtn, input, sendBtn);
   const autosize = () => { input.style.height = "auto"; input.style.height = `${Math.min(input.scrollHeight, 220)}px`; };
   input.addEventListener("input", autosize);
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); } });
@@ -500,16 +722,22 @@ async function viewChat(main) {
   const top = h("div", { class: "chat-top" },
     h("div", { style: "display:flex;align-items:center;gap:10px;min-width:0" }, h("div", { class: "orb" }), title),
     h("div", { class: "head-actions" },
-      h("button", { class: "btn ghost sm", onclick: openHistory }, icon("history"), h("span", {}, "Verlauf")),
-      h("button", { class: "btn sm", onclick: () => { state.conversationId = null; route(); } }, icon("plus"), h("span", {}, "Neu"))));
+      voice.canSpeak ? h("button", { class: "btn ghost sm", id: "speak-btn", title: "Antworten auf Spracheingaben vorlesen",
+        onclick: () => { if (voice.speaking) return voice.stopSpeaking(); voice.prefs.speak = !voice.prefs.speak; voice.save(); voiceUi(); } }) : null,
+      voice.canListen ? h("button", { class: "btn ghost sm", id: "conv-btn", title: "Gesprächsmodus: nach jeder Antwort automatisch weiter zuhören. Beenden mit „Stopp“.",
+        onclick: () => { voice.prefs.conversation = !voice.prefs.conversation; voice.save(); voiceUi(); if (voice.prefs.conversation && !voice.listening) startVoiceInput(); else if (!voice.prefs.conversation) voice.stopListening(); } },
+        icon("headset"), h("span", {}, "Gespräch")) : null,
+      h("button", { class: "btn ghost sm", onclick: openHistory, "aria-label": "Verlauf" }, icon("history"), h("span", {}, "Verlauf")),
+      h("button", { class: "btn sm", "aria-label": "Neue Unterhaltung", onclick: () => { state.conversationId = null; route(); } }, icon("plus"), h("span", {}, "Neu"))));
 
   const secBanner = h("div", { class: "banner warn hidden", id: "sec-banner" }, icon("shield"),
     h("div", {}, h("b", {}, "Sicherheitshinweis: "), "In dieser Unterhaltung wurde ein möglicher Manipulationsversuch (Prompt Injection) erkannt. Externe Aktionen erfordern erhöhte Bestätigung."));
 
   set(main, h("div", { class: "view chat" }, top, scroll,
-    h("div", { class: "composer-wrap" }, secBanner, form, h("div", { class: "composer-hint" }, "Enter zum Senden · Shift+Enter für neue Zeile · Externe Aktionen immer erst nach deiner Bestätigung"))));
+    h("div", { class: "composer-wrap" }, secBanner, form, h("div", { class: "composer-hint" }, voice.canListen ? "Enter zum Senden · 🎤 zum Sprechen · Externe Aktionen immer erst nach deiner Bestätigung" : "Enter zum Senden · Shift+Enter für neue Zeile · Externe Aktionen immer erst nach deiner Bestätigung"))));
 
   state.renderedPending = new Set();
+  voiceUi();
   if (state.conversationId) {
     const data = await api(`/api/conversations/${state.conversationId}/messages`);
     title.textContent = data.conversation.title ?? "Unterhaltung";
@@ -588,17 +816,18 @@ function addAssistant() {
   };
 }
 
-function handleReply(reply, turn) {
+function handleReply(reply, turn, opts = {}) {
   const isNew = state.conversationId !== reply.conversationId;
   state.conversationId = reply.conversationId;
   turn.finish(reply.text, reply.actions, new Date().toISOString());
   renderPendingCards(reply.pendingActions);
   $("#sec-banner")?.classList.toggle("hidden", !reply.securityWarning);
+  if (opts.viaVoice) { try { speakReply(reply); } catch { /* never break the reply */ } }
   if (isNew) api(`/api/conversations/${reply.conversationId}/messages`).then((d) => { const t = $(".chat-top .title"); if (t) t.textContent = d.conversation.title ?? "Unterhaltung"; }).catch(() => {});
   refreshCounts();
 }
 
-async function sendMessage(text) {
+async function sendMessage(text, opts = {}) {
   text = text.trim();
   if (!text || state.busy) return;
   state.busy = true;
@@ -606,18 +835,25 @@ async function sendMessage(text) {
   const turn = addAssistant();
   try {
     const reply = await apiStream("/api/chat/stream", { conversationId: state.conversationId ?? undefined, message: text }, (ev) => ev.type === "action" && turn.step(ev.action));
-    handleReply(reply, turn);
+    handleReply(reply, turn, opts);
   } catch (err) {
     turn.error(err.message);
+    if (opts.viaVoice) voice.speak(`Fehler: ${err.message}`);
   } finally {
     state.busy = false;
-    $("#chat-input")?.focus();
+    if (!voice.listening) $("#chat-input")?.focus();
   }
 }
 
 function renderPendingCards(list) {
   const thread = $("#thread");
   if (!thread) return;
+  // Cards resolved elsewhere (e.g. by a spoken "ja") no longer offer buttons.
+  const open = new Set((list ?? []).map((p) => p.id));
+  thread.querySelectorAll(".confirm[data-pending-id]").forEach((c) => {
+    const foot = c.querySelector(".confirm-foot");
+    if (foot && !open.has(c.dataset.pendingId)) foot.replaceWith(h("div", { class: "resolved" }, icon("check"), "Erledigt"));
+  });
   for (const p of list ?? []) {
     if (state.renderedPending.has(p.id)) continue;
     state.renderedPending.add(p.id);
@@ -637,7 +873,7 @@ function confirmCard(p, onDone, inChat = false) {
   const crit = p.risk >= 3;
   const { headline, body } = describePreview(p.description);
   const foot = h("div", { class: "confirm-foot" });
-  const card = h("div", { class: `confirm ${crit ? "crit" : ""}` },
+  const card = h("div", { class: `confirm ${crit ? "crit" : ""}`, "data-pending-id": p.id },
     h("div", { class: "confirm-head" }, icon(crit ? "alert" : "shield"), h("span", {}, headline),
       h("span", { class: `badge ${crit ? "crit" : "warn"}` }, crit ? "Kritisch" : "Bestätigung")),
     body ? h("div", { class: "confirm-preview" }, body) : null,
@@ -763,6 +999,7 @@ async function viewCalendar(main) {
   }
 
   const days = [...Array(7)].map((_, i) => { const d = new Date(start); d.setDate(d.getDate() + i); return d; });
+  if (isMobile()) return renderAgenda(main, head, days, events);
   const headRow = h("div", { class: "cal-head" }, h("div"), days.map((d) =>
     h("div", { class: isToday(d) ? "today" : "" }, d.toLocaleDateString("de-DE", { weekday: "short" }), h("b", {}, d.getDate()))));
   const allday = h("div", { class: "cal-allday" }, h("div", {}, "ganzt."), days.map((d) =>
@@ -802,11 +1039,53 @@ async function viewCalendar(main) {
   body.scrollTop = 7 * HOUR_PX;
 }
 
+/** Phones: a readable day-by-day list instead of the 7-column grid. */
+function renderAgenda(main, head, days, events) {
+  const todayYmd = ymd(new Date());
+  const past = days.filter((d) => ymd(d) < todayYmd);
+  let showPast = false;
+  const list = h("div", { class: "agenda" });
+  const dayEvents = (d) => {
+    const dayStart = new Date(d).getTime();
+    const dayEnd = dayStart + 86400000;
+    return events
+      .filter((e) => (e.allDay ? e.start.slice(0, 10) <= ymd(d) && e.end.slice(0, 10) > ymd(d) : new Date(e.start).getTime() < dayEnd && new Date(e.end).getTime() > dayStart))
+      .sort((a, b) => (b.allDay - a.allDay) || (new Date(a.start) - new Date(b.start)));
+  };
+  const render = () => {
+    const shown = showPast ? days : days.filter((d) => ymd(d) >= todayYmd);
+    set(list,
+      past.length && !showPast && shown.length < days.length
+        ? h("button", { class: "btn ghost sm agenda-past", onclick: () => { showPast = true; render(); } }, icon("history"), `${past.length} ${past.length === 1 ? "früheren Tag" : "frühere Tage"} anzeigen`)
+        : null,
+      shown.map((d) => {
+        const evs = dayEvents(d);
+        const today = ymd(d) === todayYmd;
+        return h("section", { class: `agenda-day ${today ? "today" : ""} ${ymd(d) < todayYmd ? "past" : ""}` },
+          h("div", { class: "agenda-date" },
+            h("div", { class: "num" }, d.getDate()),
+            h("div", {}, h("div", { class: "wd" }, d.toLocaleDateString("de-DE", { weekday: "long" })), h("div", { class: "mo" }, d.toLocaleDateString("de-DE", { month: "long" }))),
+            today ? h("span", { class: "badge accent" }, "Heute") : null),
+          evs.length
+            ? h("div", { class: "card agenda-list" }, evs.map((e) =>
+                h("div", { class: `agenda-ev ${e.busy ? "" : "free"}` },
+                  h("div", { class: "t" }, e.allDay ? h("b", {}, "ganztägig") : [h("b", {}, fmt.time(e.start)), h("span", {}, fmt.time(e.end))]),
+                  h("div", { class: "main" }, h("div", { class: "title" }, e.title),
+                    e.location ? h("div", { class: "sub" }, icon("pin"), e.location) : null,
+                    e.attendees?.length ? h("div", { class: "sub" }, icon("users"), `${e.attendees.length} Teilnehmer`) : null))))
+            : h("div", { class: "agenda-free" }, "Keine Termine"));
+      }));
+  };
+  render();
+  set(main, h("div", { class: "view" }, head, list,
+    h("div", { class: "muted small", style: "margin-top:14px" }, `${events.length} Termine diese Woche · Zeitzone ${state.status?.timezone ?? TZ}`)));
+}
+
 // ─── View: E-Mail ───────────────────────────────────────────────────────────
 async function viewEmail(main) {
   const head = viewHead("E-Mail", "Posteingang",
     h("button", { class: `chip ${state.mailUnread ? "active" : ""}`, onclick: () => { state.mailUnread = !state.mailUnread; viewEmail(main); } }, "Nur ungelesen"),
-    h("button", { class: "btn", onclick: () => startChat("Sortiere mein Postfach: Was ist wichtig, was braucht eine Antwort, was ist Newsletter/Werbung? Schlag Aktionen vor.") }, icon("bolt"), "Mit JARVIS sortieren"),
+    h("button", { class: "btn", onclick: () => startChat("Sortiere mein Postfach: Was ist wichtig, was braucht eine Antwort, was ist Newsletter/Werbung? Schlag Aktionen vor."), "aria-label": "Mit JARVIS sortieren" }, icon("bolt"), h("span", {}, "Mit JARVIS sortieren")),
     h("button", { class: "btn ghost icon", onclick: () => viewEmail(main), "aria-label": "Aktualisieren" }, icon("refresh")));
   set(main, h("div", { class: "view" }, head, h("div", { class: "card", style: "padding:40px" }, h("div", { class: "spinner", style: "margin:auto" }))));
 
@@ -924,6 +1203,363 @@ async function viewTasks(main) {
       : h("div", { class: "card-body", style: "padding:18px" }, h("div", { class: "empty" }, "Keine Erinnerungen. Beispiel: „Erinnere mich morgen um 9 an den Zahnarzt.“")))));
 }
 
+// ─── View: Kontakte ─────────────────────────────────────────────────────────
+const splitList = (v) => v.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
+
+function contactEditor(c) {
+  return new Promise((resolve) => {
+    const f = {
+      name: h("input", { class: "field", id: "ct-name", maxlength: 200, required: true, placeholder: "Vor- und Nachname", value: c?.name ?? "" }),
+      emails: h("input", { class: "field", id: "ct-emails", placeholder: "anna@example.com, …", value: (c?.emails ?? []).join(", ") }),
+      phones: h("input", { class: "field", id: "ct-phones", type: "tel", placeholder: "+49 170 …", value: (c?.phones ?? []).join(", ") }),
+      organization: h("input", { class: "field", id: "ct-org", maxlength: 200, placeholder: "Firma", value: c?.organization ?? "" }),
+      role: h("input", { class: "field", id: "ct-role", maxlength: 200, placeholder: "Rolle, z.B. Geschäftsführerin", value: c?.role ?? "" }),
+      notes: h("textarea", { class: "field", id: "ct-notes", rows: 3, maxlength: 2000, style: "height:auto;padding:10px 12px", placeholder: "Notizen (z.B. „duzen“, „bevorzugt WhatsApp“)" }, c?.notes ?? ""),
+    };
+    const err = h("div", { class: "error-text" });
+    const close = (v) => { wrap.remove(); resolve(v); };
+    const label = (text, forId) => h("label", { class: "small muted", for: forId }, text);
+    const form = h("form", { class: "modal contact-modal", role: "dialog", "aria-modal": "true", onsubmit: async (e) => {
+      e.preventDefault();
+      err.textContent = "";
+      const body = {
+        name: f.name.value.trim(), emails: splitList(f.emails.value), phones: splitList(f.phones.value),
+        organization: f.organization.value.trim(), role: f.role.value.trim(), notes: f.notes.value.trim(),
+      };
+      const bad = body.emails.find((m) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(m));
+      if (bad) { err.textContent = `Ungültige E-Mail-Adresse: ${bad}`; return; }
+      try {
+        const saved = c ? await api(`/api/contacts/${encodeURIComponent(c.id)}`, { method: "PATCH", body }) : await api("/api/contacts", { method: "POST", body });
+        close(saved);
+      } catch (ex) { err.textContent = ex.message; }
+    } },
+      h("h3", {}, c ? "Kontakt bearbeiten" : "Neuer Kontakt"),
+      label("Name", "ct-name"), f.name,
+      label("E-Mail-Adressen (mehrere mit Komma)", "ct-emails"), f.emails,
+      label("Telefonnummern", "ct-phones"), f.phones,
+      h("div", { class: "grid2" }, f.organization, f.role),
+      label("Notizen", "ct-notes"), f.notes,
+      err,
+      h("div", { class: "foot" },
+        h("button", { class: "btn ghost", type: "button", onclick: () => close(null) }, "Abbrechen"),
+        h("button", { class: "btn primary", type: "submit" }, "Speichern")));
+    const wrap = h("div", { class: "modal-wrap", onclick: (e) => e.target === wrap && close(null) }, form);
+    wrap.addEventListener("keydown", (e) => e.key === "Escape" && close(null));
+    document.body.append(wrap);
+    f.name.focus();
+  });
+}
+
+async function viewContacts(main) {
+  const data = await api("/api/contacts");
+  const contacts = data.contacts;
+  const reload = () => viewContacts(main);
+
+  const row = (c) => h("div", { class: "integration contact-row" },
+    avatar(c.name),
+    h("div", { class: "main" },
+      h("div", { class: "title" }, c.name, c.source !== "jarvis" ? h("span", { class: "badge", style: "margin-left:8px" }, c.source === "other" ? "aus E-Mails" : "Google") : null),
+      h("div", { class: "sub" }, [c.role, c.organization].filter(Boolean).join(" · ") || null),
+      h("div", { class: "sub contact-links" },
+        c.emails.map((m) => h("a", { href: `mailto:${m}` }, icon("mail"), m)),
+        c.phones.map((p) => h("a", { href: `tel:${p.replace(/[^\d+]/g, "")}` }, icon("phone"), p))),
+      c.notes ? h("div", { class: "sub" }, c.notes) : null),
+    c.source === "jarvis" ? h("div", { class: "actions" },
+      h("button", { class: "btn ghost icon sm", "aria-label": `${c.name} bearbeiten`, onclick: async () => { if (await contactEditor(c)) { toast("Gespeichert.", "ok"); reload(); } } }, icon("edit")),
+      h("button", { class: "btn ghost icon sm", "aria-label": `${c.name} löschen`, onclick: async () => {
+        if (!(await dialog({ title: `${c.name} löschen?`, text: "Der Kontakt wird aus JARVIS entfernt.", confirmLabel: "Löschen", danger: true }))) return;
+        await api(`/api/contacts/${encodeURIComponent(c.id)}`, { method: "DELETE" }).catch(fail); reload();
+      } }, icon("trash"))) : null);
+
+  const listBox = h("div", {});
+  const googleBox = h("div", {});
+  const renderList = (q) => {
+    const needle = q.trim().toLowerCase();
+    const hits = needle ? contacts.filter((c) => [c.name, c.organization, c.role, ...c.emails, ...c.phones].filter(Boolean).join(" ").toLowerCase().includes(needle)) : contacts;
+    set(listBox, hits.length
+      ? h("div", { class: "card" }, hits.map(row))
+      : h("div", { class: "empty" }, contacts.length ? "Keine Treffer in deinen JARVIS-Kontakten." : "Noch keine Kontakte. Lege oben einen an, importiere eine .vcf-Datei oder sag JARVIS: „Speichere Anna Schmidt, anna@example.com“."));
+  };
+  let timer;
+  const search = h("input", { class: "field", type: "search", placeholder: data.google ? "Suchen (auch in Google Kontakte) …" : "Kontakte durchsuchen …", "aria-label": "Kontakte durchsuchen",
+    oninput: () => {
+      renderList(search.value);
+      clearTimeout(timer);
+      set(googleBox);
+      if (!data.google || search.value.trim().length < 2) return;
+      timer = setTimeout(async () => {
+        try {
+          const r = await api(`/api/contacts?q=${encodeURIComponent(search.value.trim())}`);
+          const remote = r.contacts.filter((c) => c.source !== "jarvis");
+          set(googleBox,
+            r.warning ? h("div", { class: "muted small" }, r.warning) : null,
+            remote.length ? [h("div", { class: "section-title" }, "Aus Google Kontakte", h("span", { class: "badge" }, remote.length)), h("div", { class: "card" }, remote.map(row))] : null);
+        } catch (e) { set(googleBox, h("div", { class: "muted small" }, e.message)); }
+      }, 300);
+    } });
+
+  const file = h("input", { type: "file", accept: ".vcf,text/vcard,text/x-vcard", hidden: true, onchange: async () => {
+    const f = file.files?.[0];
+    if (!f) return;
+    if (f.size > 4 * 1024 * 1024) { toast("Datei zu groß (max. 4 MB).", "err"); return; }
+    try {
+      const r = await api("/api/contacts/import", { method: "POST", body: { vcf: await f.text() } });
+      toast(`${r.imported} Kontakte importiert${r.skipped ? `, ${r.skipped} übersprungen (schon vorhanden)` : ""}.`, "ok");
+      reload();
+    } catch (e) { fail(e); } finally { file.value = ""; }
+  } });
+
+  set(main, h("div", { class: "view" },
+    viewHead("Kontakte",
+      `${contacts.length} in JARVIS${data.google ? " · Google Kontakte verbunden" : ""}`,
+      h("button", { class: "btn", onclick: () => file.click() }, icon("upload"), h("span", {}, "Importieren")),
+      contacts.length ? h("a", { class: "btn", href: "/api/contacts/export", download: "jarvis-kontakte.vcf" }, icon("download"), h("span", {}, "Exportieren")) : null,
+      h("button", { class: "btn primary", onclick: async () => { if (await contactEditor(null)) { toast("Kontakt gespeichert.", "ok"); reload(); } } }, icon("plus"), h("span", {}, "Neuer Kontakt")),
+      file),
+    h("div", { class: "card", style: "padding:12px" }, search),
+    listBox,
+    googleBox,
+    h("div", { class: "muted small", style: "margin-top:4px" },
+      "Import: vCard-Datei (.vcf) vom iPhone (iCloud.com → Kontakte → Exportieren), Android, Outlook oder 1&1. ",
+      data.google ? "Google-Kontakte werden bei der Suche automatisch mit durchsucht." : "Google Kontakte ist optional — JARVIS nutzt diese Kontakte auch ohne Google.")));
+  renderList("");
+}
+
+// ─── Push-Benachrichtigungen ───────────────────────────────────────────────
+const push = {
+  supported: "serviceWorker" in navigator && "PushManager" in window && "Notification" in window,
+  ios: /iphone|ipad|ipod/i.test(navigator.userAgent),
+  standalone: matchMedia("(display-mode: standalone)").matches || navigator.standalone === true,
+  async register() {
+    if (!("serviceWorker" in navigator)) return null;
+    try { return await navigator.serviceWorker.register("/sw.js", { scope: "/" }); } catch { return null; }
+  },
+  async subscription() {
+    if (!this.supported) return null;
+    const reg = await navigator.serviceWorker.getRegistration("/");
+    return reg ? reg.pushManager.getSubscription() : null;
+  },
+  deviceLabel() {
+    const ua = navigator.userAgent;
+    const dev = /iphone/i.test(ua) ? "iPhone" : /ipad/i.test(ua) ? "iPad" : /android/i.test(ua) ? "Android" : /mac os/i.test(ua) ? "Mac" : /windows/i.test(ua) ? "Windows" : "Gerät";
+    const br = /edg\//i.test(ua) ? "Edge" : /firefox/i.test(ua) ? "Firefox" : /chrome|crios/i.test(ua) ? "Chrome" : /safari/i.test(ua) ? "Safari" : "Browser";
+    return `${dev} · ${br}`;
+  },
+  async enable() {
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") throw new Error(perm === "denied" ? "Benachrichtigungen sind blockiert. Bitte in den Einstellungen des Geräts für JARVIS erlauben." : "Keine Erlaubnis erteilt.");
+    const reg = (await navigator.serviceWorker.getRegistration("/")) ?? (await this.register());
+    if (!reg) throw new Error("Service Worker konnte nicht registriert werden.");
+    await navigator.serviceWorker.ready;
+    const { publicKey } = await api("/api/push");
+    const key = Uint8Array.from(atob(publicKey.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (publicKey.length % 4)) % 4)), (c) => c.charCodeAt(0));
+    const sub = (await reg.pushManager.getSubscription()) ?? (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }));
+    const json = sub.toJSON();
+    await api("/api/push/subscribe", { method: "POST", body: { subscription: { endpoint: json.endpoint, keys: json.keys }, label: this.deviceLabel() } });
+  },
+  async disable() {
+    const sub = await this.subscription();
+    if (!sub) return;
+    await api("/api/push/unsubscribe", { method: "POST", body: { endpoint: sub.endpoint } }).catch(() => {});
+    await sub.unsubscribe().catch(() => {});
+  },
+};
+
+function pushCard(onChange) {
+  const card = h("div", { class: "card" }, h("div", { class: "card-body", style: "padding:18px" }, h("div", { class: "spinner" })));
+  const render = async () => {
+    const [info, sub] = await Promise.all([api("/api/push").catch(() => ({ devices: [] })), push.subscription().catch(() => null)]);
+    const perm = push.supported ? Notification.permission : "unsupported";
+    const busy = (btn, fn) => async () => { btn.disabled = true; try { await fn(); } catch (e) { fail(e); } finally { btn.disabled = false; render(); onChange?.(); } };
+    let head;
+    if (!push.supported) {
+      head = h("div", { class: "banner warn", style: "max-width:none;margin:0" }, icon("alert"), h("div", {},
+        push.ios && !push.standalone
+          ? [h("b", {}, "Auf dem iPhone: "), "JARVIS zuerst installieren — in Safari auf Teilen ", h("b", {}, "↑"), " → „Zum Home-Bildschirm“, dann JARVIS über das neue Symbol öffnen und hier aktivieren (ab iOS 16.4)."]
+          : "Dieser Browser unterstützt keine Push-Nachrichten. Chrome, Edge, Firefox oder Safari (Mac/iPhone) verwenden."));
+    } else if (perm === "denied") {
+      head = h("div", { class: "banner warn", style: "max-width:none;margin:0" }, icon("alert"), h("div", {}, "Benachrichtigungen sind für JARVIS blockiert. In den Einstellungen des Geräts/Browsers erlauben und die Seite neu laden."));
+    } else if (sub) {
+      const test = h("button", { class: "btn" }, icon("bell"), h("span", {}, "Test senden"));
+      test.onclick = busy(test, async () => { const r = await api("/api/push/test", { method: "POST" }); toast(r.pushed ? `Test an ${r.pushed} Gerät(e) gesendet.` : "Kein Gerät erreicht.", r.pushed ? "ok" : "err"); });
+      const off = h("button", { class: "btn ghost" }, "Auf diesem Gerät ausschalten");
+      off.onclick = busy(off, () => push.disable());
+      head = h("div", { class: "push-head" }, h("span", { class: "badge ok" }, icon("check"), "Aktiv auf diesem Gerät"), h("div", { class: "push-actions" }, test, off));
+    } else {
+      const on = h("button", { class: "btn primary" }, icon("bell"), h("span", {}, "Auf diesem Gerät aktivieren"));
+      on.onclick = busy(on, async () => { await push.enable(); toast("Push-Benachrichtigungen aktiviert.", "ok"); });
+      head = h("div", { class: "push-head" }, h("div", { class: "muted small", style: "flex:1;min-width:200px" }, "Erinnerungen, Automationen und wartende Bestätigungen kommen als Nachricht aufs Handy — auch wenn JARVIS geschlossen ist."), on);
+    }
+    set(card,
+      h("div", { class: "card-body", style: "padding:18px;display:grid;gap:12px" }, head),
+      info.devices.map((d) => h("div", { class: "integration" }, h("div", { class: "logo" }, icon("bell")),
+        h("div", { class: "main" }, h("div", { class: "title" }, d.label ?? d.host), h("div", { class: "sub" }, d.lastSuccessAt ? `zuletzt zugestellt ${fmt.rel(d.lastSuccessAt)}` : `eingerichtet ${fmt.rel(d.createdAt)}`)),
+        h("button", { class: "btn ghost icon sm", "aria-label": "Gerät entfernen", onclick: async () => { await api(`/api/push/devices/${d.id}`, { method: "DELETE" }).catch(fail); render(); } }, icon("trash")))));
+  };
+  render().catch((e) => set(card, h("div", { class: "card-body" }, h("div", { class: "empty" }, e.message))));
+  return card;
+}
+
+// ─── View: Automationen ─────────────────────────────────────────────────────
+const WEEKDAYS = [[1, "Mo"], [2, "Di"], [3, "Mi"], [4, "Do"], [5, "Fr"], [6, "Sa"], [7, "So"]];
+const AUTO_STATUS = { ok: ["erledigt", "ok"], waiting: ["wartet auf dich", "warn"], nothing: ["nichts Neues", ""], error: ["Fehler", "err"] };
+
+function automationEditor(a) {
+  return new Promise((resolve) => {
+    const t = a?.trigger ?? { type: "schedule", time: "07:00", days: [1, 2, 3, 4, 5] };
+    let type = t.type;
+    const days = new Set(t.type === "schedule" ? t.days : [1, 2, 3, 4, 5]);
+    const f = {
+      name: h("input", { class: "field", id: "au-name", maxlength: 80, required: true, placeholder: "z.B. Morgen-Briefing", value: a?.name ?? "" }),
+      prompt: h("textarea", { class: "field", id: "au-prompt", rows: 5, maxlength: 2000, required: true, style: "height:auto;padding:10px 12px", placeholder: "Was soll JARVIS jedes Mal tun? z.B. „Fasse meine Termine und wichtigen E-Mails für heute zusammen.“" }, a?.prompt ?? ""),
+      time: h("input", { class: "field", id: "au-time", type: "time", value: t.type === "schedule" ? t.time : "07:00" }),
+      from: h("input", { class: "field", id: "au-from", maxlength: 200, placeholder: "Absender enthält … (optional)", value: t.type === "email" ? t.from ?? "" : "" }),
+      subject: h("input", { class: "field", id: "au-subject", maxlength: 200, placeholder: "Betreff enthält … (optional)", value: t.type === "email" ? t.subject ?? "" : "" }),
+    };
+    const dayChips = h("div", { class: "filters day-chips" }, WEEKDAYS.map(([n, l]) =>
+      h("button", { type: "button", class: `chip ${days.has(n) ? "active" : ""}`, "aria-pressed": String(days.has(n)), onclick: (e) => {
+        days.has(n) ? days.delete(n) : days.add(n);
+        e.currentTarget.classList.toggle("active", days.has(n));
+        e.currentTarget.setAttribute("aria-pressed", String(days.has(n)));
+      } }, l)));
+    const scheduleBox = h("div", { style: "display:grid;gap:8px" }, h("label", { class: "small muted", for: "au-time" }, "Uhrzeit"), f.time, h("div", { class: "small muted" }, "Wochentage"), dayChips);
+    const emailBox = h("div", { style: "display:grid;gap:8px" }, h("div", { class: "small muted" }, "Läuft, sobald eine neue passende E-Mail eingeht (Prüfung alle 5 Minuten, in allen Postfächern)."), f.from, f.subject);
+    const seg = h("div", { class: "filters" });
+    const renderType = () => {
+      set(seg, [["schedule", "Zeitplan"], ["email", "Neue E-Mail"]].map(([k, l]) => h("button", { type: "button", class: `chip ${type === k ? "active" : ""}`, onclick: () => { type = k; renderType(); } }, l)));
+      scheduleBox.style.display = type === "schedule" ? "grid" : "none";
+      emailBox.style.display = type === "email" ? "grid" : "none";
+    };
+    renderType();
+    const err = h("div", { class: "error-text" });
+    const close = (v) => { wrap.remove(); resolve(v); };
+    const form = h("form", { class: "modal contact-modal", role: "dialog", "aria-modal": "true", onsubmit: async (e) => {
+      e.preventDefault();
+      err.textContent = "";
+      const trigger = type === "schedule"
+        ? { type, time: f.time.value || "07:00", days: [...days].sort() }
+        : { type, ...(f.from.value.trim() ? { from: f.from.value.trim() } : {}), ...(f.subject.value.trim() ? { subject: f.subject.value.trim() } : {}) };
+      if (type === "schedule" && !trigger.days.length) { err.textContent = "Mindestens einen Wochentag wählen."; return; }
+      const body = { name: f.name.value.trim(), prompt: f.prompt.value.trim(), trigger };
+      try {
+        close(a?.id ? await api(`/api/automations/${a.id}`, { method: "PATCH", body }) : await api("/api/automations", { method: "POST", body }));
+      } catch (ex) { err.textContent = ex.message; }
+    } },
+      h("h3", {}, a?.id ? "Automation bearbeiten" : "Neue Automation"),
+      h("label", { class: "small muted", for: "au-name" }, "Name"), f.name,
+      h("div", { class: "small muted" }, "Auslöser"), seg, scheduleBox, emailBox,
+      h("label", { class: "small muted", for: "au-prompt" }, "Auftrag an JARVIS"), f.prompt,
+      h("div", { class: "muted small" }, "Es gelten dieselben Regeln wie im Chat: Senden, Einladen, Löschen usw. werden nur vorbereitet — du bestätigst sie über die Push-Nachricht."),
+      err,
+      h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: () => close(null) }, "Abbrechen"), h("button", { class: "btn primary", type: "submit" }, "Speichern")));
+    const wrap = h("div", { class: "modal-wrap", onclick: (e) => e.target === wrap && close(null) }, form);
+    wrap.addEventListener("keydown", (e) => e.key === "Escape" && close(null));
+    document.body.append(wrap);
+    f.name.focus();
+  });
+}
+
+async function viewAutomations(main) {
+  const data = await api("/api/automations");
+  const reload = () => viewAutomations(main);
+  const sw = (checked, onchange) => { const i = h("input", { type: "checkbox", checked, "aria-label": "Aktiv" }); i.addEventListener("change", () => onchange(i.checked)); return h("label", { class: "switch" }, i, h("span")); };
+  const card = (a) => {
+    const st = a.lastStatus ? AUTO_STATUS[a.lastStatus] : null;
+    const runBtn = h("button", { class: "btn sm" }, icon("bolt"), h("span", {}, "Jetzt ausführen"));
+    runBtn.onclick = async () => {
+      runBtn.disabled = true;
+      set(runBtn, h("span", { class: "spinner sm" }), h("span", {}, "Läuft …"));
+      try {
+        const r = await api(`/api/automations/${a.id}/run`, { method: "POST" });
+        toast(r.status === "error" ? r.text : r.status === "nothing" ? "Nichts Neues." : "Fertig — Ergebnis wurde als Benachrichtigung verschickt.", r.status === "error" ? "err" : "ok");
+      } catch (e) { fail(e); }
+      reload();
+    };
+    return h("div", { class: `card auto ${a.enabled ? "" : "off"}` },
+      h("div", { class: "auto-head" },
+        h("div", { class: "sheet-ic" }, icon(a.trigger.type === "email" ? "mail" : "clock")),
+        h("div", { class: "main" }, h("div", { class: "title" }, a.name), h("div", { class: "sub" }, a.triggerText, a.enabled && a.nextRunAt && a.trigger.type === "schedule" ? ` · nächste: ${fmt.dt(a.nextRunAt)}` : "")),
+        sw(a.enabled, async (v) => { await api(`/api/automations/${a.id}`, { method: "PATCH", body: { enabled: v } }).catch(fail); reload(); })),
+      h("div", { class: "auto-prompt" }, a.prompt),
+      a.lastRunAt ? h("div", { class: "auto-last" },
+        h("div", { class: "auto-last-head" }, st ? h("span", { class: `badge ${st[1]}` }, st[0]) : null, h("span", { class: "muted small" }, `zuletzt ${fmt.rel(a.lastRunAt)} · ${a.runCount}× gelaufen`)),
+        a.lastResult ? h("div", { class: "small auto-result" }, a.lastResult.length > 280 ? `${a.lastResult.slice(0, 280)} …` : a.lastResult) : null) : null,
+      h("div", { class: "auto-actions" },
+        runBtn,
+        a.lastConversationId ? h("button", { class: "btn ghost sm", "aria-label": "Verlauf öffnen", onclick: () => go("chat", `?c=${a.lastConversationId}`) }, icon("chat"), h("span", { class: "hide-mobile" }, "Verlauf")) : null,
+        h("span", { style: "flex:1" }),
+        h("button", { class: "btn ghost icon sm", "aria-label": `${a.name} bearbeiten`, onclick: async () => { if (await automationEditor(a)) { toast("Gespeichert.", "ok"); reload(); } } }, icon("edit")),
+        h("button", { class: "btn ghost icon sm", "aria-label": `${a.name} löschen`, onclick: async () => {
+          if (!(await dialog({ title: `„${a.name}“ löschen?`, text: "Die Automation läuft danach nicht mehr.", confirmLabel: "Löschen", danger: true }))) return;
+          await api(`/api/automations/${a.id}`, { method: "DELETE" }).catch(fail); reload();
+        } }, icon("trash"))));
+  };
+  const have = new Set(data.automations.map((a) => a.name));
+  const templates = data.templates.filter((t) => !have.has(t.name));
+  set(main, h("div", { class: "view" },
+    viewHead("Automationen", "JARVIS erledigt Dinge von selbst und schickt dir das Ergebnis aufs Handy.",
+      h("button", { class: "btn primary", onclick: async () => { if (await automationEditor(null)) { toast("Automation angelegt.", "ok"); reload(); } } }, icon("plus"), h("span", {}, "Neue Automation"))),
+    data.pushDevices ? null : h("div", { class: "banner warn", style: "max-width:none" }, icon("bell"),
+      h("div", { style: "flex:1" }, h("b", {}, "Push ist noch aus. "), "Ohne Push siehst du Ergebnisse nur hier und unter Benachrichtigungen."),
+      h("button", { class: "btn sm", onclick: () => go("settings", "?focus=push") }, "Einrichten")),
+    data.automations.length ? h("div", { class: "auto-grid" }, data.automations.map(card))
+      : h("div", { class: "empty" }, "Noch keine Automationen. Nimm eine Vorlage oder sag im Chat z.B. „Schick mir jeden Montag um 8 eine Wochenübersicht.“"),
+    templates.length ? [h("div", { class: "section-title" }, icon("memory"), "Vorlagen"),
+      h("div", { class: "tpl-grid" }, templates.map((t) =>
+        h("button", { class: "card tpl", onclick: async () => { if (await automationEditor({ ...t, id: undefined })) { toast(`„${t.name}“ angelegt.`, "ok"); reload(); } } },
+          h("div", { class: "title" }, t.name), h("div", { class: "sub" }, t.description), h("span", { class: "badge accent" }, icon("plus"), "Hinzufügen"))))] : null,
+    data.cronConfigured ? null : h("div", { class: "muted small", style: "margin-top:14px" }, "Hinweis: CRON_SECRET ist nicht gesetzt — Zeitpläne laufen nur, solange JARVIS lokal läuft.")));
+}
+
+// ─── View: Wochenrückblick ──────────────────────────────────────────────────
+async function viewReview(main, params) {
+  const offset = Math.min(0, Number(params.get("w") ?? 0) || 0);
+  const r = await api(`/api/review?offset=${offset}`);
+  const num = (key) => r.actions.find((a) => a.key === key)?.count ?? 0;
+  const tile = (n, l, ic, cls = "") => h("div", { class: "card stat static" }, h("div", { class: `ic ${cls}` }, icon(ic)), h("div", {}, h("div", { class: "n" }, n), h("div", { class: "l" }, l)));
+  const eur = (usd) => usd.toLocaleString("de-DE", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: usd < 1 ? 3 : 2 });
+  const cacheShare = r.usage.inputTokens + r.usage.cacheReadTokens + r.usage.cacheWriteTokens
+    ? Math.round((r.usage.cacheReadTokens / (r.usage.inputTokens + r.usage.cacheReadTokens + r.usage.cacheWriteTokens)) * 100) : 0;
+  const list = (items, empty) => items.length ? h("div", {}, items) : h("div", { class: "muted small", style: "padding:4px 0" }, empty);
+  set(main, h("div", { class: "view" },
+    viewHead("Wochenrückblick", `${r.label}${r.isCurrentWeek ? " · diese Woche" : ""}`,
+      h("button", { class: "btn icon", "aria-label": "Vorherige Woche", onclick: () => go("review", `?w=${offset - 1}`) }, icon("left")),
+      offset < 0 ? h("button", { class: "btn icon", "aria-label": "Nächste Woche", onclick: () => go("review", `?w=${offset + 1}`) }, icon("right")) : null,
+      h("button", { class: "btn primary", onclick: () => startChat(`Erstelle meinen Wochenrückblick${offset ? ` für week_offset ${offset}` : ""}: Was wurde erledigt, was ist offen geblieben, was steht an? Schließe mit den 3 wichtigsten Punkten.`) }, icon("bolt"), h("span", {}, "Zusammenfassen"))),
+    h("div", { class: "stat-row review-stats" },
+      tile(num("emailsSent"), "E-Mails gesendet", "mail"),
+      tile(num("eventsCreated") + num("eventsChanged"), "Termine geplant", "calendar"),
+      tile(r.tasks.completed.length, "Aufgaben erledigt", "tasks", "ok"),
+      tile(r.automationRuns, "Automationen gelaufen", "bolt")),
+    h("div", { class: "grid" },
+      h("div", { class: "card col-6" }, cardHead("Erledigt", "check"), h("div", { class: "card-body" },
+        list(r.tasks.completed.map((t) => h("div", { class: "rv-row" }, icon("check"), h("span", {}, t.title), h("span", { class: "muted small" }, fmt.rel(t.completedAt)))), "Keine erledigten Aufgaben."),
+        r.highlights.length ? [h("div", { class: "rv-sub" }, "Von JARVIS ausgeführt"), r.highlights.map((x) => h("div", { class: "rv-row" }, icon(x.tool.includes("event") || x.tool.includes("invit") ? "calendar" : "mail"), h("span", {}, x.description), h("span", { class: "muted small" }, fmt.rel(x.at))))] : null,
+        r.actions.length ? h("div", { class: "rv-chips" }, r.actions.map((a) => h("span", { class: "badge" }, `${a.label}: ${a.count}`))) : null)),
+      h("div", { class: "card col-6" }, cardHead("Offen & nächste Woche", "clock"), h("div", { class: "card-body" },
+        r.tasks.openOverdue ? h("div", { class: "rv-row warn" }, icon("alert"), h("span", {}, `${r.tasks.openOverdue} überfällige Aufgabe${r.tasks.openOverdue === 1 ? "" : "n"}`), h("button", { class: "btn ghost sm", onclick: () => go("tasks") }, "Ansehen")) : null,
+        h("div", { class: "rv-sub" }, "Fällig nächste Woche"),
+        list(r.tasks.dueNextWeek.map((t) => h("div", { class: "rv-row" }, icon("tasks"), h("span", {}, t.title), h("span", { class: "muted small" }, new Date(t.due).toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" })))), "Nichts fällig."),
+        h("div", { class: "rv-sub" }, "Termine nächste Woche"),
+        r.nextWeek.events ? list(r.nextWeek.events.map((e) => h("div", { class: "rv-row" }, icon("calendar"), h("span", {}, e.title), h("span", { class: "muted small" }, e.allDay ? new Date(e.start).toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" }) : fmt.dt(e.start)))), "Keine Termine.")
+          : h("div", { class: "muted small" }, "Kalender nicht verbunden."))),
+      h("div", { class: "card col-6" }, cardHead("Aktivität", "activity"), h("div", { class: "card-body" }, h("dl", { class: "kv" },
+        h("dt", {}, "Unterhaltungen"), h("dd", {}, r.conversations),
+        h("dt", {}, "Erinnerungen ausgelöst"), h("dd", {}, r.remindersFired),
+        h("dt", {}, "Bestätigt / abgelehnt"), h("dd", {}, `${r.confirmations.approved} / ${r.confirmations.rejected}`),
+        h("dt", {}, "Neue Aufgaben"), h("dd", {}, r.tasks.created)))),
+      h("div", { class: "card col-6" }, cardHead("Kosten (Claude API)", "bolt"), h("div", { class: "card-body" },
+        h("div", { class: "rv-cost" }, `ca. ${eur(r.usage.costUsd)}`),
+        h("dl", { class: "kv" },
+          h("dt", {}, "Anfragen ans Modell"), h("dd", {}, r.usage.requests),
+          h("dt", {}, "Tokens (ein/aus)"), h("dd", {}, `${(r.usage.inputTokens + r.usage.cacheReadTokens + r.usage.cacheWriteTokens).toLocaleString("de-DE")} / ${r.usage.outputTokens.toLocaleString("de-DE")}`),
+          h("dt", {}, "Aus dem Cache"), h("dd", {}, `${cacheShare} %`),
+          h("dt", {}, "Websuchen"), h("dd", {}, r.usage.webSearches),
+          h("dt", {}, "Gekürzte Unterhaltungen"), h("dd", {}, r.usage.compactions)),
+        h("div", { class: "muted small", style: "margin-top:8px" }, "Schätzung nach Listenpreisen. Genaue Abrechnung: console.anthropic.com → Usage.")))),
+  ));
+}
+
 // ─── View: Gedächtnis ───────────────────────────────────────────────────────
 const CATS = { preference: ["Präferenzen", "settings"], person: ["Personen", "chat"], project: ["Projekte", "tasks"], rule: ["Regeln", "shield"], fact: ["Fakten", "memory"] };
 async function viewMemory(main) {
@@ -974,6 +1610,7 @@ async function viewSettings(main, params) {
   if (flash) { toast(flash === "connected" ? "Google wurde verbunden." : `Google-Verbindung fehlgeschlagen: ${flash}`, flash === "connected" ? "ok" : "err"); history.replaceState(null, "", "#settings"); }
   const [setup, integrations, perms, status] = await Promise.all([api("/api/setup"), api("/api/integrations"), api("/api/settings/permissions"), api("/api/status")]);
   const done = setup.steps.filter((s) => s.done).length;
+  if (params.get("focus") === "push") setTimeout(() => $("#push-section")?.scrollIntoView({ behavior: "smooth" }), 300);
   const settings = perms.settings;
   const save = async () => { try { await api("/api/settings/permissions", { method: "PUT", body: settings }); toast("Berechtigungen gespeichert.", "ok"); } catch (e) { fail(e); } };
   const sw = (checked, onchange) => { const i = h("input", { type: "checkbox", checked }); i.addEventListener("change", () => onchange(i.checked)); return h("label", { class: "switch" }, i, h("span")); };
@@ -1000,6 +1637,8 @@ async function viewSettings(main, params) {
         } }, "Trennen") : null);
     })),
 
+    h("div", { class: "section-title", id: "push-section" }, icon("bell"), "Push-Benachrichtigungen"),
+    pushCard(),
     h("div", { class: "section-title" }, icon("mail"), "E-Mail-Konten"),
     mailAccountsCard(main),
     h("div", { class: "section-title" }, icon("shield"), "Berechtigungen"),
@@ -1019,6 +1658,8 @@ async function viewSettings(main, params) {
           h("span", { class: `badge ${RISK[t.risk]?.[1] ?? ""}` }, `Stufe ${t.risk}`),
           sw(!settings.disabledTools.includes(t.name), (v) => { settings.disabledTools = v ? settings.disabledTools.filter((n) => n !== t.name) : [...settings.disabledTools, t.name]; save(); }))))),
 
+    h("div", { class: "section-title" }, icon("mic"), "Sprache"),
+    voiceSettingsCard(),
     h("div", { class: "section-title" }, icon("settings"), "System"),
     h("div", { class: "card" }, h("dl", { class: "kv" },
       h("dt", {}, "Modell"), h("dd", {}, `${status.model} ${status.llmConfigured ? "" : "(nicht konfiguriert)"}`),
@@ -1110,6 +1751,36 @@ function mailAccountsCard(main) {
   return card;
 }
 
+// ─── Sprach-Einstellungen ──────────────────────────────────────────────────
+function voiceSettingsCard() {
+  if (!voice.canSpeak && !voice.canListen) {
+    return h("div", { class: "card" }, h("div", { class: "card-body", style: "padding:18px" }, h("div", { class: "muted" }, "Dieser Browser unterstützt keine Sprachfunktionen. Chrome, Edge oder Safari verwenden.")));
+  }
+  const sel = h("select", { class: "field", id: "voice-select", "aria-label": "Stimme" });
+  const fill = () => {
+    const list = voice.voices();
+    const cur = voice.pickVoice();
+    set(sel, ...(list.length ? list.map((v) => h("option", { value: v.voiceURI, selected: cur?.voiceURI === v.voiceURI }, `${v.name}${v.localService ? "" : " (online)"}`)) : [h("option", {}, "Keine deutsche Stimme gefunden")]));
+  };
+  fill();
+  if (voice.canSpeak) speechSynthesis.addEventListener?.("voiceschanged", fill);
+  sel.addEventListener("change", () => { voice.prefs.voiceURI = sel.value; voice.save(); });
+  const rate = h("input", { type: "range", id: "voice-rate", min: "0.8", max: "1.4", step: "0.05", value: String(voice.prefs.rate), style: "width:100%" });
+  const rateLabel = h("span", { class: "muted small" }, `${voice.prefs.rate.toFixed(2)}×`);
+  rate.addEventListener("input", () => { voice.prefs.rate = Number(rate.value); rateLabel.textContent = `${voice.prefs.rate.toFixed(2)}×`; voice.save(); });
+  return h("div", { class: "card" },
+    h("div", { class: "card-body", style: "padding:18px;display:grid;gap:12px" },
+      h("div", { class: "grid2" },
+        h("div", {}, h("label", { class: "small muted", for: "voice-select" }, "Stimme"), sel),
+        h("div", {}, h("label", { class: "small muted", for: "voice-rate" }, "Sprechtempo "), rateLabel, rate)),
+      h("div", {}, h("button", { class: "btn sm", onclick: () => { voice.unlock(); voice.speak(`Guten Tag${state.userName ? `, ${state.userName}` : ""}. So klinge ich. Was kann ich für dich tun?`); } }, icon("volume"), "Probe anhören")),
+      h("div", { class: "muted small" },
+        `Spracheingabe: ${voice.canListen ? "verfügbar" : "nicht verfügbar in diesem Browser"} · Sprachausgabe: ${voice.canSpeak ? "verfügbar" : "nicht verfügbar"}. `,
+        "Im Chat: 🎤 zum Sprechen, „Gespräch“ für freihändigen Dialog (beenden mit „Stopp“). ",
+        "Datenschutz: In Chrome/Edge wird die Aufnahme zur Erkennung an den Browser-Hersteller (Google/Microsoft) gesendet; Safari erkennt teils auf dem Gerät. ",
+        "Sicherheit: Ein gesprochenes „Ja“ bestätigt nur normale Aktionen, die JARVIS vorher vorgelesen hat. Kritische Aktionen immer per Knopf.")));
+}
+
 // ─── Notifications drawer ───────────────────────────────────────────────────
 async function openNotifications() {
   const list = await api("/api/notifications").catch((e) => (fail(e), []));
@@ -1129,7 +1800,7 @@ async function openNotifications() {
 }
 
 // ─── Boot ───────────────────────────────────────────────────────────────────
-const VIEWS = { today: viewToday, chat: viewChat, activity: viewActivity, calendar: viewCalendar, email: viewEmail, tasks: viewTasks, memory: viewMemory, settings: viewSettings };
+const VIEWS = { today: viewToday, chat: viewChat, activity: viewActivity, calendar: viewCalendar, email: viewEmail, tasks: viewTasks, contacts: viewContacts, automations: viewAutomations, review: viewReview, memory: viewMemory, settings: viewSettings };
 
 let routerBound = false;
 async function boot() {
@@ -1144,6 +1815,7 @@ async function boot() {
     if (line) set(line, h("span", { class: `dot ${st.llmConfigured ? "ok" : "warn"}` }), st.llmConfigured ? `Online · ${st.hosting}` : "Sprachmodell fehlt");
   }).catch(() => {});
   if (!routerBound) { window.addEventListener("hashchange", route); routerBound = true; }
+  push.register();
   await route();
   refreshCounts();
   state.poll ??= setInterval(() => state.csrf && refreshCounts(), 30_000);

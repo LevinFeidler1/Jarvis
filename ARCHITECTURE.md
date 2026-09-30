@@ -125,7 +125,7 @@ stillen Fake-Provider.
 |---|---|---|
 | E-Mail | Gmail (REST, OAuth 2.0) | Outlook (Microsoft Graph) |
 | Kalender | Google Calendar | Microsoft Calendar |
-| Kontakte | Google People API | Microsoft Contacts |
+| Kontakte | JARVIS-Kontakte (DB, vCard-Import) + Google People API | Microsoft Contacts, CardDAV |
 | Aufgaben | Lokal (SQLite) | Google Tasks, Microsoft To Do |
 | Erinnerungen | Lokal + In-App-Benachrichtigung | Push / E-Mail / Voice |
 
@@ -164,11 +164,31 @@ Kategorien: `preference`, `person`, `project`, `rule`, `fact`. Jeder Eintrag hat
 löschbar. `inferred`-Einträge werden im Prompt als unsicher markiert; der Agent
 darf auf ihrer Grundlage keine externen Aktionen ohne Rückfrage durchführen.
 
-## 8. Voice (vorbereitet)
+## 7b. Automationen, Push & Kosten
 
-Voice ist nur ein weiterer Client: Speech-to-Text → `POST /api/chat` →
-Antworttext → Text-to-Speech. Bestätigungen laufen über dieselbe
-`PendingAction`-Mechanik; es gibt keinen Voice-spezifischen Bypass.
+- **Automationen** (`src/core/automations.ts`): Zeitplan (Uhrzeit + Wochentage, Zeitzone
+  `JARVIS_TIMEZONE`, sommerzeitfest) oder E-Mail-Auslöser (Absender/Betreff enthält; alle
+  Postfächer, alle 5 Min.). Der `Scheduler` beansprucht fällige Läufe atomar
+  (`claimDue`) und ruft `Agent.handleUserMessage` mit einem `<automation>`-Block auf.
+  Ergebnis → In-App-Benachrichtigung + Web Push mit Link in die Unterhaltung.
+- **Takt:** lokal alle 30 s im Prozess; auf Vercel über `/api/cron/tick` (externer Cron alle
+  5 Min.). Erinnerungen werden sofort ausgelöst, Automationen laufen per `waitUntil`
+  nach der Antwort weiter (max. 300 s).
+- **Push** (`src/providers/push.ts`): Web Push mit VAPID (`web-push`), Service Worker
+  `public/sw.js` (nur Push, kein Offline-Cache). iPhone: ab iOS 16.4 als Home-Bildschirm-App.
+- **Kosten:** jede Modellanfrage wird mit Tokens und geschätztem Preis in `llm_usage`
+  protokolliert (inkl. Compaction-Iterationen und Websuchen) → Wochenrückblick.
+- **Wochenrückblick** (`src/core/review.ts`): Aktivität, erledigte Aufgaben, Ausblick,
+  Kosten; als Seite, als Tool `get_week_review` und als Automation-Vorlage.
+
+## 8. Voice (Sprach-Chat)
+
+Voice ist nur ein weiterer Client: Speech-to-Text → `POST /api/chat/stream` →
+Antworttext → Text-to-Speech. Umgesetzt im Browser mit der Web Speech API
+(`public/app.js`, Modul `voice`): 🎤-Knopf, Vorlesen, Gesprächsmodus. Der Server
+merkt nicht, ob Text getippt oder gesprochen wurde. Bestätigungen laufen über
+dieselbe `PendingAction`-Mechanik; es gibt keinen Voice-spezifischen Bypass —
+kritische Aktionen (Stufe 3) lassen sich generell nicht per „Ja" im Chat bestätigen.
 
 ## 9. Architekturentscheidungen (ADR-Kurzform)
 

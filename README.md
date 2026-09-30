@@ -13,6 +13,31 @@ JARVIS: ✓ E-Mail gelesen  ✓ Kalender geprüft
         Soll ich sie senden?              [Bestätigen & ausführen] [Ablehnen]
 ```
 
+## Sprach-Chat
+
+Im Chat auf 🎤 tippen und sprechen — JARVIS liest die Antwort vor.
+**Gespräch** oben im Chat schaltet den Freisprech-Modus ein (hört nach jeder
+Antwort wieder zu; „Stopp" oder „Danke, das war's" beendet ihn).
+Stimme und Tempo: *Einstellungen → Sprache*. Läuft in Chrome, Edge und Safari
+(auch iPhone/Android); Firefox kann nur vorlesen. Bestätigen per „Ja" geht auch
+gesprochen — außer bei kritischen Aktionen, die brauchen immer den Knopf.
+
+## Automationen, Push & Wochenrückblick
+
+- **Automationen:** JARVIS erledigt Dinge von selbst — z.B. Morgen-Briefing um 7 Uhr,
+  „Rechnung per Mail → Aufgabe", Wochenrückblick am Freitag. Vorlagen unter *Automationen*,
+  oder im Chat: „Schick mir jeden Montag um 8 eine Wochenübersicht."
+  Senden/Löschen/Einladen bereitet eine Automation nur vor — du bestätigst.
+- **Push aufs Handy:** Erinnerungen und Ergebnisse kommen als Benachrichtigung
+  (iPhone: JARVIS zuerst „Zum Home-Bildschirm" hinzufügen).
+- **Wochenrückblick:** was erledigt wurde, was offen ist, was ansteht — und was JARVIS ungefähr gekostet hat.
+
+## Kontakte
+
+Seite **Kontakte**: selbst anlegen, bearbeiten, löschen, oder eine vCard-Datei (.vcf)
+importieren (iPhone: iCloud.com → Kontakte → alle auswählen → Exportieren). Funktioniert
+ohne Google; ist Google verbunden, sucht JARVIS zusätzlich in Google Kontakte.
+
 ## Online nutzen (Vercel)
 
 Schritt-für-Schritt: **[docs/DEPLOY_VERCEL.md](docs/DEPLOY_VERCEL.md)** —

@@ -7,6 +7,10 @@ export interface ConversationInfo {
   id: string;
   title: string | null;
   tainted: boolean;
+  /** Hash of the memory snapshot last sent in this conversation. */
+  memoryHash: string | null;
+  /** "automation" for conversations started by an automation. */
+  origin: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -18,7 +22,7 @@ export interface DisplayMessage {
   createdAt: string;
 }
 
-const SELECT = `SELECT id, title, tainted, created_at AS "createdAt", updated_at AS "updatedAt" FROM conversations`;
+const SELECT = `SELECT id, title, tainted, memory_hash AS "memoryHash", origin, created_at AS "createdAt", updated_at AS "updatedAt" FROM conversations`;
 
 /**
  * Append-only conversation history. Assistant content (incl. thinking blocks)
@@ -27,16 +31,18 @@ const SELECT = `SELECT id, title, tainted, created_at AS "createdAt", updated_at
 export class ConversationStore {
   constructor(private readonly db: Db) {}
 
-  async create(title?: string): Promise<ConversationInfo> {
+  async create(title?: string, origin?: string): Promise<ConversationInfo> {
     const id = randomUUID();
     const ts = nowIso();
-    await this.db.run("INSERT INTO conversations (id, title, tainted, created_at, updated_at) VALUES ($1, $2, FALSE, $3, $4)", [
-      id,
-      title ?? null,
-      ts,
-      ts,
-    ]);
-    return { id, title: title ?? null, tainted: false, createdAt: ts, updatedAt: ts };
+    await this.db.run(
+      "INSERT INTO conversations (id, title, tainted, origin, created_at, updated_at) VALUES ($1, $2, FALSE, $3, $4, $5)",
+      [id, title ?? null, origin ?? null, ts, ts],
+    );
+    return { id, title: title ?? null, tainted: false, memoryHash: null, origin: origin ?? null, createdAt: ts, updatedAt: ts };
+  }
+
+  async setMemoryHash(id: string, hash: string): Promise<void> {
+    await this.db.run("UPDATE conversations SET memory_hash = $1 WHERE id = $2", [hash, id]);
   }
 
   get(id: string): Promise<ConversationInfo | undefined> {

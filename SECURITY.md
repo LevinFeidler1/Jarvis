@@ -38,6 +38,10 @@ Umsetzung: `src/core/permissions.ts`. Die Stufe steht fest im Tool-Code.
 * Ausstehende Aktionen verfallen nach `JARVIS_CONFIRMATION_TTL_MINUTES` (Standard 30).
 * Ein bloßes „ja" im Chat bestätigt nur, wenn **genau eine** Aktion aussteht.
   Bei mehreren muss in der UI gezielt bestätigt werden.
+* **Kritische Aktionen (Stufe 3) werden nie durch ein „ja" im Chat bestätigt** — weder getippt
+  noch gesprochen (Spracherkennung kann sich verhören). Nur der Knopf „Trotzdem ausführen".
+* Sprach-Chat: Die Spracherkennung läuft im Browser (Chrome sendet Audio dafür an Google,
+  Safari an Apple); JARVIS selbst speichert kein Audio, nur den erkannten Text.
 
 ## 3. Prompt-Injection-Schutz
 
@@ -117,6 +121,32 @@ STATUS: SUCCESS   USER_CONFIRMATION: YES   RISK: 2
   `partially_succeeded`, `rejected`, `expired`.
 * Retries nur für idempotente Lesezugriffe und bei 429/5xx mit Backoff; sendende
   Aktionen werden **nicht** automatisch wiederholt (keine Doppelsendungen).
+
+## 7b. Automationen & Push
+
+* Automationen laufen **durch denselben Agent und dasselbe Permission-System** wie der Chat.
+  Stufe-2/3-Aktionen werden in einer Automation nur **vorbereitet**; der Benutzer bestätigt
+  sie später (Push-Link öffnet die Unterhaltung). Eine Automation sendet also nie selbst E-Mails.
+* Automationen per Chat anlegen, pausieren oder löschen ist **Stufe 2** (Bestätigung) — eine
+  manipulierte E-Mail kann keine dauerhafte Hintergrundaufgabe einrichten. In der UI legt der
+  Benutzer sie direkt an.
+* E-Mail-Auslöser reagieren nur auf Mails, die **nach** dem Anlegen eingehen; jede Mail nur einmal.
+  Der Mailinhalt bleibt `external_data` (Injection-Scan, Taint wie im Chat).
+* Parallele Cron-Aufrufe können eine Automation nicht doppelt starten (atomarer Claim in der DB).
+* Web Push: Inhalte sind Ende-zu-Ende verschlüsselt (RFC 8291). Der VAPID-Schlüssel wird einmalig
+  erzeugt und AES-256-GCM-verschlüsselt gespeichert. Push-Endpunkte werden nur für bekannte
+  Push-Dienste (Google, Mozilla, Apple, Microsoft) akzeptiert — keine beliebigen URLs (SSRF-Schutz).
+  Abgelaufene Abos (404/410) werden automatisch entfernt.
+* Achtung: Push-Texte erscheinen je nach Handy-Einstellung auf dem Sperrbildschirm.
+
+## 7c. Verlauf & Modell-API
+
+* System-Prompt und Verlauf sind **append-only**: Gedächtnis und Uhrzeit stehen in den
+  Benutzer-Nachrichten, nicht im System-Prompt. Das hält den Prompt-Cache warm und erfüllt die
+  „preserved thinking"-Prüfung der Claude API (Denkblöcke gelten nur für unveränderte Verläufe).
+* Lange Unterhaltungen werden **serverseitig zusammengefasst** (Compaction ab
+  `JARVIS_COMPACT_AT_TOKENS`, Standard 60 000); die Zusammenfassung behält offene Aktionen,
+  IDs und Sicherheitshinweise.
 
 ## 8. Bekannte Grenzen / offene Punkte
 

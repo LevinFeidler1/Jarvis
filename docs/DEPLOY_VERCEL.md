@@ -91,19 +91,40 @@ Nach dem Login in JARVIS: *Einstellungen → E-Mail-Konten → Postfach hinzufü
 Details in [SETUP_MAIL.md](SETUP_MAIL.md). Dafür sind keine Vercel-Variablen nötig; die
 Passwörter liegen verschlüsselt in der Neon-Datenbank.
 
-## 7. Erinnerungen zuverlässig auslösen
+## 7. Takt für Erinnerungen & Automationen (wichtig)
 
-Vercel hat keinen dauerhaft laufenden Prozess. JARVIS löst fällige Erinnerungen deshalb aus:
+Vercel hat keinen dauerhaft laufenden Prozess. Erinnerungen, Automationen
+(Morgen-Briefing, Rechnungen → Aufgaben, Wochenrückblick …) und E-Mail-Auslöser
+brauchen deshalb einen **externen Takt alle 5 Minuten** — kostenlos über cron-job.org:
 
-- **automatisch, solange die App offen ist** (alle 30 s),
-- **per Vercel Cron** einmal täglich (06:00 UTC — mehr erlaubt der Hobby-Tarif nicht),
-- **optional minutengenau** über einen kostenlosen externen Cron-Dienst:
-  <https://cron-job.org> → *Create cronjob*
-  - URL: `https://<projektname>.vercel.app/api/cron/tick`
-  - Zeitplan: alle 5 Minuten
-  - *Advanced → Headers*: `Authorization` = `Bearer <CRON_SECRET>`
+1. <https://cron-job.org> → kostenloses Konto → *Create cronjob*
+2. *Title*: `JARVIS`, *URL*: `https://<projektname>.vercel.app/api/cron/tick`
+3. *Execution schedule*: **Every 5 minutes**
+4. *Advanced → Headers*: Key `Authorization`, Value `Bearer <CRON_SECRET>`
+5. *Advanced → Timeout*: das Maximum wählen; *Notifications*: bei Fehlern aus
+6. Speichern → *Test run* → Antwort `{"fired":0,"automations":"started"}` (Status 200)
 
-Ohne gültiges `CRON_SECRET` antwortet der Endpunkt mit 401.
+Der Endpunkt antwortet sofort; Automationen laufen danach im Hintergrund weiter
+(bis 300 s). Ohne gültiges `CRON_SECRET` antwortet er mit 401. Zusätzlich:
+Erinnerungen feuern auch, solange die App offen ist, und der eingebaute Vercel-Cron
+läuft einmal täglich (06:00 UTC) als Sicherheitsnetz.
+
+## 8. Push-Benachrichtigungen aufs Handy
+
+Keine zusätzlichen Variablen nötig — der Schlüssel wird beim ersten Aufruf erzeugt.
+
+- **iPhone (ab iOS 16.4):** JARVIS in **Safari** öffnen → Teilen ↑ → **„Zum Home-Bildschirm"** →
+  JARVIS über das neue Symbol öffnen → *Einstellungen → Push-Benachrichtigungen →
+  Auf diesem Gerät aktivieren* → „Erlauben". (In Safari selbst, ohne Home-Bildschirm, geht Push auf dem iPhone nicht.)
+- **Android / Desktop (Chrome, Edge, Firefox):** *Einstellungen → Push-Benachrichtigungen → Aktivieren*.
+- **Test senden** prüft die Zustellung. Jedes Gerät einzeln aktivieren.
+
+## 9. Kosten im Blick
+
+*Rückblick* zeigt die geschätzten Claude-Kosten der Woche. Zusätzlich in der
+Anthropic Console unter *Settings → Limits* ein **monatliches Ausgabenlimit** setzen.
+Lange Unterhaltungen fasst JARVIS ab 60 000 Tokens automatisch zusammen
+(`JARVIS_COMPACT_AT_TOKENS`, optional).
 
 ## Sicherheit
 
@@ -121,7 +142,7 @@ Ohne gültiges `CRON_SECRET` antwortet der Endpunkt mit 401.
 | | |
 |---|---|
 | Laufzeit pro Anfrage | max. 300 s (in `vercel.json` gesetzt) — lange Agent-Läufe stoppen vorher am Schritt-Limit |
-| Cron | 1× täglich (siehe Schritt 7 für mehr) |
+| Cron | 1× täglich eingebaut — Takt alle 5 Min. über cron-job.org (Schritt 7) |
 | Neon Free | 0,5 GB Speicher — für JARVIS mehr als genug |
 
 ## Fehlerbehebung
