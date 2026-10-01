@@ -18,6 +18,10 @@ import { type MailboxEntry, MultiAccountEmail } from "./multi-email.js";
 import { PushService } from "./push.js";
 import { AutomationStore } from "../core/automations.js";
 import { FileService } from "../files/service.js";
+import { PlaywrightEngine } from "../browser/engine.js";
+import { RemoteBrowserEngine, browserSecret } from "../browser/remote.js";
+import { BrowserTaskStore } from "../browser/tasks.js";
+import type { BrowserEngine } from "../browser/types.js";
 import type { CalendarProvider, ContactProvider, EmailProvider, FileProvider } from "./types.js";
 
 export interface IntegrationStatus {
@@ -29,6 +33,18 @@ export interface IntegrationStatus {
   detail: string;
   /** Connected, but a newer feature (e.g. Drive) needs the user to reconnect for more permissions. */
   needsReconnect?: boolean;
+}
+
+function resolveBrowserEngine(config: AppConfig): BrowserEngine | null {
+  const b = config.browser;
+  if (b.mode === "off") return null;
+  const secret = browserSecret(config.encryptionKey);
+  if (b.mode === "remote" || (b.mode === "auto" && b.url)) {
+    return b.url || process.env.VERCEL ? new RemoteBrowserEngine(b.url ?? `${config.publicUrl}/api/browser`, secret) : null;
+  }
+  if (b.mode === "auto" && process.env.VERCEL) return new RemoteBrowserEngine(`${config.publicUrl}/api/browser`, secret);
+  if (b.chromiumPath) return new PlaywrightEngine({ executablePath: b.chromiumPath, maxDownloadBytes: config.files.maxBytes });
+  return null;
 }
 
 const SETUP_HINT = "Einrichtung: Einstellungen → Integrationen (Anleitung: docs/SETUP_GOOGLE.md).";
@@ -44,6 +60,10 @@ export class ProviderHub {
   readonly push: PushService;
   readonly automations: AutomationStore;
   readonly files: FileService;
+  readonly browserTasks: BrowserTaskStore;
+  /** Tests only: allow the browser to open 127.0.0.1 test servers. */
+  browserAllowPrivate = false;
+  private browserEngine?: BrowserEngine | null;
   readonly emailAccounts: EmailAccountStore;
   /** Contacts maintained in JARVIS itself — always available, no Google needed. */
   readonly localContacts: LocalContactProvider;
@@ -58,6 +78,8 @@ export class ProviderHub {
     this.reminders = new ReminderStore(db);
     this.automations = new AutomationStore(db, config.timezone);
     this.files = new FileService(db, config.files);
+    this.browserTasks = new BrowserTaskStore(db, config.browser.maxSteps, config.browser.taskMinutes);
+    this.browserEngine = resolveBrowserEngine(config);
     this.push = new PushService(db, config.encryptionKey, config.publicUrl);
     this.notifications = new InAppNotificationProvider(db, this.push);
     this.emailAccounts = new EmailAccountStore(db, config.encryptionKey);
@@ -85,6 +107,18 @@ export class ProviderHub {
   /** For tests and future providers (e.g. Microsoft Graph). */
   setProviders(p: { email?: EmailProvider; calendar?: CalendarProvider; contacts?: ContactProvider }): void {
     this.overrides = { ...this.overrides, ...p };
+  }
+
+  /** Test hook / override for the browser engine. */
+  setBrowserEngine(engine: BrowserEngine | null): void {
+    this.browserEngine = engine;
+  }
+
+  browser(): BrowserEngine {
+    if (!this.browserEngine) {
+      throw new ToolError("Der Browser-Agent ist nicht eingerichtet (lokal: JARVIS_CHROMIUM_PATH setzen; auf Vercel automatisch; siehe docs/BROWSER.md).", "NOT_CONFIGURED");
+    }
+    return this.browserEngine;
   }
 
   /** Test hook: a fake Drive (null = explicitly no Drive). */

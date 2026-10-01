@@ -90,6 +90,11 @@ export interface ToolDefinition<I = any> {
    * max(risk, riskFor(input)) — it can only ever raise the level.
    */
   riskFor?(input: I): RiskLevel;
+  /**
+   * Optional risk that depends on external state (e.g. which button on a web
+   * page is clicked). Like riskFor it can only raise the level.
+   */
+  assessRisk?(input: I, ctx: ToolContext): Promise<{ risk: RiskLevel; reasons: string[] } | undefined>;
   /** Human readable, precise description used for confirmations and activity. */
   describe(input: I): string;
   /** Audit target (e.g. recipient). Masked before storage. */

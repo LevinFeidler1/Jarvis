@@ -249,7 +249,8 @@ export class Agent {
       const pre = await tool.precheck(input, this.toolContext(state)).catch((err: Error) => ({ ok: false as const, error: err.message }));
       if (pre && !pre.ok) return { status: "failed", description, error: pre.error };
     }
-    const decision = decidePermission(tool, input, { tainted: state.tainted, settings: await loadPermissionSettings(this.deps.db) });
+    const assessed = tool.assessRisk ? await tool.assessRisk(input, this.toolContext(state)).catch(() => ({ risk: RiskLevel.CRITICAL, reasons: ["Risiko konnte nicht geprüft werden."] })) : undefined;
+    const decision = decidePermission(tool, input, { tainted: state.tainted, settings: await loadPermissionSettings(this.deps.db), assessed });
     if (decision.decision === "deny") {
       await this.activity.create({ conversationId, toolName, description, risk: decision.risk, status: "denied" });
       return { status: "denied", description, error: decision.reasons.join(" ") };
@@ -376,6 +377,7 @@ export class Agent {
     let decision = decidePermission(tool, input, {
       tainted: state.tainted,
       settings: await loadPermissionSettings(this.deps.db),
+      assessed: tool.assessRisk ? await tool.assessRisk(input, this.toolContext(state)).catch(() => ({ risk: RiskLevel.CRITICAL, reasons: ["Risiko konnte nicht geprüft werden."] })) : undefined,
     });
     let autonomous = false;
     if (state.automation && decision.decision !== "deny" && decision.risk >= RiskLevel.LOW) {

@@ -7,9 +7,17 @@
   "functions": {
     "api/index.ts": {
       "maxDuration": 300
+    },
+    "api/browser.ts": {
+      "maxDuration": 60,
+      "includeFiles": "node_modules/@sparticuz/chromium/bin/**"
     }
   },
   "rewrites": [
+    {
+      "source": "/api/browser",
+      "destination": "/api/browser"
+    },
     {
       "source": "/api/:path*",
       "destination": "/api/index"

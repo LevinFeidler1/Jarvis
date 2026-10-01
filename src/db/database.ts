@@ -328,6 +328,18 @@ const MIGRATIONS: string[] = [
   ALTER TABLE activity ADD COLUMN undone_at TEXT;
   CREATE INDEX activity_automation_idx ON activity (automation_id, created_at);
   `,
+  // 8 — browser agent tasks (recorded steps for replays + last page state for risk checks).
+  `
+  CREATE TABLE browser_tasks (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    steps_json TEXT NOT NULL,
+    last_json TEXT,
+    calls INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  `,
 ];
 
 async function migrate(db: Db): Promise<void> {

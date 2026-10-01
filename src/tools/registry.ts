@@ -2,6 +2,7 @@ import { z } from "zod";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ToolDefinition } from "../core/types.js";
 import { automationTools } from "./automation.js";
+import { browserTools } from "./browser.js";
 import { driveTools } from "./drive.js";
 import { fileTools } from "./files.js";
 import { calendarTools } from "./calendar.js";
@@ -61,5 +62,5 @@ function stripRedundantPatterns(node: unknown): void {
 }
 
 export function createDefaultRegistry(): ToolRegistry {
-  return new ToolRegistry([...emailTools, ...calendarTools, ...contactTools, ...taskTools, ...reminderTools, ...memoryTools, ...systemTools, ...automationTools, ...fileTools, ...driveTools]);
+  return new ToolRegistry([...emailTools, ...calendarTools, ...contactTools, ...taskTools, ...reminderTools, ...memoryTools, ...systemTools, ...automationTools, ...fileTools, ...driveTools, ...browserTools]);
 }

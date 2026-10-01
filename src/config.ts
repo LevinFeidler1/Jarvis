@@ -31,6 +31,11 @@ const EnvSchema = z.object({
   JARVIS_COMPACT_AT_TOKENS: z.coerce.number().int().min(50_000).max(900_000).default(60_000),
   JARVIS_TRIAGE_MODEL: optionalString.transform((v) => v ?? "claude-haiku-4-5"),
   JARVIS_TRIAGE_DAILY_LIMIT: z.coerce.number().int().min(0).max(2000).default(150),
+  JARVIS_BROWSER: z.enum(["auto", "off", "local", "remote"]).default("auto"),
+  JARVIS_BROWSER_URL: optionalString,
+  JARVIS_CHROMIUM_PATH: optionalString,
+  JARVIS_BROWSER_MAX_STEPS: z.coerce.number().int().min(3).max(100).default(25),
+  JARVIS_BROWSER_TASK_MINUTES: z.coerce.number().int().min(1).max(60).default(15),
   JARVIS_MAX_FILE_MB: z.coerce.number().int().min(1).max(50).default(20),
   JARVIS_DB_FILE_QUOTA_MB: z.coerce.number().int().min(10).max(400).default(150),
   JARVIS_CONFIRMATION_TTL_MINUTES: z.coerce.number().int().min(1).max(1440).default(30),
@@ -62,6 +67,8 @@ export interface AppConfig {
   /** Conversations longer than this (input tokens) are summarized server-side. */
   compactAtTokens: number;
   files: { maxBytes: number; dbQuotaBytes: number };
+  /** Browser agent (Phase E). mode auto: Vercel → own /api/browser function; local → JARVIS_CHROMIUM_PATH. */
+  browser: { mode: "auto" | "off" | "local" | "remote"; url?: string; chromiumPath?: string; maxSteps: number; taskMinutes: number };
   /** Mail triage (Phase C): small model and max. mails classified per day. */
   triage: { model: string; dailyLimit: number };
   google?: { clientId: string; clientSecret: string; driveReadAll?: boolean };
@@ -100,6 +107,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     maxAgentSteps: e.JARVIS_MAX_AGENT_STEPS,
     confirmationTtlMinutes: e.JARVIS_CONFIRMATION_TTL_MINUTES,
     compactAtTokens: e.JARVIS_COMPACT_AT_TOKENS,
+    browser: { mode: e.JARVIS_BROWSER, url: e.JARVIS_BROWSER_URL, chromiumPath: e.JARVIS_CHROMIUM_PATH, maxSteps: e.JARVIS_BROWSER_MAX_STEPS, taskMinutes: e.JARVIS_BROWSER_TASK_MINUTES },
     triage: { model: e.JARVIS_TRIAGE_MODEL, dailyLimit: e.JARVIS_TRIAGE_DAILY_LIMIT },
     files: { maxBytes: e.JARVIS_MAX_FILE_MB * 1024 * 1024, dbQuotaBytes: e.JARVIS_DB_FILE_QUOTA_MB * 1024 * 1024 },
     google:
