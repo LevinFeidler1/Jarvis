@@ -18,6 +18,8 @@ import { MEMORY_CATEGORIES, type MemoryStore } from "./memory/memory.js";
 import { AUTOMATION_TEMPLATES, type Automation, type AutomationInput, AutomationRunner, describeTrigger } from "./core/automations.js";
 import { buildWeekReview } from "./core/review.js";
 import { automationTriggerSchema } from "./tools/automation.js";
+import { ACCEPTED_EXTENSIONS } from "./files/formats/detect.js";
+import { DOWNLOAD_RANGE_BYTES, UPLOAD_CHUNK_BYTES } from "./files/service.js";
 import { CombinedContacts } from "./providers/combined-contacts.js";
 import { parseVCards, toVCards } from "./providers/local/vcard.js";
 import { MAIL_PRESETS } from "./providers/imap/accounts.js";
@@ -51,7 +53,7 @@ declare module "fastify" {
 }
 
 const CSP =
-  "default-src 'self'; img-src 'self' data:; style-src 'self'; " +
+  "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; " +
   "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
@@ -70,7 +72,7 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   await app.register(rateLimit, { global: true, max: 300, timeWindow: "1 minute" });
 
   app.addHook("onSend", async (_req, reply, payload) => {
-    reply.header("Content-Security-Policy", CSP);
+    if (!reply.hasHeader("Content-Security-Policy")) reply.header("Content-Security-Policy", CSP);
     reply.header("X-Frame-Options", "DENY");
     reply.header("X-Content-Type-Options", "nosniff");
     reply.header("Referrer-Policy", "no-referrer");
@@ -209,16 +211,88 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   // ─── Chat ─────────────────────────────────────────────────────────────
-  const chatBody = z.object({ conversationId: z.uuid().optional(), message: z.string().trim().min(1).max(8000) });
+  const idParam = z.object({ id: z.uuid() });
+  const chatBody = z.object({
+    conversationId: z.uuid().optional(),
+    message: z.string().trim().max(8000),
+    attachments: z.array(z.uuid()).max(10).optional(),
+  }).refine((b) => b.message.length > 0 || (b.attachments?.length ?? 0) > 0, { message: "Nachricht oder Anhang erforderlich" });
+  const chatOpts = async (b: z.infer<typeof chatBody>) =>
+    b.attachments?.length ? { attachments: await Promise.all(b.attachments.map((fid) => providers.files.get(fid))) } : {};
 
   app.post("/api/chat", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req) => {
     const body = chatBody.parse(req.body);
-    return agent.handleUserMessage(body.conversationId, body.message);
+    return agent.handleUserMessage(body.conversationId, body.message, undefined, await chatOpts(body));
   });
 
   app.post("/api/chat/stream", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req, reply) => {
     const body = chatBody.parse(req.body);
-    await streamAgent(reply, (emit) => agent.handleUserMessage(body.conversationId, body.message, emit));
+    const opts = await chatOpts(body);
+    await streamAgent(reply, (emit) => agent.handleUserMessage(body.conversationId, body.message, emit, opts));
+  });
+
+  // ─── Files (Phase A) ──────────────────────────────────────────────────
+  const files = providers.files;
+  app.addContentTypeParser("application/octet-stream", { parseAs: "buffer", bodyLimit: UPLOAD_CHUNK_BYTES + 1024 }, (_req, body, done) => done(null, body));
+  app.get("/api/files", async (req) => {
+    const { q } = z.object({ q: z.string().trim().max(200).optional() }).parse(req.query);
+    return {
+      files: await files.list({ query: q || undefined, limit: 200 }),
+      limits: { maxBytes: files.limits.maxBytes, dbQuotaBytes: files.limits.dbQuotaBytes, dbUsedBytes: await files.dbUsage() },
+      storage: (await files.defaultStorage()).kind,
+      accept: ACCEPTED_EXTENSIONS,
+    };
+  });
+  app.get("/api/files/:id", async (req) => {
+    const f = await files.get(idParam.parse(req.params).id);
+    return { file: f, versions: await files.versions(f.rootId) };
+  });
+  app.get("/api/files/:id/preview", async (req) => {
+    const { id } = idParam.parse(req.params);
+    const f = await files.get(id);
+    if (f.format === "png" || f.format === "jpg") return { file: f, text: null };
+    const { extracted } = await files.extract(id);
+    return { file: f, text: extracted.text.slice(0, 6000), truncated: extracted.text.length > 6000, sheets: extracted.sheets ?? null, needsVision: !!extracted.needsVision };
+  });
+  // Ranged download: every response stays below Vercel's 4.5 MB limit; the UI joins the parts.
+  app.get("/api/files/:id/content", async (req, reply) => {
+    const { id } = idParam.parse(req.params);
+    const f = await files.get(id);
+    const range = /^bytes=(\d+)-(\d*)$/.exec(String(req.headers.range ?? ""));
+    const start = range ? Number(range[1]) : 0;
+    const end = Math.min(f.size - 1, range?.[2] ? Number(range[2]) : start + DOWNLOAD_RANGE_BYTES - 1, start + DOWNLOAD_RANGE_BYTES - 1);
+    if (start >= f.size || end < start) return reply.code(416).header("content-range", `bytes */${f.size}`).send();
+    const { data } = start === 0 && end === f.size - 1 ? await files.read(id) : await files.readRange(id, start, end);
+    const ascii = f.name.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "'");
+    reply
+      .header("content-type", f.mime)
+      .header("content-disposition", `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(f.name)}`)
+      .header("content-security-policy", "sandbox; default-src 'none'")
+      .header("cache-control", "private, no-store")
+      .header("accept-ranges", "bytes")
+      .header("x-file-size", String(f.size));
+    if (start > 0 || end < f.size - 1) reply.code(206).header("content-range", `bytes ${start}-${end}/${f.size}`);
+    return reply.send(data);
+  });
+  app.post("/api/files/uploads", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req) => {
+    const b = z.object({ name: z.string().trim().min(1).max(200), size: z.number().int().positive() }).parse(req.body);
+    return files.beginUpload(b.name, b.size);
+  });
+  app.put("/api/files/uploads/:id/:index", { bodyLimit: UPLOAD_CHUNK_BYTES + 1024 }, async (req) => {
+    const p = z.object({ id: z.uuid(), index: z.coerce.number().int().min(0).max(100) }).parse(req.params);
+    if (!Buffer.isBuffer(req.body)) throw new ToolError("Upload-Teil muss application/octet-stream sein.", "INVALID_INPUT");
+    await files.addChunk(p.id, p.index, req.body);
+    return { ok: true };
+  });
+  app.post("/api/files/uploads/:id/complete", async (req) => {
+    const { id } = idParam.parse(req.params);
+    const b = z.object({ conversationId: z.uuid().optional() }).parse(req.body ?? {});
+    return files.completeUpload(id, { conversationId: b.conversationId ?? null });
+  });
+  app.delete("/api/files/:id", async (req) => {
+    const { id } = idParam.parse(req.params);
+    const { all } = z.object({ all: z.enum(["0", "1"]).optional() }).parse(req.query);
+    return { deleted: await files.delete(id, all === "1") };
   });
 
   app.get("/api/conversations", async () => agent.conversations.list());
@@ -274,7 +348,6 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   // ─── Tasks, reminders, notifications (direct UI access) ───────────────
-  const idParam = z.object({ id: z.uuid() });
   app.get("/api/tasks", async (req) => {
     const { status } = z.object({ status: z.enum(["open", "done", "all"]).optional() }).parse(req.query);
     return providers.tasks.list({ status: status ?? "all" });

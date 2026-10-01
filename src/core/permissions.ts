@@ -26,6 +26,8 @@ export const DEFAULT_PERMISSION_SETTINGS: PermissionSettings = {
     tasks: true,
     reminders: true,
     memory: true,
+    files: true,
+    web: true,
   },
   disabledTools: [],
 };

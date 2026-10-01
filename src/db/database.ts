@@ -237,6 +237,48 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX llm_usage_ts_idx ON llm_usage (ts);
   `,
+  // 5 — files & documents (versions share a root_id; bytes in file_blobs or Google Drive).
+  `
+  CREATE TABLE files (
+    id TEXT PRIMARY KEY,
+    root_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    parent_id TEXT,
+    name TEXT NOT NULL,
+    format TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    storage TEXT NOT NULL,
+    storage_key TEXT NOT NULL,
+    drive_url TEXT,
+    source TEXT NOT NULL,
+    note TEXT,
+    conversation_id TEXT,
+    text_cache TEXT,
+    created_at TEXT NOT NULL,
+    deleted_at TEXT
+  );
+  CREATE INDEX files_root_idx ON files (root_id, version);
+  CREATE TABLE file_blobs (
+    key TEXT PRIMARY KEY,
+    data BYTEA NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE upload_sessions (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    chunk_size INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE upload_chunks (
+    session_id TEXT NOT NULL,
+    idx INTEGER NOT NULL,
+    data BYTEA NOT NULL,
+    PRIMARY KEY (session_id, idx)
+  );
+  `,
 ];
 
 async function migrate(db: Db): Promise<void> {

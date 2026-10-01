@@ -15,6 +15,7 @@ import { InAppNotificationProvider, LocalTaskProvider, ReminderStore } from "./l
 import { type MailboxEntry, MultiAccountEmail } from "./multi-email.js";
 import { PushService } from "./push.js";
 import { AutomationStore } from "../core/automations.js";
+import { FileService } from "../files/service.js";
 import type { CalendarProvider, ContactProvider, EmailProvider } from "./types.js";
 
 export interface IntegrationStatus {
@@ -38,6 +39,7 @@ export class ProviderHub {
   readonly notifications: InAppNotificationProvider;
   readonly push: PushService;
   readonly automations: AutomationStore;
+  readonly files: FileService;
   readonly emailAccounts: EmailAccountStore;
   /** Contacts maintained in JARVIS itself — always available, no Google needed. */
   readonly localContacts: LocalContactProvider;
@@ -50,6 +52,7 @@ export class ProviderHub {
     this.tasks = new LocalTaskProvider(db);
     this.reminders = new ReminderStore(db);
     this.automations = new AutomationStore(db, config.timezone);
+    this.files = new FileService(db, config.files);
     this.push = new PushService(db, config.encryptionKey, config.publicUrl);
     this.notifications = new InAppNotificationProvider(db, this.push);
     this.emailAccounts = new EmailAccountStore(db, config.encryptionKey);

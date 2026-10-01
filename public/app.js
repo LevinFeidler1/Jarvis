@@ -67,6 +67,11 @@ const ICONS = {
   bell2: '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>',
   new: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   dot: '<circle cx="12" cy="12" r="3"/>',
+  clip: '<path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/>',
+  file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/>',
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
   pin: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/>',
   chart: '<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>',
@@ -117,7 +122,7 @@ function avatar(name) {
 // ─── Minimal, safe Markdown → DOM ───────────────────────────────────────────
 function inline(text) {
   const frag = document.createDocumentFragment();
-  const re = /(\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(?<![*\w])\*([^*\n]+)\*(?!\w)|_([^_\n]+)_)/g;
+  const re = /(\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(?<![*\w])\*([^*\n]+)\*(?!\w)|_([^_\n]+)_|\[([^\]]+)\]\(#file:([0-9a-f-]{36})\))/g;
   let last = 0;
   for (const m of text.matchAll(re)) {
     if (m.index > last) frag.append(text.slice(last, m.index));
@@ -126,6 +131,7 @@ function inline(text) {
     else if (m[4]) frag.append(h("a", { href: m[5], target: "_blank", rel: "noopener noreferrer" }, m[4]));
     else if (m[6]) frag.append(h("em", {}, m[6]));
     else if (m[7]) frag.append(h("em", {}, m[7]));
+    else if (m[8]) { const fid = m[9]; frag.append(h("a", { href: "#", class: "file-link", onclick: (e) => { e.preventDefault(); openFileById(fid); } }, icon("download"), m[8])); }
     last = m.index + m[0].length;
   }
   if (last < text.length) frag.append(text.slice(last));
@@ -182,6 +188,8 @@ const state = {
   conversationId: null,
   renderedPending: new Set(),
   busy: false,
+  /** Files attached to the next chat message: {file?, name, size, progress, error, promise}. */
+  attachments: [],
   weekOffset: 0,
   mailUnread: false,
   mailSelected: null,
@@ -237,6 +245,70 @@ async function apiStream(path, body, onEvent) {
   }
   if (!reply) throw new Error("Die Verbindung wurde unterbrochen.");
   return reply;
+}
+
+// ─── Dateien: Upload in Teilen, Download in Bereichen (Vercel-Limit 4,5 MB) ──
+const FILE_ACCEPT = ".pdf,.docx,.xlsx,.xlsm,.csv,.tsv,.pptx,.txt,.md,.markdown,.json,.png,.jpg,.jpeg";
+const FILE_ICON = { pdf: "file", docx: "file", xlsx: "chart", csv: "chart", pptx: "file", txt: "file", md: "file", json: "file", png: "image", jpg: "image" };
+const fmtSize = (n) => (n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1).replace(".", ",")} MB`);
+
+async function uploadFile(file, onProgress = () => {}, conversationId) {
+  const begin = await api("/api/files/uploads", { method: "POST", body: { name: file.name, size: file.size } });
+  for (let i = 0; i < begin.chunks; i++) {
+    const part = file.slice(i * begin.chunkSize, Math.min(file.size, (i + 1) * begin.chunkSize));
+    const res = await fetch(`/api/files/uploads/${begin.uploadId}/${i}`, {
+      method: "PUT", credentials: "same-origin",
+      headers: { "content-type": "application/octet-stream", "x-jarvis-csrf": state.csrf ?? "" },
+      body: part,
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? `Upload fehlgeschlagen (HTTP ${res.status})`);
+    onProgress((i + 1) / begin.chunks);
+  }
+  return api(`/api/files/uploads/${begin.uploadId}/complete`, { method: "POST", body: conversationId ? { conversationId } : {} });
+}
+
+async function fetchFileBlob(id, size) {
+  const parts = [];
+  let type = "application/octet-stream";
+  for (let start = 0; start === 0 || start < size; ) {
+    const res = await fetch(`/api/files/${id}/content`, { credentials: "same-origin", headers: { range: `bytes=${start}-` } });
+    if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? `Download fehlgeschlagen (HTTP ${res.status})`);
+    type = res.headers.get("content-type") ?? type;
+    size = Number(res.headers.get("x-file-size") ?? size ?? 0);
+    const buf = await res.arrayBuffer();
+    parts.push(buf);
+    start += buf.byteLength;
+    if (!buf.byteLength) break;
+  }
+  return new Blob(parts, { type });
+}
+
+async function downloadFile(id, name, size) {
+  try {
+    const blob = await fetchFileBlob(id, size);
+    const url = URL.createObjectURL(blob);
+    const a = h("a", { href: url, download: name ?? "datei" });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  } catch (e) { fail(e); }
+}
+
+async function openFileById(id) {
+  try {
+    const { file } = await api(`/api/files/${id}`);
+    downloadFile(file.id, file.name, file.size);
+  } catch (e) { fail(e); }
+}
+
+/** Drag & drop target that calls onFiles(FileList). */
+function dropZone(el, onFiles) {
+  let depth = 0;
+  el.addEventListener("dragenter", (e) => { if (e.dataTransfer?.types?.includes("Files")) { e.preventDefault(); depth++; el.classList.add("dragging"); } });
+  el.addEventListener("dragover", (e) => { if (e.dataTransfer?.types?.includes("Files")) e.preventDefault(); });
+  el.addEventListener("dragleave", () => { depth = Math.max(0, depth - 1); if (!depth) el.classList.remove("dragging"); });
+  el.addEventListener("drop", (e) => { if (!e.dataTransfer?.files?.length) return; e.preventDefault(); depth = 0; el.classList.remove("dragging"); onFiles(e.dataTransfer.files); });
 }
 
 // ─── Toasts & dialogs ───────────────────────────────────────────────────────
@@ -305,6 +377,7 @@ const NAV = [
   ["email", "E-Mail", "mail"],
   ["tasks", "Aufgaben", "tasks"],
   ["contacts", "Kontakte", "users"],
+  ["files", "Dateien", "folder"],
   ["automations", "Automationen", "bolt"],
   ["review", "Rückblick", "chart"],
   ["memory", "Gedächtnis", "memory"],
@@ -713,7 +786,10 @@ async function viewChat(main, params = new URLSearchParams()) {
     ? h("button", { class: "btn ghost icon mic", id: "mic-btn", type: "button", title: "Sprechen", "aria-label": "Sprechen", "aria-pressed": "false",
         onclick: () => (voice.listening ? voice.stopListening() : startVoiceInput()) }, icon("mic"))
     : null;
-  const form = h("form", { class: "composer", onsubmit: (e) => { e.preventDefault(); voice.unlock(); const t = input.value; input.value = ""; autosize(); sendMessage(t); } }, micBtn, input, sendBtn);
+  const picker = h("input", { type: "file", multiple: true, accept: FILE_ACCEPT, hidden: true, onchange: () => { addAttachments(picker.files); picker.value = ""; } });
+  const attachBtn = h("button", { class: "btn ghost icon attach", type: "button", title: "Datei anhängen", "aria-label": "Datei anhängen", onclick: () => picker.click() }, icon("clip"));
+  const form = h("form", { class: "composer", onsubmit: (e) => { e.preventDefault(); voice.unlock(); const t = input.value; input.value = ""; autosize(); sendMessage(t); } }, attachBtn, micBtn, input, sendBtn, picker);
+  input.addEventListener("paste", (e) => { const fl = e.clipboardData?.files; if (fl?.length) { e.preventDefault(); addAttachments(fl); } });
   const autosize = () => { input.style.height = "auto"; input.style.height = `${Math.min(input.scrollHeight, 220)}px`; };
   input.addEventListener("input", autosize);
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); } });
@@ -734,16 +810,22 @@ async function viewChat(main, params = new URLSearchParams()) {
     h("div", {}, h("b", {}, "Sicherheitshinweis: "), "In dieser Unterhaltung wurde ein möglicher Manipulationsversuch (Prompt Injection) erkannt. Externe Aktionen erfordern erhöhte Bestätigung."));
 
   set(main, h("div", { class: "view chat" }, top, scroll,
-    h("div", { class: "composer-wrap" }, secBanner, form, h("div", { class: "composer-hint" }, voice.canListen ? "Enter zum Senden · 🎤 zum Sprechen · Externe Aktionen immer erst nach deiner Bestätigung" : "Enter zum Senden · Shift+Enter für neue Zeile · Externe Aktionen immer erst nach deiner Bestätigung"))));
+    h("div", { class: "composer-wrap" }, secBanner, h("div", { class: "attach-row", id: "attach-row" }), form, h("div", { class: "composer-hint" }, voice.canListen ? "Enter zum Senden · 🎤 zum Sprechen · Externe Aktionen immer erst nach deiner Bestätigung" : "Enter zum Senden · Shift+Enter für neue Zeile · Externe Aktionen immer erst nach deiner Bestätigung"))));
 
   state.renderedPending = new Set();
+  dropZone(main.querySelector(".view.chat"), addAttachments);
+  renderAttachRow();
   voiceUi();
   if (state.conversationId) {
     const data = await api(`/api/conversations/${state.conversationId}/messages`);
     title.textContent = data.conversation.title ?? "Unterhaltung";
     secBanner.classList.toggle("hidden", !data.conversation.tainted);
     for (const m of data.messages) {
-      if (m.role === "user") addUser(m.text, m.createdAt);
+      if (m.role === "user") {
+        const lines = (m.text ?? "").split("\n");
+        const files = lines.filter((l) => l.startsWith("📎 ")).map((l) => l.slice(3));
+        addUser(lines.filter((l) => !l.startsWith("📎 ")).join("\n"), m.createdAt, files);
+      }
       else addAssistant().finish(m.text, [], m.createdAt);
     }
     renderPendingCards(data.pendingActions);
@@ -770,9 +852,12 @@ function scrollDown() {
   if (s) s.scrollTop = s.scrollHeight;
 }
 
-function addUser(text, at) {
+function addUser(text, at, files = []) {
   $(".welcome")?.remove();
-  $("#thread").append(h("div", { class: "msg user" }, h("div", {}, h("div", { class: "bubble" }, text), at ? h("div", { class: "msg-time", style: "text-align:right" }, fmt.rel(at)) : null)));
+  $("#thread").append(h("div", { class: "msg user" }, h("div", {},
+    files.length ? h("div", { class: "user-files" }, files.map((n) => h("span", { class: "attach-chip done" }, icon("clip"), h("span", { class: "name" }, n)))) : null,
+    text ? h("div", { class: "bubble" }, text) : null,
+    at ? h("div", { class: "msg-time", style: "text-align:right" }, fmt.rel(at)) : null)));
   scrollDown();
 }
 
@@ -827,14 +912,44 @@ function handleReply(reply, turn, opts = {}) {
   refreshCounts();
 }
 
+// ─── Chat-Anhänge ──────────────────────────────────────────────────────────
+function renderAttachRow() {
+  const row = $("#attach-row");
+  if (!row) return;
+  set(row, state.attachments.map((a) => h("div", { class: `attach-chip ${a.error ? "err" : a.file ? "done" : ""}`, title: a.error ?? a.name },
+    icon(a.error ? "alert" : FILE_ICON[a.file?.format] ?? "file"),
+    h("span", { class: "name" }, a.name),
+    h("span", { class: "meta" }, a.error ? "Fehler" : a.file ? fmtSize(a.size) : `${Math.round(a.progress * 100)} %`),
+    h("button", { type: "button", class: "x", "aria-label": `${a.name} entfernen`, onclick: () => { state.attachments = state.attachments.filter((x) => x !== a); renderAttachRow(); } }, icon("x")))));
+}
+
+function addAttachments(fileList) {
+  for (const f of [...fileList].slice(0, 10 - state.attachments.length)) {
+    const a = { name: f.name, size: f.size, progress: 0, file: null, error: null };
+    a.promise = uploadFile(f, (p) => { a.progress = p; renderAttachRow(); }, state.conversationId ?? undefined)
+      .then((file) => { a.file = file; })
+      .catch((e) => { a.error = e.message; toast(`${f.name}: ${e.message}`, "err"); })
+      .finally(renderAttachRow);
+    state.attachments.push(a);
+  }
+  renderAttachRow();
+  $("#chat-input")?.focus();
+}
+
 async function sendMessage(text, opts = {}) {
   text = text.trim();
-  if (!text || state.busy) return;
+  const pending = state.attachments.filter((a) => !a.error);
+  if ((!text && !pending.length) || state.busy) return;
   state.busy = true;
-  addUser(text);
+  state.attachments = [];
+  renderAttachRow();
+  addUser(text, undefined, pending.map((a) => a.name));
   const turn = addAssistant();
   try {
-    const reply = await apiStream("/api/chat/stream", { conversationId: state.conversationId ?? undefined, message: text }, (ev) => ev.type === "action" && turn.step(ev.action));
+    await Promise.all(pending.map((a) => a.promise));
+    const ids = pending.filter((a) => a.file).map((a) => a.file.id);
+    if (!text && !ids.length) throw new Error("Upload fehlgeschlagen.");
+    const reply = await apiStream("/api/chat/stream", { conversationId: state.conversationId ?? undefined, message: text, attachments: ids.length ? ids : undefined }, (ev) => ev.type === "action" && turn.step(ev.action));
     handleReply(reply, turn, opts);
   } catch (err) {
     turn.error(err.message);
@@ -1201,6 +1316,107 @@ async function viewTasks(main) {
         h("span", { class: `badge ${r.status === "scheduled" ? "accent" : ""}` }, { scheduled: "geplant", fired: "erinnert", cancelled: "storniert" }[r.status]),
         r.status === "scheduled" ? h("button", { class: "btn ghost icon sm", "aria-label": "Stornieren", onclick: async () => { await api(`/api/reminders/${r.id}`, { method: "DELETE" }).catch(fail); viewTasks(main); } }, icon("x")) : null))
       : h("div", { class: "card-body", style: "padding:18px" }, h("div", { class: "empty" }, "Keine Erinnerungen. Beispiel: „Erinnere mich morgen um 9 an den Zahnarzt.“")))));
+}
+
+// ─── View: Dateien ──────────────────────────────────────────────────────────
+const SOURCE_LABEL = { upload: "hochgeladen", generated: "von JARVIS erstellt", edited: "bearbeitet", converted: "umgewandelt", drive: "aus Drive", browser: "aus dem Web", telegram: "per Telegram" };
+
+function chatAboutFile(file) {
+  state.conversationId = null;
+  state.attachments = [{ name: file.name, size: file.size, progress: 1, file, error: null, promise: Promise.resolve() }];
+  go("chat");
+}
+
+async function previewFile(file) {
+  const body = h("div", { class: "preview-body" }, h("div", { class: "spinner", style: "margin:30px auto" }));
+  const close = () => { wrap.remove(); if (url) URL.revokeObjectURL(url); };
+  let url = null;
+  const wrap = h("div", { class: "modal-wrap", onclick: (e) => e.target === wrap && close() },
+    h("div", { class: "modal preview-modal", role: "dialog", "aria-modal": "true" },
+      h("div", { class: "preview-head" }, h("h3", {}, file.name), h("button", { class: "btn ghost icon", "aria-label": "Schließen", onclick: close }, icon("x"))),
+      body,
+      h("div", { class: "foot" },
+        h("button", { class: "btn", onclick: () => { close(); chatAboutFile(file); } }, icon("chat"), h("span", {}, "Mit JARVIS besprechen")),
+        h("button", { class: "btn primary", onclick: () => downloadFile(file.id, file.name, file.size) }, icon("download"), h("span", {}, "Herunterladen")))));
+  wrap.addEventListener("keydown", (e) => e.key === "Escape" && close());
+  document.body.append(wrap);
+  try {
+    if (file.format === "png" || file.format === "jpg") {
+      url = URL.createObjectURL(await fetchFileBlob(file.id, file.size));
+      set(body, h("img", { src: url, alt: file.name, class: "preview-img" }));
+    } else {
+      const p = await api(`/api/files/${file.id}/preview`);
+      set(body,
+        p.sheets ? h("div", { class: "muted small" }, p.sheets.map((s) => `${s.name}: ${s.rows} × ${s.columns}`).join(" · ")) : null,
+        p.needsVision ? h("div", { class: "banner warn", style: "max-width:none;margin:0" }, icon("alert"), h("div", {}, "Kaum Text gefunden (Scan?) — JARVIS kann das PDF trotzdem visuell lesen.")) : null,
+        h("pre", { class: "preview-text" }, p.text || "(kein Text)"),
+        p.truncated ? h("div", { class: "muted small" }, "Vorschau gekürzt.") : null);
+    }
+  } catch (e) { set(body, h("div", { class: "empty" }, e.message)); }
+}
+
+async function viewFiles(main, params) {
+  const q = params.get("q") ?? "";
+  const data = await api(`/api/files${q ? `?q=${encodeURIComponent(q)}` : ""}`);
+  const reload = (query = q) => go("files", query ? `?q=${encodeURIComponent(query)}` : "");
+  const progress = h("div", { class: "upload-list" });
+  const doUpload = async (list) => {
+    for (const f of [...list]) {
+      const bar = h("div", { class: "bar" }, h("div", { style: "width:0%" }));
+      const row = h("div", { class: "upload-item" }, icon("upload"), h("span", { class: "name" }, f.name), bar);
+      progress.append(row);
+      try {
+        await uploadFile(f, (p) => { bar.firstChild.style.width = `${Math.round(p * 100)}%`; });
+        row.remove();
+        toast(`${f.name} hochgeladen.`, "ok");
+      } catch (e) { row.classList.add("err"); set(row, icon("alert"), h("span", { class: "name" }, `${f.name}: ${e.message}`)); }
+    }
+    if (!progress.querySelector(".err")) viewFiles(main, params);
+  };
+  const picker = h("input", { type: "file", multiple: true, accept: FILE_ACCEPT, hidden: true, onchange: () => { doUpload(picker.files); picker.value = ""; } });
+  let t;
+  const search = h("input", { class: "field", type: "search", placeholder: "Dateien und Inhalte durchsuchen …", value: q, "aria-label": "Dateien durchsuchen",
+    oninput: () => { clearTimeout(t); t = setTimeout(() => reload(search.value.trim()), 400); } });
+
+  const versionsBox = (f) => {
+    const box = h("div", { class: "versions" });
+    api(`/api/files/${f.id}`).then((d) => set(box, d.versions.map((v) => h("div", { class: "version" },
+      h("span", { class: "badge" }, `v${v.version}`),
+      h("div", { class: "main" }, h("div", {}, v.note ?? SOURCE_LABEL[v.source] ?? v.source), h("div", { class: "muted small" }, `${fmtSize(v.size)} · ${fmt.rel(v.createdAt)}`)),
+      h("button", { class: "btn ghost icon sm", "aria-label": `Version ${v.version} herunterladen`, onclick: () => downloadFile(v.id, v.name, v.size) }, icon("download")))))).catch((e) => set(box, e.message));
+    return box;
+  };
+
+  const row = (f) => {
+    const det = h("details", { class: "file-row" },
+      h("summary", {},
+        h("div", { class: `file-ic ${f.format}` }, icon(FILE_ICON[f.format] ?? "file")),
+        h("div", { class: "main" }, h("div", { class: "title" }, f.name),
+          h("div", { class: "sub" }, [f.format.toUpperCase(), fmtSize(f.size), f.versions > 1 ? `${f.versions} Versionen` : null, SOURCE_LABEL[f.source], fmt.rel(f.createdAt), f.storage === "drive" ? "Google Drive" : null].filter(Boolean).join(" · "))),
+        h("div", { class: "actions", onclick: (e) => e.preventDefault() },
+          h("button", { class: "btn ghost icon sm", "aria-label": "Vorschau", title: "Vorschau", onclick: () => previewFile(f) }, icon("eye")),
+          h("button", { class: "btn ghost icon sm", "aria-label": "Herunterladen", title: "Herunterladen", onclick: () => downloadFile(f.id, f.name, f.size) }, icon("download")),
+          h("button", { class: "btn ghost icon sm hide-mobile", "aria-label": "Mit JARVIS besprechen", title: "Mit JARVIS besprechen", onclick: () => chatAboutFile(f) }, icon("chat")),
+          h("button", { class: "btn ghost icon sm", "aria-label": "Löschen", title: "Löschen", onclick: async () => {
+            if (!(await dialog({ title: `„${f.name}“ löschen?`, text: f.versions > 1 ? `Alle ${f.versions} Versionen werden gelöscht.${f.storage === "drive" ? " In Google Drive landen sie im Papierkorb." : ""}` : f.storage === "drive" ? "Die Datei landet im Drive-Papierkorb." : "Die Datei wird endgültig gelöscht.", confirmLabel: "Löschen", danger: true }))) return;
+            await api(`/api/files/${f.id}?all=1`, { method: "DELETE" }).catch(fail); viewFiles(main, params);
+          } }, icon("trash")))));
+    det.addEventListener("toggle", () => { if (det.open && !det.querySelector(".versions")) det.append(versionsBox(f)); });
+    return det;
+  };
+
+  const usedPct = Math.round((data.limits.dbUsedBytes / data.limits.dbQuotaBytes) * 100);
+  const zone = h("button", { class: "drop-zone", onclick: () => picker.click() }, icon("upload"),
+    h("div", {}, h("b", {}, "Dateien hierher ziehen oder tippen zum Auswählen"), h("div", { class: "muted small" }, `PDF, Word, Excel, CSV, PowerPoint, Text, Markdown, Bilder · max. ${Math.round(data.limits.maxBytes / 1048576)} MB`)));
+  set(main, h("div", { class: "view" },
+    viewHead("Dateien", data.storage === "drive" ? "Gespeichert in deinem Google Drive (Ordner „JARVIS“)" : `Gespeichert in JARVIS · ${fmtSize(data.limits.dbUsedBytes)} von ${fmtSize(data.limits.dbQuotaBytes)} belegt (${usedPct} %)`,
+      h("button", { class: "btn primary", onclick: () => picker.click() }, icon("upload"), h("span", {}, "Hochladen")), picker),
+    zone, progress,
+    h("div", { class: "card", style: "padding:12px;margin:14px 0" }, search),
+    data.files.length ? h("div", { class: "card files-card" }, data.files.map(row))
+      : h("div", { class: "empty" }, q ? "Keine Treffer." : "Noch keine Dateien. Lade etwas hoch oder bitte JARVIS z.B. „Erstelle mir eine Excel-Liste meiner Fixkosten“."),
+    data.storage === "db" ? h("div", { class: "muted small", style: "margin-top:10px" }, "Tipp: Mit Google Drive (Einstellungen → Integrationen) liegen Dateien in deinem Drive statt in der JARVIS-Datenbank.") : null));
+  dropZone(main.querySelector(".view"), doUpload);
 }
 
 // ─── View: Kontakte ─────────────────────────────────────────────────────────
@@ -1800,7 +2016,7 @@ async function openNotifications() {
 }
 
 // ─── Boot ───────────────────────────────────────────────────────────────────
-const VIEWS = { today: viewToday, chat: viewChat, activity: viewActivity, calendar: viewCalendar, email: viewEmail, tasks: viewTasks, contacts: viewContacts, automations: viewAutomations, review: viewReview, memory: viewMemory, settings: viewSettings };
+const VIEWS = { today: viewToday, chat: viewChat, activity: viewActivity, calendar: viewCalendar, email: viewEmail, tasks: viewTasks, contacts: viewContacts, files: viewFiles, automations: viewAutomations, review: viewReview, memory: viewMemory, settings: viewSettings };
 
 let routerBound = false;
 async function boot() {

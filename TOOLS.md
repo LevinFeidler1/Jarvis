@@ -91,6 +91,17 @@ Treffer plus eine ehrliche Warnung.
 | `get_integration_status` | 0 | Welche Konten sind verbunden |
 | `web_search` | 0 | Server-Tool der Claude API (`web_search_20260209`); abschaltbar mit `JARVIS_WEB_SEARCH=false` |
 
+## Dateien (`src/tools/files.ts`) — Details: docs/FILES.md
+
+| Tool | Stufe | Beschreibung |
+|---|---|---|
+| `list_files` | 0 | Dateien (neueste Version je Dokument), Suche in Name und Inhalt |
+| `read_file` | 0 | Text/Tabellen/Folien lesen (seitenweise), Bilder und Scans visuell — immer `external_data` |
+| `create_file` | 1 | DOCX/PDF/MD/TXT aus Markdown, XLSX mit Formeln, CSV |
+| `edit_file` | 1 | Text ersetzen/anhängen, Zellen/Formeln, Zeilen, Blätter, PDF zusammenführen/Seiten — immer neue Version |
+| `convert_file` | 1 | Formatumwandlung als neue Datei |
+| `delete_file` | 2 | Löschen (Drive: Papierkorb) |
+
 ## Automationen & Rückblick (`src/tools/automation.ts`)
 
 Automationen laufen ohne Zutun des Benutzers (Zeitplan oder neue E-Mail) durch

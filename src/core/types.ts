@@ -42,8 +42,13 @@ export type ActionStatus =
   | "expired"
   | "denied";
 
+/** Binary content handed to the model next to the JSON result (vision / PDF reading). */
+export type ToolAttachment =
+  | { type: "image"; mediaType: "image/png" | "image/jpeg"; base64: string }
+  | { type: "document"; base64: string };
+
 export type ToolResult =
-  | { ok: true; data: unknown; partial?: boolean; externalData?: ExternalDataInfo }
+  | { ok: true; data: unknown; partial?: boolean; externalData?: ExternalDataInfo; attachments?: ToolAttachment[] }
   | { ok: false; error: string; code?: ToolErrorCode };
 
 export type ToolErrorCode =
