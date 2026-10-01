@@ -223,7 +223,7 @@ export class TriageService {
           kind: "newsletter",
           title: `${newsletters.length} Newsletter/Werbung — archivieren?`,
           body: newsletters.map((m) => `• ${m.from.name ?? m.from.email}: ${m.subject}`).join("\n"),
-          actions: newsletters.map((m) => ({ tool: "archive_email", input: { message_id: m.id }, label: `Archivieren: ${m.subject}` })),
+          actions: [{ tool: "archive_email", input: { message_ids: newsletters.map((m) => m.id) }, label: `${newsletters.length} E-Mail(s) archivieren` }],
           acceptLabel: "Alle archivieren",
           editPrompt: "Welche Newsletter und Werbe-Mails sind heute gekommen? Schlag vor, was ich abbestellen sollte.",
         }),
@@ -383,7 +383,7 @@ export class TriageService {
       results.push(`${r.status === "succeeded" ? "✓" : r.status === "awaiting_confirmation" ? "⏳" : "✗"} ${a.label}${r.error ? ` — ${r.error}` : ""}`);
       if (a.tool === "create_task" && r.status === "succeeded") undo = { tool: "delete_task", input: { task_id: (r.data as { id: string }).id }, label: "Aufgabe wieder löschen" };
       if (a.tool === "create_event" && r.status === "succeeded" && s.actions.length === 1) {
-        const ev = r.data as { id: string; title?: string };
+        const ev = (r.data as { created: { id: string; title?: string } }).created;
         undo = { tool: "delete_event", input: { event_id: ev.id, event_title: ev.title ?? "Termin", notify_attendees: false }, label: "Termin wieder löschen" };
       }
     }

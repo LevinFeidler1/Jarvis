@@ -24,6 +24,10 @@ export interface Automation {
   lastConversationId: string | null;
   runCount: number;
   createdAt: string;
+  /** Level-2 tools this automation may use without asking (Phase D). */
+  allowedTools: string[];
+  /** Max. write actions per day it may do on its own. */
+  dailyActionLimit: number;
 }
 
 export interface AutomationInput {
@@ -31,6 +35,8 @@ export interface AutomationInput {
   prompt: string;
   trigger: AutomationTrigger;
   enabled?: boolean;
+  allowedTools?: string[];
+  dailyActionLimit?: number;
 }
 
 interface Row {
@@ -52,6 +58,8 @@ interface Row {
   last_result: string | null;
   last_conversation_id: string | null;
   run_count: number;
+  allowed_tools: string;
+  daily_action_limit: number;
   created_at: string;
 }
 
@@ -104,6 +112,8 @@ function toAutomation(r: Row): Automation {
     lastResult: r.last_result,
     lastConversationId: r.last_conversation_id,
     runCount: r.run_count,
+    allowedTools: JSON.parse(r.allowed_tools ?? "[]") as string[],
+    dailyActionLimit: r.daily_action_limit ?? 20,
     createdAt: r.created_at,
   };
 }
@@ -135,8 +145,8 @@ export class AutomationStore {
     const enabled = input.enabled ?? true;
     await this.db.run(
       `INSERT INTO automations (id, name, prompt, trigger_type, schedule_time, schedule_days, email_from, email_subject, email_since,
-         enabled, next_run_at, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)`,
+         enabled, next_run_at, created_at, updated_at, allowed_tools, daily_action_limit)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $14)`,
       [
         id,
         input.name,
@@ -151,6 +161,8 @@ export class AutomationStore {
         enabled,
         enabled ? this.nextRun(t, now) : null,
         nowIso(),
+        JSON.stringify([...new Set(input.allowedTools ?? [])]),
+        input.dailyActionLimit ?? 20,
       ],
     );
     return (await this.get(id))!;
@@ -166,7 +178,8 @@ export class AutomationStore {
     await this.db.run(
       `UPDATE automations SET name = $1, prompt = $2, trigger_type = $3, schedule_time = $4, schedule_days = $5, email_from = $6,
          email_subject = $7, enabled = $8, next_run_at = $9, updated_at = $10,
-         email_since = CASE WHEN $11 THEN $12 ELSE email_since END
+         email_since = CASE WHEN $11 THEN $12 ELSE email_since END,
+         allowed_tools = $14, daily_action_limit = $15
        WHERE id = $13`,
       [
         next.name,
@@ -182,6 +195,8 @@ export class AutomationStore {
         t.type === "email" && (triggerChanged || reactivated),
         now.toISOString(),
         id,
+        JSON.stringify([...new Set(input.allowedTools ?? cur.allowedTools)]),
+        input.dailyActionLimit ?? cur.dailyActionLimit,
       ],
     );
     return this.get(id);
@@ -189,6 +204,21 @@ export class AutomationStore {
 
   async delete(id: string): Promise<boolean> {
     return (await this.db.run("DELETE FROM automations WHERE id = $1", [id])) > 0;
+  }
+
+  /** Emergency stop: while paused no automation runs (scheduled or e-mail triggered). */
+  async paused(): Promise<{ paused: boolean; since: string | null }> {
+    const row = await this.db.one<{ value_json: string }>("SELECT value_json FROM settings WHERE key = 'automations_paused'");
+    return row ? (JSON.parse(row.value_json) as { paused: boolean; since: string | null }) : { paused: false, since: null };
+  }
+
+  async setPaused(paused: boolean): Promise<{ paused: boolean; since: string | null }> {
+    const value = { paused, since: paused ? nowIso() : null };
+    await this.db.run(
+      "INSERT INTO settings (key, value_json) VALUES ('automations_paused', $1) ON CONFLICT (key) DO UPDATE SET value_json = EXCLUDED.value_json",
+      [JSON.stringify(value)],
+    );
+    return value;
   }
 
   /** Atomically claims due automations and moves their next run forward. */
@@ -241,8 +271,9 @@ export interface AutomationAgent {
     conversationId: string | undefined,
     text: string,
     emit?: undefined,
-    opts?: { automation?: { name: string; trigger: string } },
+    opts?: { automation?: { id?: string; name: string; trigger: string; allowedTools?: string[]; dailyLimit?: number } },
   ): Promise<AgentReply>;
+  readonly activity?: { countAutonomousInConversation(conversationId: string): Promise<number> };
 }
 
 /** Splits the agent's reply into a push title (first line) and body. */
@@ -269,6 +300,7 @@ export class AutomationRunner {
 
   /** Runs everything that is due; stops starting new runs after `budgetMs`. */
   async runDue(now = new Date(), budgetMs = 200_000): Promise<number> {
+    if ((await this.store.paused()).paused) return 0;
     const started = Date.now();
     let runs = 0;
     for (const a of await this.store.claimDue(now)) {
@@ -285,6 +317,7 @@ export class AutomationRunner {
   async runNow(id: string): Promise<{ status: string; text: string; conversationId?: string }> {
     const a = await this.store.get(id);
     if (!a) throw new Error("Automation nicht gefunden");
+    if ((await this.store.paused()).paused) return { status: "error", text: "Alle Automationen sind pausiert (Not-Aus)." };
     if (a.trigger.type === "email") {
       const mails = await this.matchingEmails(a, null, []);
       if (!mails.length) {
@@ -334,13 +367,15 @@ export class AutomationRunner {
   private async execute(a: Automation, prompt: string): Promise<{ status: string; text: string; conversationId?: string }> {
     try {
       const reply = await this.agent.handleUserMessage(undefined, prompt, undefined, {
-        automation: { name: a.name, trigger: describeTrigger(a.trigger) },
+        automation: { id: a.id, name: a.name, trigger: describeTrigger(a.trigger), allowedTools: a.allowedTools, dailyLimit: a.dailyActionLimit },
       });
       const nothing = /^\s*nichts neues\.?\s*$/i.test(reply.text) && reply.pendingActions.length === 0;
       const status = reply.pendingActions.length ? "waiting" : nothing ? "nothing" : "ok";
       await this.store.finish(a.id, { status, text: reply.text, conversationId: reply.conversationId });
       if (!nothing) {
-        const { title, body } = toPush(a.name, reply);
+        const { title, body: text } = toPush(a.name, reply);
+        const autonomous = (await this.agent.activity?.countAutonomousInConversation(reply.conversationId).catch(() => 0)) ?? 0;
+        const body = autonomous ? `${text}\n🤖 ${autonomous} Aktion(en) selbst ausgeführt — Rückgängig unter Aktivität.`.trim() : text;
         await this.providers.notifications.notify(title, body, { url: `/#chat?c=${reply.conversationId}`, tag: `automation-${a.id}` });
       }
       return { status, text: reply.text, conversationId: reply.conversationId };

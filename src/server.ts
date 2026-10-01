@@ -18,6 +18,7 @@ import { MEMORY_CATEGORIES, type MemoryStore } from "./memory/memory.js";
 import { AUTOMATION_TEMPLATES, type Automation, type AutomationInput, AutomationRunner, describeTrigger } from "./core/automations.js";
 import { buildWeekReview } from "./core/review.js";
 import { KIND_LABEL, TriageService } from "./core/triage.js";
+import { allowlistableTools } from "./core/autonomy.js";
 import { automationTriggerSchema } from "./tools/automation.js";
 import { ACCEPTED_EXTENSIONS } from "./files/formats/detect.js";
 import { DOWNLOAD_RANGE_BYTES, UPLOAD_CHUNK_BYTES } from "./files/service.js";
@@ -473,15 +474,27 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // ─── Automations ──────────────────────────────────────────────────────
   const automationRunner = new AutomationRunner(providers.automations, agent, providers);
+  const allowlistable = allowlistableTools(registry);
   const automationInput = z.object({
     name: z.string().trim().min(1).max(80),
     prompt: z.string().trim().min(5).max(2000),
     trigger: automationTriggerSchema,
     enabled: z.boolean().optional(),
+    allowedTools: z
+      .array(z.string())
+      .max(20)
+      .refine((l) => l.every((n) => allowlistable.some((t) => t.name === n)), "Nur Stufe-2-Werkzeuge, die freigegeben werden dürfen")
+      .optional(),
+    dailyActionLimit: z.number().int().min(1).max(200).optional(),
   });
   const withText = (a: Automation) => ({ ...a, triggerText: describeTrigger(a.trigger) });
+  const todayStart = () => zonedToUtc(localDate(new Date(), config.timezone), "00:00", config.timezone).toISOString();
   app.get("/api/automations", async () => ({
-    automations: (await providers.automations.list()).map(withText),
+    automations: await Promise.all(
+      (await providers.automations.list()).map(async (a) => ({ ...withText(a), autonomousToday: await agent.activity.countAutonomous(a.id, todayStart()) })),
+    ),
+    allowlistable,
+    paused: await providers.automations.paused(),
     templates: AUTOMATION_TEMPLATES.map((t) => ({ ...t, triggerText: describeTrigger(t.trigger) })),
     pushDevices: (await providers.push.devices()).length,
     cronConfigured: !!config.cronSecret,
@@ -494,6 +507,20 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.delete("/api/automations/:id", async (req, reply) =>
     (await providers.automations.delete(idParam.parse(req.params).id)) ? { ok: true } : reply.code(404).send({ error: "Nicht gefunden" }),
   );
+  app.put("/api/automations/pause", async (req) => {
+    const { paused } = z.object({ paused: z.boolean() }).parse(req.body);
+    return providers.automations.setPaused(paused);
+  });
+  app.post("/api/activity/:id/undo", async (req, reply) => {
+    const { id } = idParam.parse(req.params);
+    const u = await agent.activity.getUndo(id);
+    if (!u) return reply.code(409).send({ error: "Für diese Aktion gibt es kein Rückgängig (mehr)." });
+    const conv = u.conversationId ?? (await agent.conversations.create("Rückgängig")).id;
+    const r = await agent.runApprovedAction(conv, u.undo.tool, u.undo.input, { actor: "rückgängig" });
+    if (r.status !== "succeeded" && r.status !== "partially_succeeded") return reply.code(502).send({ error: r.error ?? "Rückgängig fehlgeschlagen", status: r.status });
+    await agent.activity.markUndone(id);
+    return { ok: true, label: u.undo.label };
+  });
   app.post("/api/automations/:id/run", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) =>
     automationRunner.runNow(idParam.parse(req.params).id),
   );

@@ -318,6 +318,16 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (kind, sender)
   );
   `,
+  // 7 — autonomous automations: per-automation allowlist + daily limit, undo for actions.
+  `
+  ALTER TABLE automations ADD COLUMN allowed_tools TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE automations ADD COLUMN daily_action_limit INTEGER NOT NULL DEFAULT 20;
+  ALTER TABLE activity ADD COLUMN automation_id TEXT;
+  ALTER TABLE activity ADD COLUMN autonomous BOOLEAN NOT NULL DEFAULT FALSE;
+  ALTER TABLE activity ADD COLUMN undo_json TEXT;
+  ALTER TABLE activity ADD COLUMN undone_at TEXT;
+  CREATE INDEX activity_automation_idx ON activity (automation_id, created_at);
+  `,
 ];
 
 async function migrate(db: Db): Promise<void> {

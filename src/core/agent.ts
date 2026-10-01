@@ -15,6 +15,8 @@ import { decidePermission, loadPermissionSettings } from "./permissions.js";
 import { createHash } from "node:crypto";
 import { buildSystem, buildTurnContext, renderAutomationBlock, renderMemoryBlock } from "./prompt.js";
 import { UsageStore } from "./usage.js";
+import { autonomyBlock } from "./autonomy.js";
+import { localDate, zonedToUtc } from "./time.js";
 import { type ActionStatus, RiskLevel, type ToolContext, type ToolDefinition, ToolError, type ToolResult } from "./types.js";
 
 const MAX_TOOL_RESULT_CHARS = 40_000;
@@ -69,6 +71,18 @@ interface RunState {
   tainted: boolean;
   actions: ActionReport[];
   emit: AgentEventListener;
+  /** Set while an automation runs unattended (Phase D). */
+  automation?: AutomationContext;
+}
+
+export interface AutomationContext {
+  id?: string;
+  name: string;
+  trigger: string;
+  /** Level-2 tools the user allowlisted for this automation. */
+  allowedTools?: string[];
+  /** Max. write actions per day this automation may do on its own. */
+  dailyLimit?: number;
 }
 
 const noop: AgentEventListener = () => undefined;
@@ -103,7 +117,7 @@ export class Agent {
     conversationId: string | undefined,
     text: string,
     emit: AgentEventListener = noop,
-    opts: { automation?: { name: string; trigger: string }; attachments?: FileInfo[] } = {},
+    opts: { automation?: AutomationContext; attachments?: FileInfo[] } = {},
   ): Promise<AgentReply> {
     const conv =
       (conversationId && (await this.conversations.get(conversationId))) ||
@@ -147,7 +161,7 @@ export class Agent {
     const userMessage: LlmMessage = { role: "user", content };
     const display = opts.attachments?.length ? `${text}${text ? "\n" : ""}${opts.attachments.map((f) => `📎 ${f.name}`).join("\n")}` : text;
     await this.conversations.append(conv.id, userMessage, display);
-    return this.run({ conversationId: conv.id, tainted: conv.tainted, actions: [], emit });
+    return this.run({ conversationId: conv.id, tainted: conv.tainted, actions: [], emit, automation: opts.automation });
   }
 
   /**
@@ -250,6 +264,34 @@ export class Agent {
     return res.ok ? { status: res.partial ? "partially_succeeded" : "succeeded", description, data: res.data } : { status: "failed", description, error: res.error };
   }
 
+  /**
+   * Phase D autonomy gate. Level 1 always runs; level 2 only when the tool is
+   * allowlisted for this automation and none of the hard rules apply; level 3
+   * never. Every autonomous write counts against the automation's daily limit.
+   */
+  private async autonomy(
+    tool: ToolDefinition,
+    input: unknown,
+    decision: ReturnType<typeof decidePermission>,
+    state: RunState,
+  ): Promise<{ decision: ReturnType<typeof decidePermission>; autonomous: boolean }> {
+    const a = state.automation!;
+    const confirm = (reason: string) => ({ decision: { ...decision, decision: "confirm" as const, reasons: [...decision.reasons, reason] }, autonomous: false });
+    if (decision.risk >= RiskLevel.CRITICAL) return { decision, autonomous: false };
+    if (a.id) {
+      // Activity rows carry wall-clock timestamps, so the day window uses the wall clock too.
+      const startOfDay = zonedToUtc(localDate(new Date(), this.deps.config.timezone), "00:00", this.deps.config.timezone).toISOString();
+      const used = await this.activity.countAutonomous(a.id, startOfDay);
+      if (used >= (a.dailyLimit ?? 20)) return confirm(`Tageslimit der Automation „${a.name}“ (${a.dailyLimit ?? 20} Aktionen) erreicht.`);
+    }
+    if (decision.risk === RiskLevel.LOW) return { decision: { ...decision, decision: "allow" }, autonomous: true };
+    // Level 2
+    if (!a.allowedTools?.includes(tool.name)) return confirm(`${tool.name} ist für diese Automation nicht freigegeben.`);
+    const block = await autonomyBlock(tool, input as Record<string, unknown>, this.toolContext(state));
+    if (block) return confirm(block);
+    return { decision: { ...decision, decision: "allow", reasons: [...decision.reasons, `Für Automation „${a.name}“ freigegeben.`] }, autonomous: true };
+  }
+
   // ─── Agent loop ─────────────────────────────────────────────────────────
 
   private async run(state: RunState): Promise<AgentReply> {
@@ -330,11 +372,18 @@ export class Agent {
       if (pre && !pre.ok) return result(JSON.stringify({ ok: false, status: "not_prepared", code: pre.code, error: pre.error }), true);
     }
 
-    // 3. Permission check.
-    const decision = decidePermission(tool, input, {
+    // 3. Permission check (+ autonomy rules while an automation runs unattended).
+    let decision = decidePermission(tool, input, {
       tainted: state.tainted,
       settings: await loadPermissionSettings(this.deps.db),
     });
+    let autonomous = false;
+    if (state.automation && decision.decision !== "deny" && decision.risk >= RiskLevel.LOW) {
+      const a = await this.autonomy(tool, input, decision, state);
+      decision = a.decision;
+      autonomous = a.autonomous;
+    }
+    const auto = { automationId: state.automation?.id ?? null, autonomous };
 
     if (decision.decision === "deny") {
       const act = await this.activity.create({ conversationId: state.conversationId, toolName: tool.name, description, risk: decision.risk, status: "denied" });
@@ -350,6 +399,7 @@ export class Agent {
         description,
         risk: decision.risk,
         status: "awaiting_confirmation",
+        automationId: auto.automationId,
       });
       const pending = await this.confirmations.create(
         { conversationId: state.conversationId, activityId: act.id, toolName: tool.name, input, description, risk: decision.risk, reasons: decision.reasons },
@@ -372,7 +422,14 @@ export class Agent {
     }
 
     // 4. Execute + verify.
-    const act = await this.activity.create({ conversationId: state.conversationId, toolName: tool.name, description, risk: decision.risk, status: "planned" });
+    const act = await this.activity.create({
+      conversationId: state.conversationId,
+      toolName: tool.name,
+      description: autonomous ? `${description} · autonom (${state.automation!.name})` : description,
+      risk: decision.risk,
+      status: "planned",
+      ...auto,
+    });
     const outcome = await this.executeTool(tool, input, state, act.id, false, decision.risk);
     return result(outcome.blocks ?? outcome.content, outcome.isError);
   }
@@ -402,6 +459,10 @@ export class Agent {
 
     const status: ActionStatus = !res.ok ? "failed" : res.partial ? "partially_succeeded" : "succeeded";
     await this.activity.update(activityId, status, res.ok ? undefined : res.error);
+    if (res.ok && tool.undo) {
+      const undo = await Promise.resolve(tool.undo(input as never, res.data, ctx)).catch(() => undefined);
+      if (undo) await this.activity.setUndo(activityId, undo);
+    }
     this.track(state, { activityId, toolName: tool.name, description, status, error: res.ok ? undefined : res.error }, risk);
     if (risk >= RiskLevel.LOW || confirmed) {
       const auditStatus: AuditStatus = !res.ok ? "FAILED" : res.partial ? "PARTIAL" : "SUCCESS";

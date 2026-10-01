@@ -1139,8 +1139,17 @@ const RISK = [["Lesen", ""], ["Niedrig", "accent"], ["Extern", "warn"], ["Kritis
 
 async function viewActivity(main) {
   const [pending, activity, audit] = await Promise.all([api("/api/confirmations"), api("/api/activity"), api("/api/audit")]);
-  const filters = { all: "Alle", awaiting_confirmation: "Wartet", succeeded: "Erfolgreich", failed: "Fehler" };
-  const shown = activity.filter((a) => state.activityFilter === "all" || a.status === state.activityFilter || (state.activityFilter === "failed" && a.status === "denied"));
+  const filters = { all: "Alle", awaiting_confirmation: "Wartet", succeeded: "Erfolgreich", failed: "Fehler", autonomous: "Autonom" };
+  const shown = activity.filter((a) => state.activityFilter === "all" || a.status === state.activityFilter || (state.activityFilter === "failed" && a.status === "denied") || (state.activityFilter === "autonomous" && a.autonomous));
+  const undoBtn = (a) => {
+    const b = h("button", { class: "btn sm", title: "Rückgängig" }, icon("history"), h("span", {}, "Rückgängig"));
+    b.onclick = async () => {
+      b.disabled = true;
+      try { const r = await api(`/api/activity/${a.id}/undo`, { method: "POST" }); toast(`Rückgängig: ${r.label}`, "ok"); } catch (e) { fail(e); }
+      viewActivity(main);
+    };
+    return b;
+  };
   set(main, h("div", { class: "view" },
     viewHead("Aktivität", "Alles, was JARVIS getan hat oder tun möchte — nachvollziehbar.", h("button", { class: "btn ghost", onclick: () => route() }, icon("refresh"), "Aktualisieren")),
     pending.length ? h("div", {}, h("div", { class: "section-title" }, icon("shield"), `Wartet auf Bestätigung (${pending.length})`),
@@ -1154,7 +1163,11 @@ async function viewActivity(main) {
         h("div", { class: `tl-ic ${a.status}` }, a.status === "executing" ? h("div", { class: "spinner" }) : icon(STEP_ICON[a.status] ?? "dot")),
         h("div", { style: "min-width:0" }, h("div", { class: "title" }, a.description.split("\n")[0]),
           h("div", { class: "sub" }, `${fmt.dt(a.createdAt)} · ${a.toolName}${a.error ? ` · ${a.error}` : ""}`)),
-        h("div", { class: "right" }, h("span", { class: `badge ${RISK[a.risk]?.[1] ?? ""}` }, RISK[a.risk]?.[0] ?? a.risk), h("span", { class: `badge ${cls}` }, label)));
+        h("div", { class: "right" },
+          a.autonomous ? h("span", { class: "badge accent", title: "Von einer Automation selbst ausgeführt" }, "autonom") : null,
+          a.undoneAt ? h("span", { class: "badge" }, "rückgängig gemacht") : null,
+          h("span", { class: `badge ${RISK[a.risk]?.[1] ?? ""}` }, RISK[a.risk]?.[0] ?? a.risk), h("span", { class: `badge ${cls}` }, label),
+          a.canUndo ? undoBtn(a) : null));
     })) : h("div", { class: "card-body", style: "padding:18px" }, h("div", { class: "empty" }, "Noch keine Einträge."))),
     h("details", { class: "fold" },
       h("summary", { class: "section-title" }, icon("shield"), "Audit-Log (externe & ändernde Aktionen)"),
@@ -1706,8 +1719,15 @@ function pushCard(onChange) {
 const WEEKDAYS = [[1, "Mo"], [2, "Di"], [3, "Mi"], [4, "Do"], [5, "Fr"], [6, "Sa"], [7, "So"]];
 const AUTO_STATUS = { ok: ["erledigt", "ok"], waiting: ["wartet auf dich", "warn"], nothing: ["nichts Neues", ""], error: ["Fehler", "err"] };
 
+let ALLOWLISTABLE = [];
 function automationEditor(a) {
   return new Promise((resolve) => {
+    const allowed = new Set(a?.allowedTools ?? []);
+    const limitField = h("input", { class: "field small", id: "au-limit", type: "number", min: 1, max: 200, value: a?.dailyActionLimit ?? 20, style: "width:110px" });
+    const allowBox = h("div", { class: "allow-list" }, ALLOWLISTABLE.map((t) => {
+      const cb = h("input", { type: "checkbox", checked: allowed.has(t.name), onchange: (e) => (e.target.checked ? allowed.add(t.name) : allowed.delete(t.name)) });
+      return h("label", { class: "allow-item" }, cb, h("div", {}, h("div", { class: "mono" }, t.name), h("div", { class: "muted small" }, t.description, t.rule ? h("b", {}, ` · ${t.rule}`) : null)));
+    }));
     const t = a?.trigger ?? { type: "schedule", time: "07:00", days: [1, 2, 3, 4, 5] };
     let type = t.type;
     const days = new Set(t.type === "schedule" ? t.days : [1, 2, 3, 4, 5]);
@@ -1742,7 +1762,7 @@ function automationEditor(a) {
         ? { type, time: f.time.value || "07:00", days: [...days].sort() }
         : { type, ...(f.from.value.trim() ? { from: f.from.value.trim() } : {}), ...(f.subject.value.trim() ? { subject: f.subject.value.trim() } : {}) };
       if (type === "schedule" && !trigger.days.length) { err.textContent = "Mindestens einen Wochentag wählen."; return; }
-      const body = { name: f.name.value.trim(), prompt: f.prompt.value.trim(), trigger };
+      const body = { name: f.name.value.trim(), prompt: f.prompt.value.trim(), trigger, allowedTools: [...allowed], dailyActionLimit: Math.max(1, Math.min(200, Number(limitField.value) || 20)) };
       try {
         close(a?.id ? await api(`/api/automations/${a.id}`, { method: "PATCH", body }) : await api("/api/automations", { method: "POST", body }));
       } catch (ex) { err.textContent = ex.message; }
@@ -1751,7 +1771,11 @@ function automationEditor(a) {
       h("label", { class: "small muted", for: "au-name" }, "Name"), f.name,
       h("div", { class: "small muted" }, "Auslöser"), seg, scheduleBox, emailBox,
       h("label", { class: "small muted", for: "au-prompt" }, "Auftrag an JARVIS"), f.prompt,
-      h("div", { class: "muted small" }, "Es gelten dieselben Regeln wie im Chat: Senden, Einladen, Löschen usw. werden nur vorbereitet — du bestätigst sie über die Push-Nachricht."),
+      h("details", { class: "fold allow-fold", open: allowed.size > 0 },
+        h("summary", { class: "small" }, icon("shield"), `Selbstständig erlauben (Stufe 2) — ${allowed.size ? `${allowed.size} freigegeben` : "nichts freigegeben"}`),
+        h("div", { class: "muted small" }, "Lesen und Stufe 1 (Labels, Archivieren, Aufgaben …) darf jede Automation. Hier gibst du zusätzliche Werkzeuge nur für diese Automation frei. Nie ohne dich: E-Mails an neue Empfänger, Termine mit Gästen, Löschen ohne Papierkorb, Zahlungen, Verträge, Logins, alles Kritische."),
+        allowBox,
+        h("label", { class: "small muted", for: "au-limit", style: "display:flex;align-items:center;gap:10px;margin-top:6px" }, "Höchstens", limitField, "selbstständige Aktionen pro Tag")),
       err,
       h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: () => close(null) }, "Abbrechen"), h("button", { class: "btn primary", type: "submit" }, "Speichern")));
     const wrap = h("div", { class: "modal-wrap", onclick: (e) => e.target === wrap && close(null) }, form);
@@ -1763,6 +1787,13 @@ function automationEditor(a) {
 
 async function viewAutomations(main) {
   const data = await api("/api/automations");
+  ALLOWLISTABLE = data.allowlistable ?? [];
+  const pauseBtn = h("button", { class: `btn ${data.paused.paused ? "primary" : "danger"}` }, icon(data.paused.paused ? "bolt" : "stop"), h("span", {}, data.paused.paused ? "Fortsetzen" : "Alle pausieren"));
+  pauseBtn.onclick = async () => {
+    if (!data.paused.paused && !(await dialog({ title: "Alle Automationen pausieren?", text: "Not-Aus: Keine Automation läuft mehr, bis du fortsetzt — auch keine E-Mail-Auslöser.", confirmLabel: "Pausieren", danger: true }))) return;
+    await api("/api/automations/pause", { method: "PUT", body: { paused: !data.paused.paused } }).catch(fail);
+    viewAutomations(main);
+  };
   const reload = () => viewAutomations(main);
   const sw = (checked, onchange) => { const i = h("input", { type: "checkbox", checked, "aria-label": "Aktiv" }); i.addEventListener("change", () => onchange(i.checked)); return h("label", { class: "switch" }, i, h("span")); };
   const card = (a) => {
@@ -1783,6 +1814,9 @@ async function viewAutomations(main) {
         h("div", { class: "main" }, h("div", { class: "title" }, a.name), h("div", { class: "sub" }, a.triggerText, a.enabled && a.nextRunAt && a.trigger.type === "schedule" ? ` · nächste: ${fmt.dt(a.nextRunAt)}` : "")),
         sw(a.enabled, async (v) => { await api(`/api/automations/${a.id}`, { method: "PATCH", body: { enabled: v } }).catch(fail); reload(); })),
       h("div", { class: "auto-prompt" }, a.prompt),
+      a.allowedTools?.length || a.autonomousToday ? h("div", { class: "auto-allow" }, icon("shield"),
+        a.allowedTools?.length ? h("span", {}, `Selbstständig: ${a.allowedTools.join(", ")}`) : h("span", {}, "Nur Stufe 0–1 selbstständig"),
+        h("span", { class: "muted" }, ` · heute ${a.autonomousToday ?? 0}/${a.dailyActionLimit} Aktionen`)) : null,
       a.lastRunAt ? h("div", { class: "auto-last" },
         h("div", { class: "auto-last-head" }, st ? h("span", { class: `badge ${st[1]}` }, st[0]) : null, h("span", { class: "muted small" }, `zuletzt ${fmt.rel(a.lastRunAt)} · ${a.runCount}× gelaufen`)),
         a.lastResult ? h("div", { class: "small auto-result" }, a.lastResult.length > 280 ? `${a.lastResult.slice(0, 280)} …` : a.lastResult) : null) : null,
@@ -1800,7 +1834,10 @@ async function viewAutomations(main) {
   const templates = data.templates.filter((t) => !have.has(t.name));
   set(main, h("div", { class: "view" },
     viewHead("Automationen", "JARVIS erledigt Dinge von selbst und schickt dir das Ergebnis aufs Handy.",
+      pauseBtn,
       h("button", { class: "btn primary", onclick: async () => { if (await automationEditor(null)) { toast("Automation angelegt.", "ok"); reload(); } } }, icon("plus"), h("span", {}, "Neue Automation"))),
+    data.paused.paused ? h("div", { class: "banner warn", style: "max-width:none" }, icon("stop"),
+      h("div", { style: "flex:1" }, h("b", {}, "Not-Aus aktiv: "), `Alle Automationen sind seit ${fmt.rel(data.paused.since)} pausiert.`)) : null,
     data.pushDevices ? null : h("div", { class: "banner warn", style: "max-width:none" }, icon("bell"),
       h("div", { style: "flex:1" }, h("b", {}, "Push ist noch aus. "), "Ohne Push siehst du Ergebnisse nur hier und unter Benachrichtigungen."),
       h("button", { class: "btn sm", onclick: () => go("settings", "?focus=push") }, "Einrichten")),

@@ -144,6 +144,11 @@ export const calendarTools: ToolDefinition[] = [
       );
       return ok({ created: view(ev), conflicts: found });
     },
+    undo: (input, data) => {
+      if (input.attendees?.length) return undefined; // invitations were sent — deleting would notify guests
+      const ev = (data as { created: { id: string; title: string } }).created;
+      return { tool: "delete_event", input: { event_id: ev.id, event_title: ev.title, notify_attendees: false }, label: "Termin wieder löschen" };
+    },
   }),
   defineTool({
     name: "update_event",

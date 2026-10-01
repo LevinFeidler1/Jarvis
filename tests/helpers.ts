@@ -127,15 +127,24 @@ export class FakeEmail implements EmailProvider {
     this.forwarded.push({ id, to });
     return { id: `fwd_${this.forwarded.length}` };
   }
-  async modifyLabels(id: string) {
+  labels: Array<{ id: string; add?: string[]; remove?: string[] }> = [];
+  archived: string[] = [];
+  trashed: string[] = [];
+  async modifyLabels(id: string, change: { add?: string[]; remove?: string[] } = {}) {
     if (this.failOn.has(id)) throw new Error("upstream failed");
+    this.labels.push({ id, ...change });
   }
   async markRead(id: string, read: boolean) {
     if (this.failOn.has(id)) throw new Error("upstream failed");
     if (read) this.read.add(id);
+    else this.read.delete(id);
   }
-  async archive() {}
-  async trash() {}
+  async archive(id: string) {
+    this.archived.push(id);
+  }
+  async trash(id: string) {
+    this.trashed.push(id);
+  }
 }
 
 export function makeEmail(partial: Partial<Email> & { id: string }): Email {
@@ -208,7 +217,8 @@ export class FakeContacts implements ContactProvider {
   readonly name = "FakeContacts";
   constructor(public contacts: Contact[] = []) {}
   async searchContacts(q: string) {
-    return this.contacts.filter((c) => c.name.toLowerCase().includes(q.toLowerCase()));
+    const n = q.toLowerCase();
+    return this.contacts.filter((c) => c.name.toLowerCase().includes(n) || c.emails.some((e) => e.toLowerCase().includes(n)));
   }
   async getContact(id: string) {
     return this.contacts.find((c) => c.id === id)!;

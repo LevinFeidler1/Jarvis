@@ -127,6 +127,7 @@ export const taskTools: ToolDefinition[] = [
     async execute(input, ctx) {
       return ok(await ctx.providers.tasks.create(input));
     },
+    undo: (_i, data) => ({ tool: "delete_task", input: { task_id: (data as { id: string }).id }, label: "Aufgabe wieder löschen" }),
   }),
   defineTool({
     name: "update_task",
@@ -186,6 +187,7 @@ export const reminderTools: ToolDefinition[] = [
       const r = await ctx.providers.reminders.create(input.text, new Date(input.remind_at).toISOString());
       return ok({ ...r, remindAtLocal: formatHuman(new Date(r.remindAt), ctx.config.timezone, ctx.config.language) });
     },
+    undo: (_i, data) => ({ tool: "cancel_reminder", input: { reminder_id: (data as { id: string }).id }, label: "Erinnerung stornieren" }),
   }),
   defineTool({
     name: "list_reminders",

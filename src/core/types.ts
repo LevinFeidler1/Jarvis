@@ -102,6 +102,11 @@ export interface ToolDefinition<I = any> {
    * user to confirm an action that could not run anyway.
    */
   precheck?(input: I, ctx: ToolContext): Promise<ToolResult | void>;
+  /**
+   * Optional inverse action after a successful run (archive → back to inbox,
+   * create → delete). Offered as "Rückgängig" in the activity log.
+   */
+  undo?(input: I, data: unknown, ctx: ToolContext): Promise<{ tool: string; input: Record<string, unknown>; label: string } | undefined> | { tool: string; input: Record<string, unknown>; label: string } | undefined;
   execute(input: I, ctx: ToolContext): Promise<ToolResult>;
 }
 

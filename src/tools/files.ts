@@ -120,6 +120,7 @@ export const fileTools: ToolDefinition[] = [
       rows: rows.optional(),
     }),
     describe: (i) => `Datei erstellen: ${withExtension(i.name, i.format)}`,
+    undo: (_i, data) => ({ tool: "delete_file", input: { file_id: (data as { file: { file_id: string } }).file.file_id }, label: "Datei/Version wieder löschen" }),
     async execute(input, ctx) {
       const name = withExtension(input.name, input.format);
       let data: Buffer;
@@ -185,6 +186,7 @@ export const fileTools: ToolDefinition[] = [
       note: z.string().max(300).optional(),
     }),
     describe: (i) => `Datei bearbeiten (${i.operations.map((o) => o.op).join(", ")}) — neue Version`,
+    undo: (_i, data) => ({ tool: "delete_file", input: { file_id: (data as { file: { file_id: string } }).file.file_id }, label: "Datei/Version wieder löschen" }),
     async execute(input, ctx) {
       const files = ctx.providers.files;
       const { info, data } = await files.read(input.file_id);
@@ -222,6 +224,7 @@ export const fileTools: ToolDefinition[] = [
     risk: RiskLevel.LOW,
     input: z.object({ file_id: id, to: z.enum(["pdf", "docx", "xlsx", "csv", "md", "txt"]), sheet: z.string().max(100).optional() }),
     describe: (i) => `Datei umwandeln in ${i.to.toUpperCase()}`,
+    undo: (_i, data) => ({ tool: "delete_file", input: { file_id: (data as { file: { file_id: string } }).file.file_id }, label: "Datei/Version wieder löschen" }),
     async execute(input, ctx) {
       const files = ctx.providers.files;
       const { info, data } = await files.read(input.file_id);

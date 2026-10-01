@@ -89,7 +89,9 @@ describe("mail triage", () => {
     expect(await h.providers.tasks.list({ status: "open" })).toHaveLength(0);
     const news = list.find((s) => s.kind === "newsletter")!;
     expect(news.title).toBe("2 Newsletter/Werbung — archivieren?");
-    expect(news.actions.map((a) => a.input.message_id)).toEqual(["n1", "n2"]);
+    expect(news.actions).toEqual([expect.objectContaining({ tool: "archive_email", input: { message_ids: ["n1", "n2"] } })]);
+    expect((await triage.accept(news.id)).status).toBe("accepted");
+    expect(h.email.archived).toEqual(["n1", "n2"]);
     const [notif] = await h.providers.notifications.list();
     expect(notif!.title).toContain("Vorschlag");
   });
