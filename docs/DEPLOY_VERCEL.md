@@ -119,6 +119,16 @@ Keine zusätzlichen Variablen nötig — der Schlüssel wird beim ersten Aufruf 
 - **Android / Desktop (Chrome, Edge, Firefox):** *Einstellungen → Push-Benachrichtigungen → Aktivieren*.
 - **Test senden** prüft die Zustellung. Jedes Gerät einzeln aktivieren.
 
+## 8b. Telegram, Browser, Google Drive (optional)
+
+- **Telegram-Bot:** docs/TELEGRAM.md — `TELEGRAM_BOT_TOKEN` (BotFather), dann *Einstellungen → Telegram →
+  Webhook einrichten*, `/start` an den Bot, `TELEGRAM_CHAT_ID` eintragen, Redeploy. Sprachnachrichten
+  optional mit `TRANSCRIBE_API_KEY` (Groq, kostenlos).
+- **Browser-Agent:** läuft ohne weitere Einstellungen in der eigenen Funktion `api/browser.ts`
+  (Chromium via @sparticuz/chromium, max. 60 s pro Schritt). Abschalten: `JARVIS_BROWSER=off`. → docs/BROWSER.md
+- **Google Drive:** Drive API im Google-Cloud-Projekt aktivieren, Scope `drive.file` im
+  Zustimmungsbildschirm ergänzen, dann in JARVIS *Einstellungen → Google → Neu verbinden*. → docs/SETUP_GOOGLE.md
+
 ## 9. Kosten im Blick
 
 *Rückblick* zeigt die geschätzten Claude-Kosten der Woche. Zusätzlich in der
@@ -143,7 +153,9 @@ Lange Unterhaltungen fasst JARVIS ab 60 000 Tokens automatisch zusammen
 |---|---|
 | Laufzeit pro Anfrage | max. 300 s (in `vercel.json` gesetzt) — lange Agent-Läufe stoppen vorher am Schritt-Limit |
 | Cron | 1× täglich eingebaut — Takt alle 5 Min. über cron-job.org (Schritt 7) |
-| Neon Free | 0,5 GB Speicher — für JARVIS mehr als genug |
+| Neon Free | 0,5 GB Speicher — ohne Google Drive liegen Dateien in der DB (Quote `JARVIS_DB_FILE_QUOTA_MB`, Standard 150 MB) |
+| Request-/Antwortgröße | 4,5 MB — Uploads/Downloads laufen deshalb in Teilen |
+| Funktionsgröße | 250 MB — Chromium liegt nur in `api/browser.ts` |
 
 ## Fehlerbehebung
 

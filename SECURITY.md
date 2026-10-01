@@ -125,8 +125,12 @@ STATUS: SUCCESS   USER_CONFIRMATION: YES   RISK: 2
 ## 7b. Automationen & Push
 
 * Automationen laufen **durch denselben Agent und dasselbe Permission-System** wie der Chat.
-  Stufe-2/3-Aktionen werden in einer Automation nur **vorbereitet**; der Benutzer bestätigt
-  sie später (Push-Link öffnet die Unterhaltung). Eine Automation sendet also nie selbst E-Mails.
+  Stufe 0–1 führen sie selbst aus; Stufe 2 **nur** für Tools, die der Benutzer für genau diese
+  Automation freigegeben hat (Allowlist), sonst wird vorbereitet und später bestätigt. Stufe 3 nie.
+  Harte Nie-Regeln gelten auch mit Freigabe (neue Empfänger, Gäste, Löschen ohne Papierkorb,
+  Automationen ändern, nach erkannter Injection) — Details: docs/AUTONOMY.md.
+* Tageslimit pro Automation, jede autonome Aktion im Protokoll (Kennzeichen „autonom“), Rückgängig
+  wo technisch möglich, Not-Aus (*Alle pausieren*, auch per Telegram `/stopp`).
 * Automationen per Chat anlegen, pausieren oder löschen ist **Stufe 2** (Bestätigung) — eine
   manipulierte E-Mail kann keine dauerhafte Hintergrundaufgabe einrichten. In der UI legt der
   Benutzer sie direkt an.
@@ -148,12 +152,37 @@ STATUS: SUCCESS   USER_CONFIRMATION: YES   RISK: 2
   `JARVIS_COMPACT_AT_TOKENS`, Standard 60 000); die Zusammenfassung behält offene Aktionen,
   IDs und Sicherheitshinweise.
 
+## 7d. Dateien, Drive, Mail-Hinweise, Browser, Telegram
+
+* **Dateien** (docs/FILES.md): Format nach Magic Bytes, nicht nach Endung; Zip-Bomb-Schutz für
+  DOCX/XLSX/PPTX; CSV-Export neutralisiert Formeln (`=`, `+`, `-`, `@`); Vorschau/Download mit
+  eigener CSP `sandbox`, `Content-Disposition` und `nosniff`. Dateiinhalte erreichen das Modell
+  nur über `read_file` als `external_data` — Dateinamen werden ebenfalls als Daten behandelt.
+  Löschen ist Stufe 2.
+* **Google Drive:** Scope `drive.file` (nur von JARVIS angelegte/geöffnete Dateien); Vollzugriff
+  lesend nur mit ausdrücklichem `JARVIS_DRIVE_READ_ALL=true`. Drive-Inhalte sind `external_data`.
+* **Mail-Hinweise** (docs/PROACTIVE.md): Das kleine Modell sieht Absender/Betreff/Vorschau als
+  `external_data` und gibt nur strukturierte Daten zurück (JSON-Schema). Aktionen werden erst auf
+  Klick ausgeführt — exakt der angezeigte Entwurf, durch die Permission-Engine. Bei Injection-Mustern
+  wird keine Aktion vorbereitet. Tageslimit begrenzt Kosten.
+* **Browser-Agent** (docs/BROWSER.md): eigene Vercel-Funktion, frisches Profil pro Aufgabe, keine
+  Cookies/Passwörter des Benutzers. SSRF-Sperre für interne Adressen bei jeder Anfrage (auch
+  Weiterleitungen und Unterressourcen). Risiko pro Klick/Eingabe aus dem Element: Kauf, Zahlung,
+  Login, Vertrag, Passwort-/Kartenfelder = Stufe 3 (nur vorbereitet). Schritt- und Zeitlimit pro Aufgabe.
+  Aufruf der Browser-Funktion nur mit HMAC-Secret aus dem Schlüssel.
+* **Telegram** (docs/TELEGRAM.md): nur die konfigurierte Chat-ID; Webhook-Secret-Header (HMAC aus
+  dem Schlüssel); jede `update_id` nur einmal. Stufe 2 per Knopf, **Stufe 3 nie per Telegram**.
+  Weitergeleitete Nachrichten und empfangene Dateien sind `external_data`. Das Bot-Token erscheint
+  nie in Logs/Fehlern. Achtung: Telegram-Nachrichten liegen (nicht Ende-zu-Ende-verschlüsselt) auf
+  Telegram-Servern — Benachrichtigungen per Telegram sind abschaltbar.
+
 ## 8. Bekannte Grenzen / offene Punkte
 
 * Die Injection-Heuristik ist eine Zusatzschicht, keine Garantie. Die eigentliche
   Sicherheit kommt aus Bestätigungspflicht + Taint-Tracking.
 * Single-User-Design. Mehrbenutzerbetrieb erfordert Mandantentrennung (Roadmap).
-* Browser-Agent (Phase 4) wird in einer isolierten Sandbox laufen müssen.
+* Browser-Agent: Die Element-Heuristik erkennt Kauf-/Login-Knöpfe an Text und Formular; ungewöhnlich
+  beschriftete Knöpfe landen mindestens auf Stufe 2 (Formular absenden).
 
 ## Sicherheitslücken melden
 

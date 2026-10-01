@@ -38,7 +38,8 @@ Iterativ, jede Phase ist für sich lauffähig und getestet.
       gemeinsame Suche mit Google Kontakte, ehrliche Meldung bei Google-Ausfall
 - [ ] Kalender der IMAP-Anbieter (CalDAV) — aktuell nur Google Calendar
 - [ ] Microsoft Graph: Outlook, Kalender, Kontakte (`MicrosoftEmailProvider` etc. gegen dieselben Interfaces)
-- [ ] Google Drive / OneDrive (`FileProvider`, Tools `search_files`, `read_file`, …)
+- [x] Google Drive (`FileProvider`, Scope `drive.file`, optional `drive.readonly`; Docs/Sheets-Export; Versionen als Drive-Revisionen) — docs/SETUP_GOOGLE.md
+- [ ] OneDrive
 - [ ] Reisezeit zwischen Terminen (Ort → Maps-API) in `find_free_slots`
 - [ ] Mehrere Kalender (nicht nur `primary`) + bevorzugter Kalender aus Gedächtnis
 
@@ -50,18 +51,27 @@ Iterativ, jede Phase ist für sich lauffähig und getestet.
 - [x] Web-Push aufs Handy (iPhone als Home-Bildschirm-App, Android, Desktop)
 - [x] Wochenrückblick (Seite, Tool, Automation-Vorlage) inkl. geschätzter API-Kosten
 - [x] Lange Unterhaltungen: serverseitige Compaction, append-only Verlauf
-- [ ] Automationen: Stufe-2-Freigabe für ausdrücklich benannte Tools (z.B. „Rechnungen automatisch archivieren")
+- [x] Automationen: Stufe-2-Freigabe nur für ausdrücklich erlaubte Tools (Allowlist pro Automation), Nie-Regeln,
+      Tageslimit, Protokoll mit Rückgängig, Not-Aus — docs/AUTONOMY.md
 - [ ] Gmail-Push (Pub/Sub) statt 5-Minuten-Polling für E-Mail-Auslöser
 - [ ] Google Tasks / Microsoft To Do als alternative `TaskProvider`
-- [ ] Weitere Benachrichtigungskanäle: E-Mail an sich selbst, Telegram/Signal
+- [x] Telegram-Bot: Chat, Sprachnachrichten, Dateien, Knöpfe für Bestätigungen/Vorschläge, Benachrichtigungen — docs/TELEGRAM.md
+- [ ] ~~WhatsApp / Signal~~ — nicht kostenlos/ohne zweite Nummer möglich (Begründung in docs/TELEGRAM.md)
+- [ ] E-Mail an sich selbst als Benachrichtigungskanal
 
 ## Phase 4 — Browser-Agent & komplexe Workflows
 
-- [ ] `BrowserProvider` auf Playwright-Basis in isolierter Sandbox (eigener Container, kein Zugriff auf lokale Dateien/Cookies)
-- [ ] Tools `open_page`, `navigate`, `click`, `type`, `extract_information`, `download_file`
-- [ ] Jede Seite ist `external_data`; Formular-Submit mit Zahlung/Vertrag/Buchung = Stufe 3
+- [x] Browser-Agent auf Playwright + @sparticuz/chromium in eigener Vercel-Funktion (frisches Profil pro Aufgabe, SSRF-Sperre) — docs/BROWSER.md
+- [x] Tools `open_page`, `navigate`, `click`, `type`, `extract_information`, `screenshot`, `download_file`; Schritt- und Zeitlimit
+- [x] Jede Seite ist `external_data`; Kauf/Zahlung/Login/Vertrag = Stufe 3 (nur vorbereitet, explizit bestätigen)
 - [ ] Preisvergleich/Buchungsvorbereitung („günstigster sinnvoller Flug") bis zur finalen Bestätigung
 - [ ] Workflow-Status über mehrere Unterhaltungsrunden (z.B. „warte auf Sarahs Antwort, dann Termin anlegen")
+
+## Phase 2b — Dateien & Dokumente ✅
+
+- [x] Dateien hochladen (Chat + Seite *Dateien*), lesen, bearbeiten, erstellen, umwandeln: PDF, DOCX, XLSX, CSV, PPTX (lesen), TXT, MD, Bilder
+- [x] Versionen, Vorschau, Download; Speicher: Google Drive oder Postgres (mit Quote) — docs/FILES.md
+- [ ] PPTX erzeugen/bearbeiten
 
 ## Phase 5 — Voice, Proaktivität, fortgeschrittenes Memory
 
@@ -70,7 +80,8 @@ Iterativ, jede Phase ist für sich lauffähig und getestet.
       gleiche Bestätigungslogik — kritische Aktionen (Stufe 3) nie per gesprochenem „Ja"
 - [ ] Wake-Word („Hey Jarvis"), Server-STT/TTS (z.B. Whisper/ElevenLabs) für Browser ohne Web Speech, Telefon-Bot
 - [x] Proaktive Briefings (Morgen, Wochenstart, Wochenrückblick) als Automationen
-- [ ] Proaktive Hinweise aus neuen E-Mails (Terminvorschlag erkannt → „Du bist frei. Soll ich zusagen?")
+- [x] Proaktive Hinweise aus neuen E-Mails (Haiku-Klassifizierung, Vorschläge mit Annehmen/Bearbeiten/Ignorieren,
+      Tageslimit, lernt aus Ignorieren) — docs/PROACTIVE.md
 - [ ] Memory: automatische Vorschläge („Soll ich mir merken, dass …?"), Verfallsdaten, Quellenlinks
 - [ ] Mehrbenutzerbetrieb (Mandantentrennung)
 
