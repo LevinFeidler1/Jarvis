@@ -212,6 +212,44 @@ export class Agent {
     return this.run(state);
   }
 
+  /**
+   * Runs one prepared action that the user approved with a single click (a
+   * suggestion's "Annehmen", an undo). Same permission gate as the agent loop,
+   * but no model call. Critical actions are only prepared — they still need
+   * the explicit confirmation in the chat.
+   */
+  async runApprovedAction(
+    conversationId: string,
+    toolName: string,
+    rawInput: unknown,
+    opts: { tainted?: boolean; actor?: string } = {},
+  ): Promise<{ status: ActionStatus | "denied"; description: string; error?: string; data?: unknown; pendingId?: string }> {
+    const tool = this.deps.registry.get(toolName);
+    if (!tool) return { status: "failed", description: toolName, error: `Unbekanntes Tool: ${toolName}` };
+    const parsed = tool.input.safeParse(rawInput);
+    if (!parsed.success) return { status: "failed", description: toolName, error: parsed.error.issues.map((i) => i.message).join("; ") };
+    const input = parsed.data;
+    const description = safeDescribe(tool, input);
+    const state: RunState = { conversationId, tainted: !!opts.tainted, actions: [], emit: noop };
+    if (tool.precheck) {
+      const pre = await tool.precheck(input, this.toolContext(state)).catch((err: Error) => ({ ok: false as const, error: err.message }));
+      if (pre && !pre.ok) return { status: "failed", description, error: pre.error };
+    }
+    const decision = decidePermission(tool, input, { tainted: state.tainted, settings: await loadPermissionSettings(this.deps.db) });
+    if (decision.decision === "deny") {
+      await this.activity.create({ conversationId, toolName, description, risk: decision.risk, status: "denied" });
+      return { status: "denied", description, error: decision.reasons.join(" ") };
+    }
+    if (decision.risk >= RiskLevel.CRITICAL) {
+      const act = await this.activity.create({ conversationId, toolName, description, risk: decision.risk, status: "awaiting_confirmation" });
+      const p = await this.confirmations.create({ conversationId, activityId: act.id, toolName, input, description, risk: decision.risk, reasons: decision.reasons }, this.now());
+      return { status: "awaiting_confirmation", description, pendingId: p.id };
+    }
+    const act = await this.activity.create({ conversationId, toolName, description: opts.actor ? `${description} · ${opts.actor}` : description, risk: decision.risk, status: "planned" });
+    const { res } = await this.executeTool(tool, input, state, act.id, true, decision.risk);
+    return res.ok ? { status: res.partial ? "partially_succeeded" : "succeeded", description, data: res.data } : { status: "failed", description, error: res.error };
+  }
+
   // ─── Agent loop ─────────────────────────────────────────────────────────
 
   private async run(state: RunState): Promise<AgentReply> {
@@ -346,7 +384,7 @@ export class Agent {
     activityId: string,
     confirmed: boolean,
     risk: RiskLevel,
-  ): Promise<{ content: string; blocks?: ToolResultBlocks; isError: boolean }> {
+  ): Promise<{ content: string; blocks?: ToolResultBlocks; isError: boolean; res: ToolResult }> {
     const description = safeDescribe(tool, input);
     await this.activity.update(activityId, "executing");
     state.emit({ type: "action", action: { activityId, toolName: tool.name, description, status: "executing", risk } });
@@ -378,7 +416,7 @@ export class Agent {
     }
 
     if (!res.ok) {
-      return { content: JSON.stringify({ ok: false, status: "failed", code: res.code, error: res.error }), isError: true };
+      return { content: JSON.stringify({ ok: false, status: "failed", code: res.code, error: res.error }), isError: true, res };
     }
 
     let payload = JSON.stringify({ ok: true, status, data: res.data });
@@ -401,9 +439,9 @@ export class Agent {
             : ({ type: "document", source: { type: "base64", media_type: "application/pdf", data: a.base64 } } as const),
         ),
       ];
-      return { content: payload, blocks, isError: false };
+      return { content: payload, blocks, isError: false, res };
     }
-    return { content: payload, isError: false };
+    return { content: payload, isError: false, res };
   }
 
   private toolContext(state: RunState): ToolContext {

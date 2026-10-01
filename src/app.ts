@@ -4,6 +4,8 @@ import { Agent } from "./core/agent.js";
 import { AnthropicLlm, UnconfiguredLlm } from "./core/llm.js";
 import { AutomationRunner } from "./core/automations.js";
 import { Scheduler } from "./core/scheduler.js";
+import { TriageService } from "./core/triage.js";
+import { AnthropicMailClassifier } from "./core/triage-classifier.js";
 import { type Db, openDatabase } from "./db/database.js";
 import { MemoryStore } from "./memory/memory.js";
 import { ProviderHub } from "./providers/hub.js";
@@ -35,6 +37,18 @@ export async function buildJarvis(opts: { serveStatic?: boolean } = {}): Promise
   const agent = new Agent({ config, db, llm, registry, providers, memory });
   const scheduler = new Scheduler(providers);
   scheduler.setAutomationRunner(new AutomationRunner(providers.automations, agent, providers));
-  const app = await createServer({ config, db, agent, providers, memory, registry, scheduler, llmConfigured, serveStatic: opts.serveStatic });
+  const triage = new TriageService({
+    db,
+    config,
+    providers,
+    memory,
+    agent,
+    dailyLimit: config.triage.dailyLimit,
+    classifier: llmConfigured
+      ? new AnthropicMailClassifier({ apiKey: config.anthropicApiKey, workspaceId: config.anthropicWorkspaceId, model: config.triage.model })
+      : undefined,
+  });
+  scheduler.setTriage(triage);
+  const app = await createServer({ config, db, agent, providers, memory, registry, scheduler, triage, llmConfigured, serveStatic: opts.serveStatic });
   return { app, config, db, providers, scheduler, llmConfigured };
 }

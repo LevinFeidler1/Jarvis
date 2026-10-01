@@ -706,4 +706,24 @@ a.file-link .i { width: 14px; height: 14px; }
   .file-row .sub { white-space: normal; }
   .preview-modal { max-height: 92dvh; }
 }
+
+/* ─── Vorschläge ─────────────────────────────────────────────────────── */
+.sugg-card { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+.sugg-list { display: grid; gap: 4px; }
+.sugg { display: flex; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
+.sugg:last-child { border-bottom: 0; }
+.sugg .main { flex: 1; min-width: 0; display: grid; gap: 6px; }
+.sugg .title { font-weight: 600; overflow-wrap: anywhere; }
+.sugg .sub { font-size: 13.5px; color: var(--text-2); }
+.sugg-ic { width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); flex-shrink: 0; }
+.sugg.invoice .sugg-ic, .sugg.deadline .sugg-ic { background: var(--warn-soft); color: var(--warn); }
+.sugg.auto .sugg-ic { background: var(--ok-soft); color: var(--ok); }
+.sugg-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.sugg-draft { font-size: 13px; }
+.sugg-draft > summary { cursor: pointer; color: var(--accent); width: fit-content; }
+.sugg-draft > div, .sugg-draft > ul { margin-top: 6px; white-space: pre-wrap; background: var(--surface-2); border-radius: 10px; padding: 10px 12px; }
+.sugg-draft ul { padding-left: 28px; white-space: normal; }
+.sugg-warn { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--warn); }
+.btn.loading { opacity: .6; }
+@media (max-width: 860px) { .sugg-actions .btn { flex: 1 1 auto; } }
 @media (prefers-reduced-motion: reduce) { .sheet, .modal { animation: none; } }

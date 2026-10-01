@@ -17,6 +17,7 @@ import type { Db } from "./db/database.js";
 import { MEMORY_CATEGORIES, type MemoryStore } from "./memory/memory.js";
 import { AUTOMATION_TEMPLATES, type Automation, type AutomationInput, AutomationRunner, describeTrigger } from "./core/automations.js";
 import { buildWeekReview } from "./core/review.js";
+import { KIND_LABEL, TriageService } from "./core/triage.js";
 import { automationTriggerSchema } from "./tools/automation.js";
 import { ACCEPTED_EXTENSIONS } from "./files/formats/detect.js";
 import { DOWNLOAD_RANGE_BYTES, UPLOAD_CHUNK_BYTES } from "./files/service.js";
@@ -42,6 +43,8 @@ export interface ServerDeps {
   registry: ToolRegistry;
   scheduler: Scheduler;
   llmConfigured: boolean;
+  /** Mail triage / suggestions (created with a no-op classifier when omitted). */
+  triage?: TriageService;
   /** Serve public/ from Fastify (local). On Vercel the CDN serves it. */
   serveStatic?: boolean;
 }
@@ -494,6 +497,23 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.post("/api/automations/:id/run", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) =>
     automationRunner.runNow(idParam.parse(req.params).id),
   );
+
+  // ─── Suggestions (Phase C) ────────────────────────────────────────────
+  const triage = deps.triage ?? new TriageService({ db, config, providers, memory, agent, dailyLimit: config.triage.dailyLimit });
+  const kindEnum = z.enum(["meeting", "lead", "invoice", "deadline", "reply", "newsletter"]);
+  app.get("/api/suggestions", async () => ({ suggestions: await triage.list(), settings: await triage.settings(), usedToday: await triage.usageToday(), dailyLimit: config.triage.dailyLimit, labels: KIND_LABEL }));
+  app.post("/api/suggestions/:id/accept", async (req) => triage.accept(idParam.parse(req.params).id));
+  app.post("/api/suggestions/:id/ignore", async (req) => triage.ignore(idParam.parse(req.params).id));
+  app.post("/api/suggestions/:id/undo", async (req) => triage.undo(idParam.parse(req.params).id));
+  app.post("/api/suggestions/check", { config: { rateLimit: { max: 4, timeWindow: "1 minute" } } }, async () => triage.runTick());
+  app.put("/api/settings/triage", async (req) => {
+    const b = z.object({ enabled: z.boolean().optional(), autoTasks: z.boolean().optional() }).parse(req.body);
+    return triage.saveSettings(b);
+  });
+  app.post("/api/settings/triage/unmute", async (req) => {
+    const b = z.object({ kind: kindEnum, sender: z.string().max(320).optional() }).parse(req.body);
+    return triage.unmute(b.kind, b.sender);
+  });
 
   // ─── Weekly review ────────────────────────────────────────────────────
   app.get("/api/review", async (req) => {

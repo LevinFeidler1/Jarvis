@@ -279,6 +279,45 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (session_id, idx)
   );
   `,
+  // 6 — proactive butler: mail triage and suggestions.
+  `
+  CREATE TABLE triage_seen (
+    email_id TEXT PRIMARY KEY,
+    account TEXT,
+    day TEXT NOT NULL,
+    classified BOOLEAN NOT NULL,
+    category TEXT,
+    processed_at TEXT NOT NULL
+  );
+  CREATE INDEX triage_seen_day_idx ON triage_seen (day);
+  CREATE TABLE suggestions (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    email_id TEXT,
+    account TEXT,
+    sender TEXT,
+    actions_json TEXT NOT NULL,
+    accept_label TEXT,
+    edit_prompt TEXT NOT NULL,
+    warning TEXT,
+    status TEXT NOT NULL,
+    result TEXT,
+    conversation_id TEXT,
+    undo_json TEXT,
+    created_at TEXT NOT NULL,
+    resolved_at TEXT
+  );
+  CREATE INDEX suggestions_status_idx ON suggestions (status, created_at);
+  CREATE TABLE suggestion_feedback (
+    kind TEXT NOT NULL,
+    sender TEXT NOT NULL,
+    accepted INTEGER NOT NULL DEFAULT 0,
+    ignored INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (kind, sender)
+  );
+  `,
 ];
 
 async function migrate(db: Db): Promise<void> {

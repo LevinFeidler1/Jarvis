@@ -1,5 +1,9 @@
 import type { ProviderHub } from "../providers/hub.js";
 import type { AutomationRunner } from "./automations.js";
+import type { TriageService } from "./triage.js";
+
+/** Mail triage runs at most this often (the local scheduler ticks every 30 s). */
+const TRIAGE_EVERY_MS = 4.5 * 60_000;
 
 /**
  * Fires due reminders (as in-app + push notifications) and runs due
@@ -9,6 +13,8 @@ import type { AutomationRunner } from "./automations.js";
 export class Scheduler {
   private timer?: NodeJS.Timeout;
   private automations?: AutomationRunner;
+  private triage?: TriageService;
+  private lastTriage = 0;
 
   constructor(
     private readonly providers: ProviderHub,
@@ -17,6 +23,10 @@ export class Scheduler {
 
   setAutomationRunner(runner: AutomationRunner): void {
     this.automations = runner;
+  }
+
+  setTriage(triage: TriageService): void {
+    this.triage = triage;
   }
 
   start(): void {
@@ -32,7 +42,12 @@ export class Scheduler {
 
   /** Runs due automations only (no-op without a runner). */
   async runAutomations(now = new Date()): Promise<number> {
-    return this.automations ? this.automations.runDue(now) : 0;
+    let runs = this.automations ? await this.automations.runDue(now) : 0;
+    if (this.triage && now.getTime() - this.lastTriage >= TRIAGE_EVERY_MS) {
+      this.lastTriage = now.getTime();
+      runs += (await this.triage.runTick().catch((err) => (console.error("[triage]", err), { suggestions: 0 }))).suggestions;
+    }
+    return runs;
   }
 
   /** Returns the number of reminders fired (and automations run, when enabled). */
@@ -40,7 +55,7 @@ export class Scheduler {
     const due = await this.providers.reminders.takeDue(now);
     for (const r of due) await this.providers.notifications.notify("⏰ Erinnerung", r.text, { url: "/#tasks", tag: `reminder-${r.id}` });
     let runs = 0;
-    if (opts.automations && this.automations) runs = await this.automations.runDue(now);
+    if (opts.automations) runs = await this.runAutomations(now);
     return due.length + runs;
   }
 }
