@@ -211,9 +211,19 @@ export interface Reminder {
   createdAt: string;
 }
 
+export interface NotifyOptions {
+  /** App-relative URL opened when the notification is tapped. */
+  url?: string;
+  tag?: string;
+  /** Open suggestions this notification is about (Telegram shows Annehmen/Ignorieren buttons). */
+  suggestionIds?: string[];
+  /** Conversation whose waiting confirmations get buttons (Telegram). */
+  conversationId?: string;
+}
+
 export interface NotificationProvider {
   readonly name: string;
-  notify(title: string, body?: string, opts?: { url?: string; tag?: string }): Promise<{ id: string; pushed?: number }>;
+  notify(title: string, body?: string, opts?: NotifyOptions): Promise<{ id: string; pushed?: number }>;
 }
 
 // ─── Files (cloud storage) ────────────────────────────────────────────────

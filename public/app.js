@@ -1715,6 +1715,41 @@ function pushCard(onChange) {
   return card;
 }
 
+function telegramCard() {
+  const card = h("div", { class: "card" }, h("div", { class: "card-body", style: "padding:18px" }, h("div", { class: "spinner" })));
+  const render = async () => {
+    const st = await api("/api/telegram/status");
+    const busy = (btn, fn) => async () => { btn.disabled = true; try { await fn(); } catch (e) { fail(e); } finally { btn.disabled = false; render(); } };
+    if (!st.configured) {
+      set(card, h("div", { class: "card-body", style: "padding:18px;display:grid;gap:8px" },
+        h("div", {}, "Schreib JARVIS über Telegram — Text, Sprachnachrichten und Dateien. Bestätigungen und Vorschläge kommen mit Knöpfen."),
+        h("div", { class: "muted small" }, "Einrichtung: Bot bei @BotFather anlegen, TELEGRAM_BOT_TOKEN in Vercel eintragen, neu deployen. Anleitung: docs/TELEGRAM.md")));
+      return;
+    }
+    const rows = [];
+    rows.push(h("div", { class: "integration" }, h("div", { class: "logo", style: "color:#229ed9" }, icon("send")),
+      h("div", { class: "main" }, h("div", { class: "title" }, st.bot ? `@${st.bot.username}` : "Bot"), h("div", { class: "sub" }, st.error ? `Fehler: ${st.error}` : st.chatIdSet ? "Nur dein Chat wird beantwortet." : "TELEGRAM_CHAT_ID fehlt: schreib dem Bot /start, er nennt dir die Chat-ID.")),
+      h("span", { class: `badge ${st.webhook?.active && st.chatIdSet ? "ok" : "warn"}` }, st.webhook?.active ? (st.chatIdSet ? "verbunden" : "Chat-ID fehlt") : "Webhook fehlt")));
+    if (st.webhook?.lastError) rows.push(h("div", { class: "muted small", style: "padding:0 18px" }, `Letzter Fehler bei Telegram: ${st.webhook.lastError}`));
+    const hook = h("button", { class: `btn ${st.webhook?.active ? "" : "primary"}` }, h("span", {}, st.webhook?.active ? "Webhook erneuern" : "Webhook einrichten"));
+    hook.disabled = !st.httpsReady;
+    hook.onclick = busy(hook, async () => { await api("/api/telegram/setup", { method: "POST" }); toast("Telegram-Webhook eingerichtet.", "ok"); });
+    const test = h("button", { class: "btn" }, icon("bell"), h("span", {}, "Test senden"));
+    test.disabled = !st.chatIdSet;
+    test.onclick = busy(test, async () => { await api("/api/telegram/test", { method: "POST" }); toast("Testnachricht gesendet.", "ok"); });
+    const i = h("input", { type: "checkbox", checked: st.settings?.notifications ?? true });
+    i.addEventListener("change", async () => { try { await api("/api/telegram/settings", { method: "PUT", body: { notifications: i.checked } }); toast("Gespeichert.", "ok"); } catch (e) { fail(e); } });
+    rows.push(h("div", { class: "card-body", style: "padding:12px 18px;display:flex;gap:8px;flex-wrap:wrap" }, hook, test,
+      st.httpsReady ? null : h("span", { class: "muted small" }, "Webhook braucht eine https-Adresse (JARVIS_PUBLIC_URL).")));
+    rows.push(h("label", { class: "toggle-row" }, h("div", { class: "main" }, h("div", { class: "title" }, "Benachrichtigungen auch per Telegram"),
+      h("div", { class: "sub" }, `Briefings, Erinnerungen, Vorschläge und Bestätigungen. Sprachnachrichten: ${st.transcription ? "aktiv" : "aus (TRANSCRIBE_API_KEY fehlt)"}.`)),
+      h("label", { class: "switch" }, i, h("span"))));
+    set(card, rows);
+  };
+  render().catch((e) => set(card, h("div", { class: "card-body" }, h("div", { class: "empty" }, e.message))));
+  return card;
+}
+
 // ─── View: Automationen ─────────────────────────────────────────────────────
 const WEEKDAYS = [[1, "Mo"], [2, "Di"], [3, "Mi"], [4, "Do"], [5, "Fr"], [6, "Sa"], [7, "So"]];
 const AUTO_STATUS = { ok: ["erledigt", "ok"], waiting: ["wartet auf dich", "warn"], nothing: ["nichts Neues", ""], error: ["Fehler", "err"] };
@@ -1980,6 +2015,8 @@ async function viewSettings(main, params) {
     triageSettingsCard(),
     h("div", { class: "section-title", id: "push-section" }, icon("bell"), "Push-Benachrichtigungen"),
     pushCard(),
+    h("div", { class: "section-title", id: "telegram-section" }, icon("send"), "Telegram"),
+    telegramCard(),
     h("div", { class: "section-title" }, icon("mail"), "E-Mail-Konten"),
     mailAccountsCard(main),
     h("div", { class: "section-title" }, icon("shield"), "Berechtigungen"),

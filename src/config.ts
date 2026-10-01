@@ -42,6 +42,11 @@ const EnvSchema = z.object({
   JARVIS_DRIVE_READ_ALL: z.enum(["true", "false"]).optional().transform((v) => v === "true"),
   GOOGLE_CLIENT_ID: optionalString,
   GOOGLE_CLIENT_SECRET: optionalString,
+  TELEGRAM_BOT_TOKEN: optionalString.refine((v) => !v || /^\d+:[\w-]{30,}$/.test(v), { message: "TELEGRAM_BOT_TOKEN hat nicht das Format 123456:ABC… (von @BotFather)" }),
+  TELEGRAM_CHAT_ID: optionalString.refine((v) => !v || /^-?\d{1,20}$/.test(v), { message: "TELEGRAM_CHAT_ID muss eine Zahl sein" }),
+  TRANSCRIBE_API_KEY: optionalString,
+  TRANSCRIBE_API_URL: optionalString.transform((v) => v ?? "https://api.groq.com/openai/v1/audio/transcriptions"),
+  TRANSCRIBE_MODEL: optionalString.transform((v) => v ?? "whisper-large-v3-turbo"),
 });
 
 export interface AppConfig {
@@ -72,6 +77,10 @@ export interface AppConfig {
   /** Mail triage (Phase C): small model and max. mails classified per day. */
   triage: { model: string; dailyLimit: number };
   google?: { clientId: string; clientSecret: string; driveReadAll?: boolean };
+  /** Telegram bot (Phase F). Only messages from chatId are accepted. */
+  telegram: { botToken?: string; chatId?: string };
+  /** Speech-to-text for Telegram voice messages (OpenAI-compatible endpoint, default Groq free tier). */
+  transcribe?: { apiKey: string; url: string; model: string };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -114,5 +123,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET
         ? { clientId: e.GOOGLE_CLIENT_ID, clientSecret: e.GOOGLE_CLIENT_SECRET, driveReadAll: e.JARVIS_DRIVE_READ_ALL }
         : undefined,
+    telegram: { botToken: e.TELEGRAM_BOT_TOKEN, chatId: e.TELEGRAM_CHAT_ID },
+    transcribe: e.TRANSCRIBE_API_KEY ? { apiKey: e.TRANSCRIBE_API_KEY, url: e.TRANSCRIBE_API_URL, model: e.TRANSCRIBE_MODEL } : undefined,
   };
 }

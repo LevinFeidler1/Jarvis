@@ -31,6 +31,8 @@ import type { ProviderHub } from "./providers/hub.js";
 import { safeEqual } from "./security/crypto.js";
 import { SessionStore } from "./security/sessions.js";
 import type { ToolRegistry } from "./tools/registry.js";
+import { type TelegramBot, checkTelegramSecret, telegramWebhookSecret } from "./telegram/bot.js";
+import type { TgUpdate } from "./telegram/api.js";
 
 const SESSION_COOKIE = "jarvis_session";
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
@@ -46,6 +48,8 @@ export interface ServerDeps {
   llmConfigured: boolean;
   /** Mail triage / suggestions (created with a no-op classifier when omitted). */
   triage?: TriageService;
+  /** Telegram bot (only when TELEGRAM_BOT_TOKEN is set). */
+  telegram?: TelegramBot;
   /** Serve public/ from Fastify (local). On Vercel the CDN serves it. */
   serveStatic?: boolean;
 }
@@ -88,8 +92,8 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   // ─── Auth + CSRF ──────────────────────────────────────────────────────
   // The OAuth callback arrives as a cross-site navigation (SameSite=Strict cookie is not sent);
   // it is protected by the single-use, unguessable state + PKCE verifier instead.
-  // The cron endpoint authenticates with CRON_SECRET.
-  const PUBLIC_API = new Set(["/api/login", "/api/session", "/api/integrations/google/callback", "/api/cron/tick", "/api/health"]);
+  // The cron endpoint authenticates with CRON_SECRET, the Telegram webhook with its secret header.
+  const PUBLIC_API = new Set(["/api/login", "/api/session", "/api/integrations/google/callback", "/api/cron/tick", "/api/health", "/api/telegram"]);
   app.addHook("preHandler", async (req, reply) => {
     const path = req.url.split("?")[0]!;
     if (!path.startsWith("/api/") || PUBLIC_API.has(path)) return;
@@ -445,6 +449,62 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
       return { fired, automations: "started" };
     }
     return { fired, automations: await automations };
+  });
+
+  // ─── Telegram ─────────────────────────────────────────────────────────
+  const telegram = deps.telegram;
+  app.post("/api/telegram", { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } }, async (req, reply) => {
+    if (!telegram) return reply.code(404).send({ error: "Telegram ist nicht eingerichtet" });
+    if (!checkTelegramSecret(req.headers["x-telegram-bot-api-secret-token"], config.encryptionKey)) return reply.code(401).send({ error: "Unauthorized" });
+    const update = req.body as TgUpdate;
+    if (!update || typeof update !== "object" || typeof update.update_id !== "number") return { ok: true };
+    const work = telegram.handleUpdate(update).catch((err) => {
+      app.log.error({ err: (err as Error).message }, "telegram update failed");
+      return "ignored" as const;
+    });
+    // Answer Telegram at once (it retries slow webhooks); on Vercel the agent keeps working after the response.
+    if (process.env.VERCEL) {
+      waitUntil(work);
+      return { ok: true };
+    }
+    return { ok: true, result: await work };
+  });
+
+  app.get("/api/telegram/status", async () => {
+    if (!telegram) return { configured: false, chatIdSet: !!config.telegram.chatId, transcription: !!config.transcribe };
+    const api = telegram.api;
+    const [me, hook] = await Promise.all([api.getMe().catch((e: Error) => ({ error: e.message })), api.getWebhookInfo().catch(() => undefined)]);
+    const expected = `${config.publicUrl}/api/telegram`;
+    return {
+      configured: true,
+      chatIdSet: !!config.telegram.chatId,
+      transcription: !!config.transcribe,
+      bot: "error" in me ? null : { username: me.username, name: me.first_name },
+      error: "error" in me ? me.error : undefined,
+      webhook: hook ? { active: hook.url === expected, pending: hook.pending_update_count, lastError: hook.last_error_message ?? null } : null,
+      httpsReady: config.publicUrl.startsWith("https://"),
+      settings: await telegram.settings(),
+    };
+  });
+
+  app.post("/api/telegram/setup", { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } }, async (_req, reply) => {
+    if (!telegram) return reply.code(409).send({ error: "TELEGRAM_BOT_TOKEN ist nicht gesetzt." });
+    if (!config.publicUrl.startsWith("https://")) return reply.code(409).send({ error: "Telegram braucht eine öffentliche https-Adresse (JARVIS_PUBLIC_URL)." });
+    const api = telegram.api;
+    await api.setWebhook(`${config.publicUrl}/api/telegram`, telegramWebhookSecret(config.encryptionKey));
+    const me = await api.getMe();
+    return { ok: true, bot: { username: me.username, name: me.first_name } };
+  });
+
+  app.post("/api/telegram/test", { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } }, async (_req, reply) => {
+    if (!telegram || !config.telegram.chatId) return reply.code(409).send({ error: "TELEGRAM_BOT_TOKEN und TELEGRAM_CHAT_ID müssen gesetzt sein." });
+    await telegram.api.sendMessage(config.telegram.chatId, "🔔 Test von JARVIS — Telegram ist verbunden.");
+    return { ok: true };
+  });
+
+  app.put("/api/telegram/settings", async (req, reply) => {
+    if (!telegram) return reply.code(409).send({ error: "Telegram ist nicht eingerichtet" });
+    return telegram.saveSettings(z.object({ notifications: z.boolean() }).parse(req.body));
   });
 
   // ─── Push notifications ───────────────────────────────────────────────

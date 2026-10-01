@@ -376,7 +376,7 @@ export class AutomationRunner {
         const { title, body: text } = toPush(a.name, reply);
         const autonomous = (await this.agent.activity?.countAutonomousInConversation(reply.conversationId).catch(() => 0)) ?? 0;
         const body = autonomous ? `${text}\n🤖 ${autonomous} Aktion(en) selbst ausgeführt — Rückgängig unter Aktivität.`.trim() : text;
-        await this.providers.notifications.notify(title, body, { url: `/#chat?c=${reply.conversationId}`, tag: `automation-${a.id}` });
+        await this.providers.notifications.notify(title, body, { url: `/#chat?c=${reply.conversationId}`, tag: `automation-${a.id}`, conversationId: reply.conversationId });
       }
       return { status, text: reply.text, conversationId: reply.conversationId };
     } catch (err) {

@@ -37,6 +37,7 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     files: { maxBytes: 20 * 1024 * 1024, dbQuotaBytes: 150 * 1024 * 1024 },
     triage: { model: "test-small", dailyLimit: 100 },
     browser: { mode: "off", maxSteps: 25, taskMinutes: 15 },
+    telegram: {},
     ...overrides,
   };
 }
@@ -46,7 +47,7 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 let shared: Promise<Db> | undefined;
 const TABLES = [
   "messages", "conversations", "pending_actions", "activity", "audit_log", "memory", "tasks",
-  "reminders", "notifications", "oauth_tokens", "oauth_states", "settings", "sessions", "email_accounts", "contacts", "push_subscriptions", "automations", "llm_usage", "files", "file_blobs", "upload_sessions", "upload_chunks", "triage_seen", "suggestions", "suggestion_feedback", "browser_tasks",
+  "reminders", "notifications", "oauth_tokens", "oauth_states", "settings", "sessions", "email_accounts", "contacts", "push_subscriptions", "automations", "llm_usage", "files", "file_blobs", "upload_sessions", "upload_chunks", "triage_seen", "suggestions", "suggestion_feedback", "browser_tasks", "telegram_updates",
 ];
 
 /** One in-process Postgres (PGlite) per test worker, emptied for every test. */

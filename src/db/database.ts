@@ -340,6 +340,13 @@ const MIGRATIONS: string[] = [
     updated_at TEXT NOT NULL
   );
   `,
+  // 9 — Telegram: processed update ids (Telegram retries webhooks; each update is handled once).
+  `
+  CREATE TABLE telegram_updates (
+    update_id BIGINT PRIMARY KEY,
+    created_at TEXT NOT NULL
+  );
+  `,
 ];
 
 async function migrate(db: Db): Promise<void> {

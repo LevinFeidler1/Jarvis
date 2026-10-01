@@ -12,6 +12,9 @@ import { ProviderHub } from "./providers/hub.js";
 import { TokenStore } from "./security/token-store.js";
 import { createServer } from "./server.js";
 import { createDefaultRegistry } from "./tools/registry.js";
+import { TelegramApi } from "./telegram/api.js";
+import { TelegramBot } from "./telegram/bot.js";
+import { OpenAiCompatibleTranscriber } from "./telegram/transcribe.js";
 
 export interface Jarvis {
   app: FastifyInstance;
@@ -49,6 +52,18 @@ export async function buildJarvis(opts: { serveStatic?: boolean } = {}): Promise
       : undefined,
   });
   scheduler.setTriage(triage);
-  const app = await createServer({ config, db, agent, providers, memory, registry, scheduler, triage, llmConfigured, serveStatic: opts.serveStatic });
+  const telegram = config.telegram.botToken
+    ? new TelegramBot({
+        config,
+        db,
+        agent,
+        providers,
+        triage,
+        api: new TelegramApi(config.telegram.botToken),
+        transcriber: config.transcribe ? new OpenAiCompatibleTranscriber(config.transcribe) : undefined,
+      })
+    : undefined;
+  if (telegram) providers.notifications.addMirror((title, body, o) => telegram.notify(title, body, o));
+  const app = await createServer({ config, db, agent, providers, memory, registry, scheduler, triage, telegram, llmConfigured, serveStatic: opts.serveStatic });
   return { app, config, db, providers, scheduler, llmConfigured };
 }
