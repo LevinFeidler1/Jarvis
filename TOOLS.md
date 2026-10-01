@@ -102,6 +102,17 @@ Treffer plus eine ehrliche Warnung.
 | `convert_file` | 1 | Formatumwandlung als neue Datei |
 | `delete_file` | 2 | Löschen (Drive: Papierkorb) |
 
+## Google Drive (`src/tools/drive.ts`) — Scope `drive.file` (optional `drive.readonly`)
+
+| Tool | Stufe | Beschreibung |
+|---|---|---|
+| `search_drive` | 0 | Name/Volltext; ohne Vollzugriff nur JARVIS-eigene Dateien |
+| `read_drive_file` | 0 (1 mit `import`) | Docs/Slides als Text, Sheets als CSV, Binärdateien ausgelesen; `import` legt bearbeitbare Kopie (DOCX/XLSX) in JARVIS an |
+| `save_file_to_drive` | 1 | JARVIS-Datei in `JARVIS/<Unterordner>` ablegen bzw. dorthin verschieben |
+
+Ist Drive verbunden, speichert JARVIS neue Dateien automatisch im Drive-Ordner „JARVIS“;
+Versionen sind Drive-Revisionen derselben Datei (`keepForever`).
+
 ## Automationen & Rückblick (`src/tools/automation.ts`)
 
 Automationen laufen ohne Zutun des Benutzers (Zeitplan oder neue E-Mail) durch

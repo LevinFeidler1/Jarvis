@@ -139,10 +139,12 @@ export class FileService {
     const name = sanitizeFileName(input.name);
     const format = input.format ?? detectFormat(name, input.data);
     const parent = input.parentId ? await this.get(input.parentId) : undefined;
-    const storage = await this.defaultStorage();
+    // A new version stays where its document lives (Drive revision or database).
+    const parentRow = parent ? await this.row(parent.id) : undefined;
+    const storage = parentRow ? await this.storageFor(parentRow.storage) : await this.defaultStorage();
     await this.assertCapacity(input.data.length, storage);
     const mime = FORMAT_MIME[format];
-    const stored = await storage.put({ name, mime, data: input.data });
+    const stored = await storage.put({ name, mime, data: input.data, replaces: parentRow?.storage === storage.kind ? parentRow.storage_key : undefined });
     const id = randomUUID();
     const rootId = parent?.rootId ?? id;
     const version = parent ? Number((await this.db.one<{ v: number }>("SELECT max(version) AS v FROM files WHERE root_id = $1", [rootId]))?.v ?? 0) + 1 : 1;
@@ -238,10 +240,12 @@ export class FileService {
   /** Deletes one version (or all versions). Drive files go to the Drive trash. */
   async delete(id: string, allVersions = false): Promise<number> {
     const r = await this.row(id);
-    const targets = allVersions ? await this.db.query<Row>("SELECT * FROM files WHERE root_id = $1 AND deleted_at IS NULL", [r.root_id]) : [r];
+    const all = await this.db.query<Row>("SELECT * FROM files WHERE root_id = $1 AND deleted_at IS NULL", [r.root_id]);
+    const targets = allVersions ? all : [r];
+    const wholeFile = targets.length === all.length;
     for (const t of targets) {
-      await (await this.storageFor(t.storage)).remove(t.storage_key).catch((err) => {
-        if (t.storage === "db") throw err; // a Drive file that is already gone is fine
+      await (await this.storageFor(t.storage)).remove(t.storage_key, { wholeFile }).catch((err) => {
+        if (t.storage === "db" || err instanceof ToolError) throw err; // a Drive file that is already gone is fine
       });
       await this.db.run("UPDATE files SET deleted_at = $1, text_cache = NULL WHERE id = $2", [nowIso(), t.id]);
     }

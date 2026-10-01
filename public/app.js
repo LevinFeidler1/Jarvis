@@ -1396,6 +1396,7 @@ async function viewFiles(main, params) {
         h("div", { class: "actions", onclick: (e) => e.preventDefault() },
           h("button", { class: "btn ghost icon sm", "aria-label": "Vorschau", title: "Vorschau", onclick: () => previewFile(f) }, icon("eye")),
           h("button", { class: "btn ghost icon sm", "aria-label": "Herunterladen", title: "Herunterladen", onclick: () => downloadFile(f.id, f.name, f.size) }, icon("download")),
+          f.driveUrl && /^https:\/\/(drive|docs)\.google\.com\//.test(f.driveUrl) ? h("a", { class: "btn ghost icon sm hide-mobile", href: f.driveUrl, target: "_blank", rel: "noopener noreferrer", "aria-label": "In Google Drive öffnen", title: "In Google Drive öffnen" }, icon("globe")) : null,
           h("button", { class: "btn ghost icon sm hide-mobile", "aria-label": "Mit JARVIS besprechen", title: "Mit JARVIS besprechen", onclick: () => chatAboutFile(f) }, icon("chat")),
           h("button", { class: "btn ghost icon sm", "aria-label": "Löschen", title: "Löschen", onclick: async () => {
             if (!(await dialog({ title: `„${f.name}“ löschen?`, text: f.versions > 1 ? `Alle ${f.versions} Versionen werden gelöscht.${f.storage === "drive" ? " In Google Drive landen sie im Papierkorb." : ""}` : f.storage === "drive" ? "Die Datei landet im Drive-Papierkorb." : "Die Datei wird endgültig gelöscht.", confirmLabel: "Löschen", danger: true }))) return;
@@ -1846,7 +1847,7 @@ async function viewSettings(main, params) {
       return h("div", { class: "integration" }, h("div", { class: "logo", style: `color:${c}` }, l),
         h("div", { class: "main" }, h("div", { class: "title" }, i.name, i.account ? h("span", { class: "muted", style: "font-weight:400" }, ` · ${i.account}`) : null), h("div", { class: "sub" }, i.detail)),
         h("span", { class: `badge ${stateBadge[1]}` }, stateBadge[0]),
-        i.id === "google" && i.state === "not_configured" ? h("a", { class: "btn primary sm", href: "/api/integrations/google/connect" }, "Verbinden") : null,
+        i.id === "google" && (i.state === "not_configured" || i.needsReconnect) ? h("a", { class: "btn primary sm", href: "/api/integrations/google/connect" }, i.needsReconnect ? "Neu verbinden" : "Verbinden") : null,
         i.id === "google" && i.state === "connected" ? h("button", { class: "btn danger sm", onclick: async () => {
           if (!(await dialog({ title: "Google trennen?", text: "Die Tokens werden gelöscht und der Zugriff bei Google widerrufen.", confirmLabel: "Trennen", danger: true }))) return;
           await api("/api/integrations/google/disconnect", { method: "POST" }).catch(fail); viewSettings(main, new URLSearchParams());

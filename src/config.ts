@@ -32,6 +32,7 @@ const EnvSchema = z.object({
   JARVIS_MAX_FILE_MB: z.coerce.number().int().min(1).max(50).default(20),
   JARVIS_DB_FILE_QUOTA_MB: z.coerce.number().int().min(10).max(400).default(150),
   JARVIS_CONFIRMATION_TTL_MINUTES: z.coerce.number().int().min(1).max(1440).default(30),
+  JARVIS_DRIVE_READ_ALL: z.enum(["true", "false"]).optional().transform((v) => v === "true"),
   GOOGLE_CLIENT_ID: optionalString,
   GOOGLE_CLIENT_SECRET: optionalString,
 });
@@ -59,7 +60,7 @@ export interface AppConfig {
   /** Conversations longer than this (input tokens) are summarized server-side. */
   compactAtTokens: number;
   files: { maxBytes: number; dbQuotaBytes: number };
-  google?: { clientId: string; clientSecret: string };
+  google?: { clientId: string; clientSecret: string; driveReadAll?: boolean };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -98,7 +99,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     files: { maxBytes: e.JARVIS_MAX_FILE_MB * 1024 * 1024, dbQuotaBytes: e.JARVIS_DB_FILE_QUOTA_MB * 1024 * 1024 },
     google:
       e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET
-        ? { clientId: e.GOOGLE_CLIENT_ID, clientSecret: e.GOOGLE_CLIENT_SECRET }
+        ? { clientId: e.GOOGLE_CLIENT_ID, clientSecret: e.GOOGLE_CLIENT_SECRET, driveReadAll: e.JARVIS_DRIVE_READ_ALL }
         : undefined,
   };
 }

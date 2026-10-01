@@ -215,3 +215,37 @@ export interface NotificationProvider {
   readonly name: string;
   notify(title: string, body?: string, opts?: { url?: string; tag?: string }): Promise<{ id: string; pushed?: number }>;
 }
+
+// ─── Files (cloud storage) ────────────────────────────────────────────────
+
+export interface CloudFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number | null;
+  modifiedTime: string;
+  webViewLink: string | null;
+  parents: string[];
+  /** Google Docs/Sheets/Slides have no binary content and must be exported. */
+  isNative: boolean;
+  headRevisionId?: string;
+}
+
+/** Cloud file storage (Google Drive; OneDrive later). */
+export interface FileProvider {
+  readonly name: string;
+  search(query: string, opts?: { max?: number; folderId?: string }): Promise<CloudFile[]>;
+  get(id: string): Promise<CloudFile>;
+  download(id: string, opts?: { revisionId?: string; range?: [number, number] }): Promise<Buffer>;
+  /** Native Google files as text/csv/docx/xlsx/pdf. */
+  export(id: string, mimeType: string): Promise<Buffer>;
+  upload(file: { name: string; mimeType: string; data: Buffer; folderId?: string }): Promise<CloudFile>;
+  /** New content for an existing file (Drive keeps the old one as a revision). */
+  uploadRevision(id: string, data: Buffer, mimeType: string): Promise<CloudFile>;
+  deleteRevision(id: string, revisionId: string): Promise<void>;
+  /** Finds or creates a folder path like "JARVIS/Rechnungen"; returns the folder id. */
+  ensureFolder(path: string): Promise<string>;
+  trash(id: string): Promise<void>;
+  /** Moves a file into a folder (removing it from its current folders). */
+  move(id: string, folderId: string): Promise<CloudFile>;
+}
