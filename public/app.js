@@ -2,6 +2,8 @@
 // Security: all data from the server/providers is rendered via textContent or
 // DOM nodes (never innerHTML). Only the static icon markup below uses innerHTML.
 
+import { mountJarvis } from "./jarvis.js";
+
 // ─── Utilities ──────────────────────────────────────────────────────────────
 const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -83,6 +85,9 @@ const ICONS = {
   volume: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/>',
   mute: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="m22 9-6 6M16 9l6 6"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+  keyboard: '<rect x="2" y="5" width="20" height="14" rx="3"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M18 13h.01M9 15.5h6"/>',
+  euro: '<path d="M18 6.5A7 7 0 1 0 18 17.5"/><path d="M4 10h9M4 14h9"/>',
+  spark: '<path d="M12 2c.6 4.8 2.2 6.4 7 7-4.8.6-6.4 2.2-7 7-.6-4.8-2.2-6.4-7-7 4.8-.6 6.4-2.2 7-7z"/>',
   headset: '<path d="M3 14v-2a9 9 0 0 1 18 0v2"/><path d="M21 16a2 2 0 0 1-2 2h-1v-6h1a2 2 0 0 1 2 2zM3 16a2 2 0 0 0 2 2h1v-6H5a2 2 0 0 0-2 2z"/>',
 };
 function icon(name, cls = "") {
@@ -184,8 +189,12 @@ const state = {
   csrf: null,
   userName: null,
   status: null,
-  view: "today",
+  view: "jarvis",
   conversationId: null,
+  /** Conversation of the voice home (kept apart from the chat view). */
+  voiceConversationId: null,
+  /** ISO date the calendar should jump to (set by a context card). */
+  calendarFocus: null,
   renderedPending: new Set(),
   busy: false,
   /** Files attached to the next chat message: {file?, name, size, progress, error, promise}. */
@@ -370,6 +379,7 @@ function renderLogin() {
 
 // ─── Shell ──────────────────────────────────────────────────────────────────
 const NAV = [
+  ["jarvis", "JARVIS", "spark"],
   ["today", "Heute", "home"],
   ["chat", "Chat", "chat"],
   ["activity", "Aktivität", "activity"],
@@ -383,7 +393,7 @@ const NAV = [
   ["memory", "Gedächtnis", "memory"],
   ["settings", "Einstellungen", "settings"],
 ];
-const MOBILE_NAV = ["today", "chat", "calendar", "email"];
+const MOBILE_NAV = ["jarvis", "today", "calendar", "chat"];
 const isMobile = () => matchMedia("(max-width: 860px)").matches;
 
 function renderShell() {
@@ -391,9 +401,9 @@ function renderShell() {
     h("button", { class: "nav-item", "data-view": id, onclick: () => go(id) }, icon(ic), h("span", {}, label), id === "activity" ? h("span", { class: "count hidden", "data-count": "pending" }) : null);
   const sidebar = h("nav", { class: "sidebar", "aria-label": "Navigation" },
     h("div", { class: "brand" }, h("div", { class: "orb" }), "JARVIS"),
-    NAV.slice(0, 2).map((n) => navBtn(...n)),
+    NAV.slice(0, 3).map((n) => navBtn(...n)),
     h("div", { class: "nav-sep" }),
-    NAV.slice(2).map((n) => navBtn(...n)),
+    NAV.slice(3).map((n) => navBtn(...n)),
     h("div", { class: "sidebar-foot" },
       h("button", { class: "nav-item", onclick: openNotifications }, icon("bell"), h("span", {}, "Benachrichtigungen"), h("span", { class: "count hidden", "data-count": "notif" })),
       h("button", { class: "nav-item", onclick: cycleTheme }, icon("moon"), h("span", {}, "Design")),
@@ -466,11 +476,14 @@ function go(view, params = "") {
   location.hash = `${view}${params}`;
 }
 
+let unmountView = null;
 async function route() {
   if (voice.listening) voice.stopListening();
   if (voice.speaking) voice.stopSpeaking();
+  try { unmountView?.(); } catch { /* ignore */ }
+  unmountView = null;
   const [view, query = ""] = location.hash.replace(/^#/, "").split("?");
-  state.view = VIEWS[view] ? view : "today";
+  state.view = VIEWS[view] ? view : "jarvis";
   document.querySelectorAll("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === state.view));
   $("#more-btn")?.classList.toggle("active", !MOBILE_NAV.includes(state.view));
   const main = $("#main");
@@ -752,6 +765,18 @@ function triageSettingsCard() {
   };
   render().catch((e) => set(card, h("div", { class: "card-body" }, h("div", { class: "empty" }, e.message))));
   return card;
+}
+
+// ─── View: JARVIS (voice home) ──────────────────────────────────────────────
+function viewJarvis(main) {
+  unmountView = mountJarvis(main, {
+    h, set, append, icon, api, apiStream, go, toast, state, fmt, greeting, avatar,
+    toSpeech: (t) => voice.toSpeech(t),
+    unlockAudio: () => voice.unlock(),
+    pickVoice: () => voice.pickVoice(),
+    voicePrefs: () => ({ speak: voice.prefs.speak, conversation: true }),
+    voiceRate: () => voice.prefs.rate,
+  });
 }
 
 // ─── View: Heute ────────────────────────────────────────────────────────────
@@ -1190,6 +1215,15 @@ function weekStart(offset) {
 }
 
 async function viewCalendar(main) {
+  if (state.calendarFocus) {
+    const focus = new Date(state.calendarFocus);
+    state.calendarFocus = null;
+    if (!Number.isNaN(focus.getTime())) {
+      focus.setHours(0, 0, 0, 0);
+      focus.setDate(focus.getDate() - ((focus.getDay() + 6) % 7));
+      state.weekOffset = Math.round((focus - weekStart(0)) / 604800000);
+    }
+  }
   const start = weekStart(state.weekOffset);
   const end = new Date(start);
   end.setDate(end.getDate() + 7);
@@ -1456,6 +1490,12 @@ async function previewFile(file) {
 async function viewFiles(main, params) {
   const q = params.get("q") ?? "";
   const data = await api(`/api/files${q ? `?q=${encodeURIComponent(q)}` : ""}`);
+  const previewId = params.get("preview");
+  if (previewId) {
+    // Opened from a JARVIS context card: show that file right away.
+    const f = data.files.find((x) => x.id === previewId) ?? (await api(`/api/files/${encodeURIComponent(previewId)}`).catch(() => null))?.file;
+    if (f) setTimeout(() => previewFile(f), 0);
+  }
   const reload = (query = q) => go("files", query ? `?q=${encodeURIComponent(query)}` : "");
   const progress = h("div", { class: "upload-list" });
   const doUpload = async (list) => {
@@ -2178,7 +2218,7 @@ async function openNotifications() {
 }
 
 // ─── Boot ───────────────────────────────────────────────────────────────────
-const VIEWS = { today: viewToday, chat: viewChat, activity: viewActivity, calendar: viewCalendar, email: viewEmail, tasks: viewTasks, contacts: viewContacts, files: viewFiles, automations: viewAutomations, review: viewReview, memory: viewMemory, settings: viewSettings };
+const VIEWS = { jarvis: viewJarvis, today: viewToday, chat: viewChat, activity: viewActivity, calendar: viewCalendar, email: viewEmail, tasks: viewTasks, contacts: viewContacts, files: viewFiles, automations: viewAutomations, review: viewReview, memory: viewMemory, settings: viewSettings };
 
 let routerBound = false;
 async function boot() {
