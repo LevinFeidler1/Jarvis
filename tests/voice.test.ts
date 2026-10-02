@@ -86,6 +86,15 @@ describe("agent replies carry context", () => {
     expect(res.json().context).toEqual([expect.objectContaining({ kind: "task", title: "Steuererklärung abgeben" })]);
   });
 
+  it("voice turns ask for a short spoken answer with low effort", async () => {
+    const { h, app, headers } = await start([message([text("Morgen hast du zwei Termine.")])]);
+    const res = await app.inject({ method: "POST", url: "/api/chat/stream", headers, payload: { message: "Was ist morgen?", voice: true } });
+    expect(res.statusCode).toBe(200);
+    const req = h.llm.requests.at(-1)!;
+    expect(req.effort).toBe("low");
+    expect(JSON.stringify(req.messages.at(-1))).toContain("<voice>");
+  });
+
   it("has no context when no tool ran", async () => {
     const { app, headers } = await start([message([text("Hallo!")])]);
     const res = await app.inject({ method: "POST", url: "/api/chat", headers, payload: { message: "Hi" } });

@@ -229,9 +229,13 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
     conversationId: z.uuid().optional(),
     message: z.string().trim().max(8000),
     attachments: z.array(z.uuid()).max(10).optional(),
+    /** Sent by the voice home: the answer is read aloud (short, low effort). */
+    voice: z.boolean().optional(),
   }).refine((b) => b.message.length > 0 || (b.attachments?.length ?? 0) > 0, { message: "Nachricht oder Anhang erforderlich" });
-  const chatOpts = async (b: z.infer<typeof chatBody>) =>
-    b.attachments?.length ? { attachments: await Promise.all(b.attachments.map((fid) => providers.files.get(fid))) } : {};
+  const chatOpts = async (b: z.infer<typeof chatBody>) => ({
+    ...(b.attachments?.length ? { attachments: await Promise.all(b.attachments.map((fid) => providers.files.get(fid))) } : {}),
+    ...(b.voice ? { voice: true } : {}),
+  });
 
   app.post("/api/chat", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req) => {
     const body = chatBody.parse(req.body);

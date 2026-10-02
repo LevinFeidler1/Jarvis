@@ -140,6 +140,20 @@ Anthropic Console unter *Settings → Limits* ein **monatliches Ausgabenlimit** 
 Lange Unterhaltungen fasst JARVIS ab 60 000 Tokens automatisch zusammen
 (`JARVIS_COMPACT_AT_TOKENS`, optional).
 
+**Eingebaute Sparmaßnahmen (gleiches Modell, gleiche Qualität):**
+
+| Hebel | Wirkung |
+|---|---|
+| Prompt-Cache, 2 Ebenen | Werkzeuge + Systemprompt (~11 000 Tokens) bleiben **1 Stunde** im Cache, der Gesprächsverlauf 5 Minuten. Eine neue Unterhaltung 20 Minuten nach der letzten liest das Präfix für 10 % statt es neu zu schreiben (Schreiben einmalig 2× statt 1,25× – lohnt sich ab dem 2. Gespräch pro Stunde). |
+| Stabiler Systemprompt | Uhrzeit, Gedächtnis und Automations-Kontext stehen in der Benutzer-Nachricht, nie im Systemprompt – sonst würde jeder Aufruf den Cache verfehlen. |
+| Sprachmodus | Antworten werden vorgelesen: höchstens 3 kurze Sätze und Denk-Aufwand `low` statt `medium`. Ausgabe-Tokens sind der teuerste Teil (5× Eingabe) – und kurze Antworten sind schneller da. |
+| Mail-Vorsortierung | läuft auf `claude-haiku-4-5` mit Tageslimit (`JARVIS_TRIAGE_DAILY_LIMIT`), nicht auf dem Hauptmodell. |
+| Kompaktierung | lange Unterhaltungen werden serverseitig zusammengefasst statt immer länger mitgeschickt. |
+
+Bewusst **nicht** gemacht: ein kleineres Modell für den Chat, weniger Werkzeuge oder kürzere Antworten
+im Text-Chat – das hätte die Qualität gesenkt. Das Modell bestimmt allein `ANTHROPIC_MODEL`
+(Standard im Code: `claude-opus-5-5`; mit `claude-sonnet-5-5` kosten Ein- und Ausgabe die Hälfte).
+
 ## Sicherheit
 
 - Die URL ist öffentlich erreichbar — geschützt durch das Zugangstoken

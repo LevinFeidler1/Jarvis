@@ -59,6 +59,15 @@ export function renderAutomationBlock(a: { name: string; trigger: string }): str
   return `<automation>\nName: ${a.name}\nAuslöser: ${a.trigger}\nDer Benutzer ist nicht anwesend.\n</automation>`;
 }
 
+/** Marks a turn that will be read aloud: short answers save output tokens and listening time. */
+export function renderVoiceBlock(): string {
+  return (
+    `<voice>\nDiese Antwort wird vorgelesen. Antworte in höchstens 3 kurzen, gesprochenen Sätzen: ` +
+    `keine Listen, kein Markdown, keine Links oder IDs, Uhrzeiten als „14 Uhr“. ` +
+    `Die App zeigt passende Karten zu Terminen, Mails, Rechnungen und Aufgaben selbst an — nenne nur das Wichtigste.\n</voice>`
+  );
+}
+
 /** Per-turn context prepended to each user message (volatile, not cached). */
 export function buildTurnContext(config: AppConfig, now: Date): string {
   return (

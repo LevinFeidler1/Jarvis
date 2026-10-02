@@ -14,7 +14,7 @@ import { type ContextItem, extractContext, mergeContext } from "./context-cards.
 import { type LlmClient, type LlmMessage, LlmUnavailableError } from "./llm.js";
 import { decidePermission, loadPermissionSettings } from "./permissions.js";
 import { createHash } from "node:crypto";
-import { buildSystem, buildTurnContext, renderAutomationBlock, renderMemoryBlock } from "./prompt.js";
+import { buildSystem, buildTurnContext, renderAutomationBlock, renderMemoryBlock, renderVoiceBlock } from "./prompt.js";
 import { UsageStore } from "./usage.js";
 import { autonomyBlock } from "./autonomy.js";
 import { localDate, zonedToUtc } from "./time.js";
@@ -78,6 +78,8 @@ interface RunState {
   automation?: AutomationContext;
   /** Display items collected from this turn's tool results. */
   context?: ContextItem[];
+  /** The reply will be spoken (voice mode): short answer, low effort. */
+  voice?: boolean;
 }
 
 export interface AutomationContext {
@@ -122,7 +124,7 @@ export class Agent {
     conversationId: string | undefined,
     text: string,
     emit: AgentEventListener = noop,
-    opts: { automation?: AutomationContext; attachments?: FileInfo[] } = {},
+    opts: { automation?: AutomationContext; attachments?: FileInfo[]; voice?: boolean } = {},
   ): Promise<AgentReply> {
     const conv =
       (conversationId && (await this.conversations.get(conversationId))) ||
@@ -156,6 +158,7 @@ export class Agent {
     const context: Anthropic.Beta.BetaTextBlockParam[] = [];
     if (opts.automation) context.push({ type: "text", text: renderAutomationBlock(opts.automation) });
     context.push({ type: "text", text: buildTurnContext(this.deps.config, this.now()) });
+    if (opts.voice) context.push({ type: "text", text: renderVoiceBlock() });
     if (conv.memoryHash !== memoryHash) {
       context.push({ type: "text", text: renderMemoryBlock(memoryText) });
       await this.conversations.setMemoryHash(conv.id, memoryHash);
@@ -166,7 +169,7 @@ export class Agent {
     const userMessage: LlmMessage = { role: "user", content };
     const display = opts.attachments?.length ? `${text}${text ? "\n" : ""}${opts.attachments.map((f) => `📎 ${f.name}`).join("\n")}` : text;
     await this.conversations.append(conv.id, userMessage, display);
-    return this.run({ conversationId: conv.id, tainted: conv.tainted, actions: [], emit, automation: opts.automation });
+    return this.run({ conversationId: conv.id, tainted: conv.tainted, actions: [], emit, automation: opts.automation, voice: opts.voice });
   }
 
   /**
@@ -309,7 +312,7 @@ export class Agent {
       let response;
       state.emit({ type: "thinking" });
       try {
-        response = await llm.create({ system, messages: await this.conversations.history(state.conversationId), tools });
+        response = await llm.create({ system, messages: await this.conversations.history(state.conversationId), tools, effort: state.voice ? "low" : undefined });
         await this.usage.record(response, state.conversationId).catch((err) => console.error("[agent] usage", err));
       } catch (err) {
         const msg =

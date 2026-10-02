@@ -2,7 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Db } from "../db/database.js";
 import { nowIso } from "../db/database.js";
 
-/** USD per million tokens (first-party API list prices). Cache write = 5-minute TTL. */
+/** USD per million tokens (first-party API list prices). cacheWrite = 5-minute TTL (1-hour writes: 2× input). */
 const PRICES: Array<{ prefix: string; input: number; output: number; cacheRead: number; cacheWrite: number }> = [
   { prefix: "claude-sonnet-5", input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
   { prefix: "claude-opus-5-5", input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
@@ -39,11 +39,13 @@ export function summarizeUsage(response: Pick<Anthropic.Beta.BetaMessage, "model
     cacheRead += p.cache_read_input_tokens ?? 0;
     cacheWrite += p.cache_creation_input_tokens ?? 0;
   }
+  // 1-hour cache writes (stable tools + system prefix) cost 2× input instead of 1.25×.
+  const writes1h = Math.min(cacheWrite, u.cache_creation?.ephemeral_1h_input_tokens ?? 0);
   const webSearches = u.server_tool_use?.web_search_requests ?? 0;
   const compacted = !!u.iterations?.some((i) => i.type === "compaction");
   const price = priceFor(response.model);
   const costUsd =
-    (input * price.input + output * price.output + cacheRead * price.cacheRead + cacheWrite * price.cacheWrite) / 1_000_000 +
+    (input * price.input + output * price.output + cacheRead * price.cacheRead + (cacheWrite - writes1h) * price.cacheWrite + writes1h * price.input * 2) / 1_000_000 +
     webSearches * WEB_SEARCH_USD;
   return { input, output, cacheRead, cacheWrite, webSearches, compacted, costUsd };
 }

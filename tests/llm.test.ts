@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AnthropicLlm } from "../src/core/llm.js";
+import { summarizeUsage } from "../src/core/usage.js";
 
 function sse(text: string): string {
   const ev = (type: string, data: unknown) => `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -43,6 +44,10 @@ describe("Claude API request", () => {
     expect(first.beta).toContain("compact-2026-01-12");
     expect(first.beta).toContain("thinking-binding-controls-2026-08-01");
     expect(first.beta).toContain("server-side-fallback-2026-07-01");
+    // stable prefix cached for 1 hour, conversation via the automatic 5-minute breakpoint
+    expect(first.body.system).toEqual([{ type: "text", text: "sys", cache_control: { type: "ephemeral", ttl: "1h" } }]);
+    expect(first.body.cache_control).toEqual({ type: "ephemeral" });
+    expect(first.body.output_config).toEqual({ effort: "medium" });
 
     const retry = bodies[1]!;
     expect(retry.body.context_management).toBeUndefined();
@@ -53,5 +58,44 @@ describe("Claude API request", () => {
     await llm.create(req);
     expect(bodies).toHaveLength(3);
     expect(bodies[2]!.body.context_management).toBeUndefined();
+  });
+
+  it("uses the requested effort and does not mutate the caller's system blocks", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fakeFetch = (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return new Response(sse("Ok"), { status: 200, headers: { "content-type": "text/event-stream" } });
+    }) as unknown as typeof fetch;
+    const llm = new AnthropicLlm({ apiKey: "sk-test", model: "claude-sonnet-5-5", enableWebSearch: false, fetch: fakeFetch });
+    const system = [{ type: "text" as const, text: "sys" }];
+    await llm.create({ system, messages: [{ role: "user", content: "hi" }], tools: [], effort: "low" });
+    expect(bodies[0]!.output_config).toEqual({ effort: "low" });
+    expect(system[0]).toEqual({ type: "text", text: "sys" });
+  });
+
+  it("falls back without the 1-hour cache if the API rejects the ttl", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fakeFetch = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      bodies.push(body);
+      if (JSON.stringify(body.system).includes("ttl")) {
+        return new Response(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "system.0.cache_control.ttl: not supported" } }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+      return new Response(sse("Ok"), { status: 200, headers: { "content-type": "text/event-stream" } });
+    }) as unknown as typeof fetch;
+    const llm = new AnthropicLlm({ apiKey: "sk-test", model: "claude-sonnet-5-5", enableWebSearch: false, fetch: fakeFetch });
+    const r = await llm.create({ system: [{ type: "text", text: "sys" }], messages: [{ role: "user", content: "hi" }], tools: [] });
+    expect(r.content[0]).toMatchObject({ text: "Ok" });
+    expect(bodies[1]!.system).toEqual([{ type: "text", text: "sys" }]);
+  });
+});
+
+describe("usage cost", () => {
+  it("prices 1-hour cache writes at 2x input and 5-minute writes at 1.25x", () => {
+    const base = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0 };
+    const fiveMin = summarizeUsage({ model: "claude-sonnet-5-5", usage: { ...base, cache_creation_input_tokens: 1_000_000, cache_creation: { ephemeral_5m_input_tokens: 1_000_000, ephemeral_1h_input_tokens: 0 } } as never });
+    const oneHour = summarizeUsage({ model: "claude-sonnet-5-5", usage: { ...base, cache_creation_input_tokens: 1_000_000, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 1_000_000 } } as never });
+    expect(fiveMin.costUsd).toBeCloseTo(2.5);
+    expect(oneHour.costUsd).toBeCloseTo(4);
   });
 });
