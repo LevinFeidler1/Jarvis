@@ -88,9 +88,11 @@ export function mountJarvis(main, ui) {
   // ─── State machine ────────────────────────────────────────────────────
   function setMode(mode, extra = {}) {
     S.mode = mode;
+    // Any interaction ends the quick-start "tap to talk" hint.
+    if (mode !== "idle") S.tapHint = false;
     // "rest": the answer (caption + card) stays on screen, the core calms down.
     const talk = mode !== "idle";
-    root.className = `jv st-${mode}${talk ? " talk" : ""}${cards.childElementCount ? " has-cards" : ""}${extra.boot ? " booting" : ""}`;
+    root.className = `jv st-${mode}${talk ? " talk" : ""}${cards.childElementCount ? " has-cards" : ""}${extra.boot ? " booting" : ""}${S.tapHint ? " tap-hint" : ""}`;
     document.body.classList.toggle("jv-talk", talk);
     if (talk) {
       // Glide the orb from wherever the home page was scrolled to its place at the top.
@@ -125,8 +127,7 @@ export function mountJarvis(main, ui) {
     if (!S.alive || S.mode !== "idle") return;
     if (granted) { S.micOk = true; ensureAudioCtx(); listen(); return; }
     S.tapHint = true;
-    root.classList.add("tap-hint");
-    renderStatus();
+    setMode("idle");
   }
 
   function endTalk() {
@@ -140,7 +141,6 @@ export function mountJarvis(main, ui) {
   }
 
   async function onCore() {
-    if (S.tapHint) { S.tapHint = false; root.classList.remove("tap-hint"); }
     ui.unlockAudio?.();
     ensureAudioCtx();
     if (S.mode === "listening") return stopListening(false);

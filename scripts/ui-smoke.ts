@@ -232,6 +232,10 @@ async function run() {
       await page.click(".jv-chip >> nth=0");
       await page.waitForSelector(".jc-wrap", { timeout: 10_000 }).catch(() => fail(where, "keine Kontextkarte erschienen"));
       await waitFor(page, `/Schirm/.test(document.querySelector(".jv-caption")?.textContent ?? "")`, 15_000).catch(() => fail(where, "Antwort nicht als Untertitel gesprochen"));
+      // Tapping a prompt instead of the core also ends the quick-start hint.
+      const STATUS = `document.querySelector(".jv-status")?.textContent ?? ""`;
+      await waitFor(page, `/BEREIT|TIPPEN/.test(${STATUS})`, 15_000).catch(() => undefined);
+      if (/TIPPEN/.test(String(await page.evaluate(STATUS)))) fail(where, "„Tippen zum Sprechen“ bleibt nach der Antwort stehen");
       await checkView(page, where);
       if (shotsDir) await page.waitForTimeout(1500).then(() => page.screenshot({ path: join(shotsDir, `${vp.name}-voice.png`) }));
 
