@@ -39,7 +39,7 @@ export function mountJarvis(main, ui) {
   const coreBtn = h("button", { class: "jv-core-btn", "aria-label": "Mit JARVIS sprechen", onclick: () => onCore() });
   const status = h("div", { class: "jv-status glass", role: "status", "aria-live": "polite" });
   const leftBtn = h("div", { class: "jv-left" });
-  const greet = h("div", { class: "jv-greet" }, `${ui.greeting()}${state.userName ? `, ${state.userName}` : ""}`);
+  const greet = h("div", { class: "jv-greet" }, `${ui.greeting()}${state.userName ? `, ${state.userName.split(/\s+/)[0]}` : ""}`);
   const summary = h("div", { class: "jv-summary" }, " ");
   const prompts = h("div", { class: "jv-prompts" }, PROMPTS.map(([ic, text]) => h("button", { class: "jv-chip glass", onclick: () => ask(text) }, icon(ic), h("span", {}, text))));
   const idleBox = h("div", { class: "jv-idle" }, greet, summary, prompts);
@@ -221,7 +221,7 @@ export function mountJarvis(main, ui) {
     setMode("thinking");
     const chips = new Map();
     try {
-      const reply = await apiStream("/api/chat/stream", { conversationId: S.conv ?? undefined, message: text }, (ev) => {
+      const reply = await apiStream("/api/chat/stream", { conversationId: S.conv ?? undefined, message: text, voice: true }, (ev) => {
         if (ev.type !== "action") return;
         const a = ev.action;
         const label = a.description.split("\n")[0].slice(0, 60);
@@ -431,7 +431,7 @@ export function mountJarvis(main, ui) {
         h("div", { class: "jc-meta" },
           it.location ? h("div", {}, icon("pin"), it.location) : null,
           it.attendees?.length ? h("div", {}, icon("users"), it.attendees.slice(0, 3).join(", ") + (it.attendees.length > 3 ? ` +${it.attendees.length - 3}` : "")) : null),
-        actions(btn("Im Kalender", () => { state.calendarFocus = it.start; go("calendar"); }, true),
+        actions(btn("Im Kalender", () => { state.calendarFocus = it.start; state.calendarFocusId = it.id; go("calendar"); }, true),
           it.location ? h("a", { class: "jc-btn", href: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(it.location)}`, target: "_blank", rel: "noopener" }, "Route") : btn("Schließen", closeCard)));
     } else if (it.kind === "mail" || it.kind === "finance") {
       const fin = it.kind === "finance";
@@ -522,7 +522,9 @@ export function mountJarvis(main, ui) {
     set(bootBox, h("span", { class: "bl dots" }, "KERN WIRD INITIALISIERT"));
     setTimeout(() => { root.classList.remove("booting"); bootBox.classList.add("hidden"); }, 2600);
   }
-  api("/api/voice/config").then((c) => { S.cfg = c; }).catch(() => {});
+  const queued = state.jarvisPrompt;
+  state.jarvisPrompt = null;
+  api("/api/voice/config").then((c) => { S.cfg = c; }).catch(() => {}).finally(() => { if (queued && S.alive) ask(queued); });
   api("/api/briefing").then((b) => {
     if (!S.alive) return;
     const events = b.events?.ok ? b.events.data : [];

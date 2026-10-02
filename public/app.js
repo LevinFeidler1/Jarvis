@@ -85,6 +85,9 @@ const ICONS = {
   volume: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/>',
   mute: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="m22 9-6 6M16 9l6 6"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+  play: '<path d="M7 4.8v14.4a1 1 0 0 0 1.5.86l11.4-7.2a1 1 0 0 0 0-1.72L8.5 3.94A1 1 0 0 0 7 4.8z" fill="currentColor" stroke="none"/>',
+  route: '<circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="5" r="2.5"/><path d="M8.5 19H16a3.5 3.5 0 0 0 0-7H8a3.5 3.5 0 0 1 0-7h7.5"/>',
+  external: '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
   keyboard: '<rect x="2" y="5" width="20" height="14" rx="3"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M18 13h.01M9 15.5h6"/>',
   euro: '<path d="M18 6.5A7 7 0 1 0 18 17.5"/><path d="M4 10h9M4 14h9"/>',
   spark: '<path d="M12 2c.6 4.8 2.2 6.4 7 7-4.8.6-6.4 2.2-7 7-.6-4.8-2.2-6.4-7-7 4.8-.6 6.4-2.2 7-7z"/>',
@@ -195,6 +198,9 @@ const state = {
   voiceConversationId: null,
   /** ISO date the calendar should jump to (set by a context card). */
   calendarFocus: null,
+  calendarFocusId: null,
+  /** Prompt the JARVIS home should ask right away (e.g. "Briefing" on Heute). */
+  jarvisPrompt: null,
   renderedPending: new Set(),
   busy: false,
   /** Files attached to the next chat message: {file?, name, size, progress, error, promise}. */
@@ -779,6 +785,75 @@ function viewJarvis(main) {
   });
 }
 
+
+// ─── Tagesring (Heute) ──────────────────────────────────────────────────────
+const SVG_NS = "http://www.w3.org/2000/svg";
+function svg(tag, attrs = {}, ...children) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) if (v !== undefined && v !== null) node.setAttribute(k, String(v));
+  for (const c of children.flat()) if (c) node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  return node;
+}
+const RING_COLORS = ["#64D2FF", "#7D7AFF", "#30D158", "#FF9F0A", "#FF6482"];
+const minutesOfDay = (d) => { const x = new Date(d); return x.getHours() * 60 + x.getMinutes(); };
+function inHours(ms) {
+  const m = Math.max(1, Math.round(ms / 60000));
+  return m < 60 ? `in ${m} Min.` : `in ${Math.floor(m / 60)} Std.${m % 60 ? ` ${m % 60} Min.` : ""}`;
+}
+
+/** 24-hour ring: midnight at the top, today's events as glowing arcs, a pulsing "now". */
+function dayRing(events, ok) {
+  const R = 112, C = 2 * Math.PI * R, now = new Date(), nowMin = minutesOfDay(now);
+  const timed = events.filter((e) => !e.allDay).sort((a, b) => new Date(a.start) - new Date(b.start));
+  const arc = (fromMin, toMin, attrs) => svg("circle", { cx: 150, cy: 150, r: R, fill: "none", "stroke-dasharray": `${Math.max(1.5, ((toMin - fromMin) / 1440) * C).toFixed(2)} ${C.toFixed(2)}`, "stroke-dashoffset": (-(fromMin / 1440) * C).toFixed(2), ...attrs });
+  const span = (e) => {
+    const s = new Date(e.start), en = new Date(e.end), day0 = new Date(now); day0.setHours(0, 0, 0, 0);
+    const from = s < day0 ? 0 : minutesOfDay(s);
+    const to = en.getTime() - day0.getTime() >= 86400000 ? 1440 : Math.max(from + 5, minutesOfDay(en));
+    return [from, to];
+  };
+  const arcs = timed.map((e, i) => ({ e, color: RING_COLORS[i % RING_COLORS.length], span: span(e), past: new Date(e.end) < now }));
+  const at = (min, r) => { const a = (min / 1440) * 2 * Math.PI - Math.PI / 2; return [150 + r * Math.cos(a), 150 + r * Math.sin(a)]; };
+  const ticks = [...Array(24)].map((_, hIdx) => {
+    const major = hIdx % 6 === 0;
+    const [x1, y1] = at(hIdx * 60, major ? 90 : 95), [x2, y2] = at(hIdx * 60, 99);
+    return svg("line", { x1: x1.toFixed(2), y1: y1.toFixed(2), x2: x2.toFixed(2), y2: y2.toFixed(2), stroke: major ? "rgba(255,255,255,.5)" : "rgba(255,255,255,.22)", "stroke-width": major ? 1.6 : 1.2, "stroke-linecap": "round" });
+  });
+  const labels = [[0, "0"], [360, "6"], [720, "12"], [1080, "18"]].map(([m, t]) => { const [x, y] = at(m, 134); return svg("text", { x: x.toFixed(1), y: y.toFixed(1) }, t); });
+  const [nx, ny] = at(nowMin, R);
+  const title = ok ? `Tagesring: ${timed.map((e) => `${e.title} ${fmt.time(e.start)}`).join(", ") || "keine Termine"}, jetzt ${fmt.time(now)}` : "Tagesring";
+  const ringSvg = svg("svg", { viewBox: "0 0 300 300", class: "ring-svg", role: "img", "aria-label": title },
+    svg("defs", {},
+      svg("filter", { id: "ringGlow", x: "-50%", y: "-50%", width: "200%", height: "200%" }, svg("feGaussianBlur", { stdDeviation: 5 })),
+      svg("mask", { id: "ringReveal", maskUnits: "userSpaceOnUse", x: 0, y: 0, width: 300, height: 300 },
+        svg("circle", { class: "ring-reveal", cx: 150, cy: 150, r: R, fill: "none", stroke: "#fff", "stroke-width": 44 }))),
+    svg("g", { transform: "rotate(-90 150 150)", mask: "url(#ringReveal)" },
+      arc(0, 1440, { stroke: "rgba(255,255,255,.07)", "stroke-width": 12, class: "ring-track" }),
+      arc(0, nowMin, { stroke: "rgba(255,255,255,.16)", "stroke-width": 2 }),
+      svg("g", { filter: "url(#ringGlow)", opacity: 0.8 }, arcs.filter((a) => !a.past).map((a) => arc(...a.span, { stroke: a.color, "stroke-width": 14, "stroke-linecap": "round" }))),
+      arcs.map((a) => arc(...a.span, { stroke: a.color, "stroke-width": 12, "stroke-linecap": "round", opacity: a.past ? 0.35 : 1 }))),
+    svg("g", {}, ticks),
+    svg("g", { class: "ring-labels" }, labels),
+    svg("circle", { cx: nx.toFixed(2), cy: ny.toFixed(2), r: 13, fill: "#fff", "fill-opacity": 0.14 }),
+    svg("circle", { class: "ring-now", cx: nx.toFixed(2), cy: ny.toFixed(2), r: 6, fill: "none", stroke: "#fff", "stroke-width": 1.5 }),
+    svg("circle", { cx: nx.toFixed(2), cy: ny.toFixed(2), r: 5.5, fill: "#fff" }));
+
+  const current = timed.find((e) => new Date(e.start) <= now && new Date(e.end) > now);
+  const next = timed.find((e) => new Date(e.start) > now);
+  const center = !ok
+    ? [h("span", { class: "mono ring-kicker" }, "KALENDER"), h("span", { class: "ring-title" }, "Nicht verbunden"), h("button", { class: "ring-sub link", onclick: () => go("settings") }, "Jetzt verbinden")]
+    : current
+      ? [h("span", { class: "mono ring-kicker live-k" }, `JETZT · BIS ${fmt.time(current.end)}`), h("span", { class: "ring-title" }, current.title), h("span", { class: "ring-sub" }, next ? `danach ${next.title} · ${fmt.time(next.start)}` : "danach frei")]
+      : next
+        ? [h("span", { class: "mono ring-kicker" }, `ALS NÄCHSTES · ${fmt.time(next.start)}`), h("span", { class: "ring-title" }, next.title), h("span", { class: "ring-sub" }, inHours(new Date(next.start) - now))]
+        : [h("span", { class: "mono ring-kicker" }, "HEUTE"), h("span", { class: "ring-title" }, timed.length ? "Alles erledigt" : "Kein Termin"), h("span", { class: "ring-sub" }, "Der Rest des Tages gehört dir.")];
+  const legend = arcs.filter((a) => !a.past).slice(0, 4).map((a) =>
+    h("button", { class: "ring-leg", onclick: () => openEventSheet(a.e, timed) }, h("span", { class: "dot", style: `background:${a.color}` }), h("span", { class: "mono" }, fmt.time(a.e.start)), h("span", { class: "t" }, a.e.title)));
+  return h("div", { class: "ring-wrap" },
+    h("div", { class: "ring" }, ringSvg, h("div", { class: "ring-center" }, center)),
+    legend.length ? h("div", { class: "ring-legend" }, legend) : null);
+}
+
 // ─── View: Heute ────────────────────────────────────────────────────────────
 function greeting() {
   const hr = new Date().getHours();
@@ -786,7 +861,7 @@ function greeting() {
 }
 
 async function viewToday(main) {
-  set(main, h("div", { class: "view" }, h("div", { class: "card hero" }, h("div", { class: "orb xl busy" }), h("div", {}, h("h1", {}, `${greeting()}.`), h("p", {}, "Einen Moment, ich sehe mir deinen Tag an …")))));
+  set(main, h("div", { class: "view today" }, h("div", { class: "today-top" }, h("div", { class: "today-hello" }, h("div", { class: "today-date" }, fmt.long(new Date()).toUpperCase()), h("h1", {}, `${greeting()}.`), h("p", { class: "today-sum shim" }, "Einen Moment, ich sehe mir deinen Tag an …")))));
   const [b, setup, sugg] = await Promise.all([api("/api/briefing"), api("/api/setup"), suggestionsCard(() => viewToday(main))]);
   const now = Date.now();
 
@@ -797,13 +872,12 @@ async function viewToday(main) {
   const dueTasks = tasks.filter((t) => t.due && t.due.slice(0, 10) <= today);
   const pending = b.pending.ok ? b.pending.data : [];
   const upcoming = events.filter((e) => e.allDay || new Date(e.end).getTime() > now);
-  const next = upcoming.find((e) => !e.allDay);
 
   const summary = [];
   if (b.events.ok) summary.push(events.length ? `${events.length} ${events.length === 1 ? "Termin" : "Termine"} heute` : "keine Termine heute");
   if (b.emails.ok) summary.push(`${emails.length} ungelesene E-Mail${emails.length === 1 ? "" : "s"}`);
   summary.push(`${tasks.length} offene Aufgabe${tasks.length === 1 ? "" : "n"}`);
-  const name = state.userName ? `, ${state.userName}` : "";
+  const name = state.userName ? `, ${state.userName.split(/\s+/)[0]}` : "";
 
   const stat = (n, l, ic, cls, view) => h("div", { class: "card stat", onclick: () => go(view) }, h("div", { class: `ic ${cls}` }, icon(ic)), h("div", {}, h("div", { class: "n" }, n), h("div", { class: "l" }, l)));
 
@@ -840,14 +914,21 @@ async function viewToday(main) {
 
   const setupDone = setup.steps.filter((s) => s.done).length;
 
-  set(main, h("div", { class: "view" },
-    h("div", { class: "card hero" },
-      h("div", { class: "orb xl" }),
-      h("div", { class: "grow" },
+  set(main, h("div", { class: "view today" },
+    h("div", { class: "today-top" },
+      h("div", { class: "today-hello" },
+        h("div", { class: "today-date" }, fmt.long(new Date()).toUpperCase()),
         h("h1", {}, `${greeting()}${name}.`),
-        h("p", {}, `${fmt.long(new Date())} — ${summary.join(", ")}.`),
-        next ? h("p", { class: "small muted" }, `Als Nächstes: ${next.title} um ${fmt.time(next.start)}`) : null),
-      h("button", { class: "btn primary", onclick: () => startChat("Guten Morgen, JARVIS. Bereite mir meinen Tag vor.") }, icon("bolt"), "Briefing starten")),
+        h("p", { class: "today-sum" }, `${summary.join(", ")}.`)),
+      h("button", { class: "orb-btn", "aria-label": "Mit JARVIS sprechen", onclick: () => go("jarvis") }, h("span", { class: "orb breathe" }))),
+    h("div", { class: "today-hero" },
+      dayRing(events, b.events.ok),
+      h("div", { class: "brief glass" },
+        h("button", { class: "brief-play", "aria-label": "Briefing von JARVIS vorlesen lassen", onclick: () => { voice.unlock(); state.jarvisPrompt = "Guten Morgen, JARVIS. Bereite mir meinen Tag vor."; go("jarvis"); } },
+          icon("play")),
+        h("div", { class: "brief-text" }, h("b", {}, greeting() === "Guten Morgen" ? "Morgenbriefing" : "Tagesbriefing"), h("span", {}, "Termine, Mails, Entscheidungen — gesprochen")),
+        h("span", { class: "eq" }, h("i"), h("i"), h("i"), h("i"), h("i"), h("i"), h("i")),
+        h("button", { class: "btn sm ghost", onclick: () => startChat("Guten Morgen, JARVIS. Bereite mir meinen Tag vor.") }, "Als Text"))),
     !setup.complete
       ? h("div", { class: "banner info", style: "max-width:none" }, icon("plug"),
           h("div", { style: "flex:1" }, h("b", {}, `Einrichtung: ${setupDone} von ${setup.steps.length} Schritten erledigt. `), h("span", { class: "muted" }, setup.steps.find((s) => !s.done)?.title ?? "")),
@@ -942,7 +1023,7 @@ async function viewChat(main, params = new URLSearchParams()) {
   } else {
     thread.append(h("div", { class: "welcome" },
       h("div", { class: "orb xl" }),
-      h("h2", {}, `${greeting()}${state.userName ? `, ${state.userName}` : ""}.`),
+      h("h2", {}, `${greeting()}${state.userName ? `, ${state.userName.split(/\s+/)[0]}` : ""}.`),
       h("p", {}, "Wie kann ich helfen? Ich lese, plane und bereite vor — und frage, bevor etwas dein Postfach oder deinen Kalender verlässt."),
       h("div", { class: "suggest-grid" }, SUGGESTIONS.map(([ic, text, sub]) =>
         h("button", { class: "suggest", onclick: () => sendMessage(text) }, icon(ic), h("div", {}, h("b", {}, text), h("span", {}, sub)))))));
@@ -986,12 +1067,17 @@ function addAssistant() {
   return {
     content,
     step(a) {
-      let el = map.get(a.activityId);
+      const prev = map.get(a.activityId);
       const label = a.description.split("\n")[0];
-      const ic = a.status === "executing" || a.status === "planned" ? h("div", { class: "spinner" }) : icon(STEP_ICON[a.status] ?? "check");
-      const next = h("div", { class: `step ${a.status}`, title: a.error ?? a.description }, ic, h("span", { class: "label" }, label), a.error ? h("span", { class: "muted" }, `— ${a.error}`) : null);
-      if (el) el.replaceWith(next); else steps.append(next);
-      map.set(a.activityId, next);
+      const running = a.status === "executing" || a.status === "planned";
+      const t0 = prev?.t0 ?? performance.now();
+      const secs = !running && prev ? (performance.now() - t0) / 1000 : null;
+      const ic = running ? h("span", { class: "spin-v" }) : h("span", { class: `step-ic ${a.status}` }, icon(STEP_ICON[a.status] ?? "check"));
+      const next = h("div", { class: `step ${a.status}`, title: a.error ?? a.description }, ic, h("span", { class: "label" }, label),
+        a.error ? h("span", { class: "muted err-note" }, a.error) : null,
+        secs !== null && secs >= 0.05 ? h("span", { class: "mono step-t" }, `${secs.toFixed(1).replace(".", ",")} s`) : null);
+      if (prev) prev.el.replaceWith(next); else steps.append(next);
+      map.set(a.activityId, { el: next, t0 });
       scrollDown();
     },
     finish(text, actions = [], at) {
@@ -1093,6 +1179,28 @@ function describePreview(desc) {
   return { headline: first, body: rest.join("\n").trim() };
 }
 
+/** "Press and hold to run": fills over 1.2 s, fires once. Works with pointer and Space/Enter. */
+function holdButton(onFire, label = "Halten zum Ausführen") {
+  const btn = h("button", { class: "hold-btn", "aria-label": `${label} (1 Sekunde)` },
+    h("span", { class: "base" }, icon("send"), label),
+    h("span", { class: "fill" }, icon("send"), "Weiter halten …"),
+    h("span", { class: "done" }, icon("check"), "Bestätigt"));
+  let timer = null;
+  const down = (e) => {
+    if (btn.disabled || btn.classList.contains("sent")) return;
+    if (e?.pointerId !== undefined) btn.setPointerCapture?.(e.pointerId);
+    btn.classList.add("on");
+    timer = setTimeout(() => { btn.classList.remove("on"); btn.classList.add("sent"); navigator.vibrate?.(12); onFire(); }, 1200);
+  };
+  const up = () => { clearTimeout(timer); btn.classList.remove("on"); };
+  btn.addEventListener("pointerdown", down);
+  for (const ev of ["pointerup", "pointercancel", "lostpointercapture"]) btn.addEventListener(ev, up);
+  btn.addEventListener("contextmenu", (e) => e.preventDefault());
+  btn.addEventListener("keydown", (e) => { if ((e.key === " " || e.key === "Enter") && !e.repeat) { e.preventDefault(); down(); } });
+  btn.addEventListener("keyup", (e) => (e.key === " " || e.key === "Enter") && up());
+  return btn;
+}
+
 /** Confirmation card. inChat → the follow-up turn streams into the thread. */
 function confirmCard(p, onDone, inChat = false) {
   const crit = p.risk >= 3;
@@ -1122,12 +1230,18 @@ function confirmCard(p, onDone, inChat = false) {
     } catch (err) {
       fail(err);
       foot.querySelectorAll("button").forEach((b) => (b.disabled = false));
+      foot.querySelector(".hold-btn")?.classList.remove("sent");
     }
   };
-  foot.append(
-    h("button", { class: `btn ${crit ? "danger" : "ok"}`, onclick: () => decide(true) }, icon("check"), crit ? "Trotzdem ausführen" : "Bestätigen & ausführen"),
-    h("button", { class: "btn ghost", onclick: () => decide(false) }, "Ablehnen"),
-    h("span", { class: "muted" }, `gültig bis ${fmt.time(p.expiresAt)}`));
+  // Level 2: press and hold (1.2 s) — a deliberate gesture instead of a stray tap.
+  // Level 3 keeps the explicit "Trotzdem ausführen" button.
+  const approveBtn = crit
+    ? h("button", { class: "btn danger", onclick: () => decide(true) }, icon("alert"), "Trotzdem ausführen")
+    : holdButton(() => decide(true));
+  foot.append(approveBtn,
+    h("div", { class: "confirm-row" },
+      h("button", { class: "btn ghost reject", onclick: () => decide(false) }, "Ablehnen"),
+      h("span", { class: "muted" }, icon("shield"), `Erst nach deiner Bestätigung · gültig bis ${fmt.time(p.expiresAt)}`)));
   return card;
 }
 
@@ -1215,6 +1329,8 @@ function weekStart(offset) {
 }
 
 async function viewCalendar(main) {
+  const focusId = state.calendarFocusId;
+  state.calendarFocusId = null;
   if (state.calendarFocus) {
     const focus = new Date(state.calendarFocus);
     state.calendarFocus = null;
@@ -1246,11 +1362,13 @@ async function viewCalendar(main) {
   }
 
   const days = [...Array(7)].map((_, i) => { const d = new Date(start); d.setDate(d.getDate() + i); return d; });
+  const focused = focusId && events.find((e) => e.id === focusId);
+  if (focused) setTimeout(() => openEventSheet(focused, events), 350);
   if (isMobile()) return renderAgenda(main, head, days, events);
   const headRow = h("div", { class: "cal-head" }, h("div"), days.map((d) =>
     h("div", { class: isToday(d) ? "today" : "" }, d.toLocaleDateString("de-DE", { weekday: "short" }), h("b", {}, d.getDate()))));
   const allday = h("div", { class: "cal-allday" }, h("div", {}, "ganzt."), days.map((d) =>
-    h("div", {}, events.filter((e) => e.allDay && e.start.slice(0, 10) <= ymd(d) && e.end.slice(0, 10) > ymd(d)).map((e) => h("div", { class: "cal-chip", title: e.title }, e.title)))));
+    h("div", {}, events.filter((e) => e.allDay && e.start.slice(0, 10) <= ymd(d) && e.end.slice(0, 10) > ymd(d)).map((e) => h("button", { class: "cal-chip", title: e.title, onclick: () => openEventSheet(e, events) }, e.title)))));
   const hours = h("div", { class: "cal-hours" }, [...Array(24)].map((_, i) => h("div", {}, i ? `${String(i).padStart(2, "0")}:00` : "")));
   const cols = days.map((d) => {
     const col = h("div", { class: `cal-day ${isToday(d) ? "today" : ""}`, style: `height:${24 * HOUR_PX}px` });
@@ -1271,7 +1389,7 @@ async function viewCalendar(main) {
     for (const { e, s, en, lane } of placed) {
       const top = ((s - dayStart) / 3600000) * HOUR_PX;
       const height = Math.max(22, ((en - s) / 3600000) * HOUR_PX - 2);
-      col.append(h("div", { class: `cal-ev ${e.busy ? "" : "free"}`, style: `top:${top}px;height:${height}px;left:calc(${(lane / n) * 100}% + 3px);width:calc(${100 / n}% - 6px);right:auto`, title: `${e.title}\n${fmt.time(e.start)}–${fmt.time(e.end)}${e.location ? `\n${e.location}` : ""}` },
+      col.append(h("button", { class: `cal-ev ${e.busy ? "" : "free"}`, onclick: () => openEventSheet(e, events), style: `top:${top}px;height:${height}px;left:calc(${(lane / n) * 100}% + 3px);width:calc(${100 / n}% - 6px);right:auto`, title: `${e.title}\n${fmt.time(e.start)}–${fmt.time(e.end)}${e.location ? `\n${e.location}` : ""}` },
         h("b", {}, e.title), height > 34 ? h("span", {}, `${fmt.time(e.start)}–${fmt.time(e.end)}`) : null));
     }
     if (isToday(d)) {
@@ -1284,6 +1402,56 @@ async function viewCalendar(main) {
   set(main, h("div", { class: "view" }, head, h("div", { class: "card cal" }, headRow, allday, body),
     h("div", { class: "muted small", style: "margin-top:10px" }, `${events.length} Termine · Zeitzone ${state.status?.timezone ?? TZ}`)));
   body.scrollTop = 7 * HOUR_PX;
+}
+
+
+// ─── Termin-Sheet ───────────────────────────────────────────────────────────
+const RSVP = { accepted: ["Zugesagt", "ok"], declined: ["Abgesagt", "err"], tentative: ["Vielleicht", "warn"], needsAction: ["Offen", ""] };
+
+/** Event details as a glass sheet (phone) / dialog (desktop). Event texts are rendered as text only. */
+function openEventSheet(e, sameDayEvents = []) {
+  document.querySelector(".ev-wrap")?.remove();
+  const close = () => { wrap.classList.add("closing"); setTimeout(() => wrap.remove(), 260); document.removeEventListener("keydown", onKey); };
+  const onKey = (ev) => ev.key === "Escape" && close();
+  const start = new Date(e.start);
+  const dayKey = start.toDateString();
+  const sameDay = sameDayEvents.filter((x) => !x.allDay && new Date(x.start).toDateString() === dayKey);
+  const pos = (iso) => { const d = new Date(iso); return Math.max(0, Math.min(100, ((d.getHours() + d.getMinutes() / 60 - 7) / 14) * 100)); };
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const diff = Math.round((new Date(start.getFullYear(), start.getMonth(), start.getDate()) - today) / 86400000);
+  const chip = diff === 0 ? "Heute" : diff === 1 ? "Morgen" : diff === -1 ? "Gestern" : diff > 1 && diff < 7 ? `in ${diff} Tagen` : null;
+  const mins = e.allDay ? 0 : Math.round((new Date(e.end) - start) / 60000);
+  const safeLink = typeof e.htmlLink === "string" && /^https:\/\//.test(e.htmlLink) ? e.htmlLink : null;
+  const body = h("div", { class: "jc jc-event ev-card" },
+    h("div", { class: "jc-head" }, h("span", { class: "jc-glyph k-event" }, icon("calendar")), h("span", { class: "jc-label" }, "Termin"),
+      e.status === "tentative" ? h("span", { class: "jc-chip orange" }, "Vorläufig") : chip ? h("span", { class: "jc-chip" }, chip) : null,
+      h("button", { class: "ev-x", "aria-label": "Schließen", onclick: close }, icon("x"))),
+    h("div", { class: "jc-date" }, start.toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long" })),
+    e.allDay ? h("div", { class: "jc-big" }, "Ganztägig")
+      : h("div", { class: "jc-timeRow" }, h("span", { class: "jc-big" }, fmt.time(e.start)), h("span", { class: "jc-to" }, `– ${fmt.time(e.end)}`),
+          h("span", { class: "jc-dur mono" }, mins >= 60 ? `${Math.floor(mins / 60)} STD${mins % 60 ? ` ${mins % 60} MIN` : ""}` : `${mins} MIN`)),
+    h("div", { class: "jc-title" }, e.title),
+    e.allDay || !sameDay.length ? null : h("div", { class: "jc-daybar" },
+      h("div", { class: "track" }),
+      sameDay.map((x) => h("div", { class: `seg ${x.id === e.id ? "me" : ""}`, title: `${x.title} ${fmt.time(x.start)}`, style: `left:${pos(x.start)}%;width:${Math.max(2.5, pos(x.end) - pos(x.start))}%` })),
+      h("div", { class: "ticks mono" }, ["7", "10", "13", "16", "19", "21"].map((t) => h("span", {}, t)))),
+    h("div", { class: "jc-meta" },
+      e.location ? h("div", {}, icon("pin"), e.location) : null,
+      e.organizer ? h("div", {}, icon("users"), `Organisiert von ${e.organizer}`) : null),
+    e.attendees?.length ? h("div", { class: "ev-people" }, e.attendees.slice(0, 8).map((a) => {
+      const [label, cls] = RSVP[a.responseStatus] ?? RSVP.needsAction;
+      return h("div", { class: "ev-person" }, avatar(a.name || a.email), h("div", { class: "main" }, h("div", { class: "title" }, a.name || a.email), a.name ? h("div", { class: "sub" }, a.email) : null), h("span", { class: `badge ${cls}` }, label));
+    }), e.attendees.length > 8 ? h("div", { class: "muted small" }, `+ ${e.attendees.length - 8} weitere`) : null) : null,
+    e.description ? h("div", { class: "jc-preview ev-desc" }, e.description.slice(0, 1200)) : null,
+    h("div", { class: "jc-actions" },
+      e.location ? h("a", { class: "jc-btn primary", href: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(e.location)}`, target: "_blank", rel: "noopener noreferrer" }, "Route") : null,
+      h("button", { class: `jc-btn ${e.location ? "" : "primary"}`, onclick: () => { close(); startChat(`Zum Termin „${e.title}“ am ${fmt.dt(e.start)}: `, { send: false }); } }, "Mit JARVIS"),
+      safeLink ? h("a", { class: "jc-btn", href: safeLink, target: "_blank", rel: "noopener noreferrer", "aria-label": "In Google Kalender öffnen" }, icon("external")) : null));
+  const wrap = h("div", { class: "ev-wrap", onclick: (ev) => ev.target === wrap && close() },
+    h("div", { class: "ev-sheet glass", role: "dialog", "aria-modal": "true", "aria-label": e.title }, h("div", { class: "jv-grip ev-grip", "aria-hidden": "true" }), body));
+  document.addEventListener("keydown", onKey);
+  document.body.append(wrap);
+  wrap.querySelector(".ev-x")?.focus();
 }
 
 /** Phones: a readable day-by-day list instead of the 7-column grid. */
@@ -1315,7 +1483,7 @@ function renderAgenda(main, head, days, events) {
             today ? h("span", { class: "badge accent" }, "Heute") : null),
           evs.length
             ? h("div", { class: "card agenda-list" }, evs.map((e) =>
-                h("div", { class: `agenda-ev ${e.busy ? "" : "free"}` },
+                h("button", { class: `agenda-ev ${e.busy ? "" : "free"}`, onclick: () => openEventSheet(e, events) },
                   h("div", { class: "t" }, e.allDay ? h("b", {}, "ganztägig") : [h("b", {}, fmt.time(e.start)), h("span", {}, fmt.time(e.end))]),
                   h("div", { class: "main" }, h("div", { class: "title" }, e.title),
                     e.location ? h("div", { class: "sub" }, icon("pin"), e.location) : null,
