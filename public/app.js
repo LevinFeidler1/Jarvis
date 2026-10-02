@@ -2,6 +2,8 @@
 // Security: all data from the server/providers is rendered via textContent or
 // DOM nodes (never innerHTML). Only the static icon markup below uses innerHTML.
 
+import { mountJarvis } from "./jarvis.js";
+
 // ─── Utilities ──────────────────────────────────────────────────────────────
 const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -67,6 +69,11 @@ const ICONS = {
   bell2: '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>',
   new: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   dot: '<circle cx="12" cy="12" r="3"/>',
+  clip: '<path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/>',
+  file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/>',
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
   pin: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/>',
   chart: '<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>',
@@ -78,6 +85,12 @@ const ICONS = {
   volume: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/>',
   mute: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="m22 9-6 6M16 9l6 6"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+  play: '<path d="M7 4.8v14.4a1 1 0 0 0 1.5.86l11.4-7.2a1 1 0 0 0 0-1.72L8.5 3.94A1 1 0 0 0 7 4.8z" fill="currentColor" stroke="none"/>',
+  route: '<circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="5" r="2.5"/><path d="M8.5 19H16a3.5 3.5 0 0 0 0-7H8a3.5 3.5 0 0 1 0-7h7.5"/>',
+  external: '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+  keyboard: '<rect x="2" y="5" width="20" height="14" rx="3"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M18 13h.01M9 15.5h6"/>',
+  euro: '<path d="M18 6.5A7 7 0 1 0 18 17.5"/><path d="M4 10h9M4 14h9"/>',
+  spark: '<path d="M12 2c.6 4.8 2.2 6.4 7 7-4.8.6-6.4 2.2-7 7-.6-4.8-2.2-6.4-7-7 4.8-.6 6.4-2.2 7-7z"/>',
   headset: '<path d="M3 14v-2a9 9 0 0 1 18 0v2"/><path d="M21 16a2 2 0 0 1-2 2h-1v-6h1a2 2 0 0 1 2 2zM3 16a2 2 0 0 0 2 2h1v-6H5a2 2 0 0 0-2 2z"/>',
 };
 function icon(name, cls = "") {
@@ -117,7 +130,7 @@ function avatar(name) {
 // ─── Minimal, safe Markdown → DOM ───────────────────────────────────────────
 function inline(text) {
   const frag = document.createDocumentFragment();
-  const re = /(\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(?<![*\w])\*([^*\n]+)\*(?!\w)|_([^_\n]+)_)/g;
+  const re = /(\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(?<![*\w])\*([^*\n]+)\*(?!\w)|_([^_\n]+)_|\[([^\]]+)\]\(#file:([0-9a-f-]{36})\))/g;
   let last = 0;
   for (const m of text.matchAll(re)) {
     if (m.index > last) frag.append(text.slice(last, m.index));
@@ -126,6 +139,7 @@ function inline(text) {
     else if (m[4]) frag.append(h("a", { href: m[5], target: "_blank", rel: "noopener noreferrer" }, m[4]));
     else if (m[6]) frag.append(h("em", {}, m[6]));
     else if (m[7]) frag.append(h("em", {}, m[7]));
+    else if (m[8]) { const fid = m[9]; frag.append(h("a", { href: "#", class: "file-link", onclick: (e) => { e.preventDefault(); openFileById(fid); } }, icon("download"), m[8])); }
     last = m.index + m[0].length;
   }
   if (last < text.length) frag.append(text.slice(last));
@@ -178,10 +192,19 @@ const state = {
   csrf: null,
   userName: null,
   status: null,
-  view: "today",
+  view: "jarvis",
   conversationId: null,
+  /** Conversation of the voice home (kept apart from the chat view). */
+  voiceConversationId: null,
+  /** ISO date the calendar should jump to (set by a context card). */
+  calendarFocus: null,
+  calendarFocusId: null,
+  /** Prompt the JARVIS home should ask right away (e.g. "Briefing" on Heute). */
+  jarvisPrompt: null,
   renderedPending: new Set(),
   busy: false,
+  /** Files attached to the next chat message: {file?, name, size, progress, error, promise}. */
+  attachments: [],
   weekOffset: 0,
   mailUnread: false,
   mailSelected: null,
@@ -237,6 +260,70 @@ async function apiStream(path, body, onEvent) {
   }
   if (!reply) throw new Error("Die Verbindung wurde unterbrochen.");
   return reply;
+}
+
+// ─── Dateien: Upload in Teilen, Download in Bereichen (Vercel-Limit 4,5 MB) ──
+const FILE_ACCEPT = ".pdf,.docx,.xlsx,.xlsm,.csv,.tsv,.pptx,.txt,.md,.markdown,.json,.png,.jpg,.jpeg";
+const FILE_ICON = { pdf: "file", docx: "file", xlsx: "chart", csv: "chart", pptx: "file", txt: "file", md: "file", json: "file", png: "image", jpg: "image" };
+const fmtSize = (n) => (n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1).replace(".", ",")} MB`);
+
+async function uploadFile(file, onProgress = () => {}, conversationId) {
+  const begin = await api("/api/files/uploads", { method: "POST", body: { name: file.name, size: file.size } });
+  for (let i = 0; i < begin.chunks; i++) {
+    const part = file.slice(i * begin.chunkSize, Math.min(file.size, (i + 1) * begin.chunkSize));
+    const res = await fetch(`/api/files/uploads/${begin.uploadId}/${i}`, {
+      method: "PUT", credentials: "same-origin",
+      headers: { "content-type": "application/octet-stream", "x-jarvis-csrf": state.csrf ?? "" },
+      body: part,
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? `Upload fehlgeschlagen (HTTP ${res.status})`);
+    onProgress((i + 1) / begin.chunks);
+  }
+  return api(`/api/files/uploads/${begin.uploadId}/complete`, { method: "POST", body: conversationId ? { conversationId } : {} });
+}
+
+async function fetchFileBlob(id, size) {
+  const parts = [];
+  let type = "application/octet-stream";
+  for (let start = 0; start === 0 || start < size; ) {
+    const res = await fetch(`/api/files/${id}/content`, { credentials: "same-origin", headers: { range: `bytes=${start}-` } });
+    if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? `Download fehlgeschlagen (HTTP ${res.status})`);
+    type = res.headers.get("content-type") ?? type;
+    size = Number(res.headers.get("x-file-size") ?? size ?? 0);
+    const buf = await res.arrayBuffer();
+    parts.push(buf);
+    start += buf.byteLength;
+    if (!buf.byteLength) break;
+  }
+  return new Blob(parts, { type });
+}
+
+async function downloadFile(id, name, size) {
+  try {
+    const blob = await fetchFileBlob(id, size);
+    const url = URL.createObjectURL(blob);
+    const a = h("a", { href: url, download: name ?? "datei" });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  } catch (e) { fail(e); }
+}
+
+async function openFileById(id) {
+  try {
+    const { file } = await api(`/api/files/${id}`);
+    downloadFile(file.id, file.name, file.size);
+  } catch (e) { fail(e); }
+}
+
+/** Drag & drop target that calls onFiles(FileList). */
+function dropZone(el, onFiles) {
+  let depth = 0;
+  el.addEventListener("dragenter", (e) => { if (e.dataTransfer?.types?.includes("Files")) { e.preventDefault(); depth++; el.classList.add("dragging"); } });
+  el.addEventListener("dragover", (e) => { if (e.dataTransfer?.types?.includes("Files")) e.preventDefault(); });
+  el.addEventListener("dragleave", () => { depth = Math.max(0, depth - 1); if (!depth) el.classList.remove("dragging"); });
+  el.addEventListener("drop", (e) => { if (!e.dataTransfer?.files?.length) return; e.preventDefault(); depth = 0; el.classList.remove("dragging"); onFiles(e.dataTransfer.files); });
 }
 
 // ─── Toasts & dialogs ───────────────────────────────────────────────────────
@@ -298,6 +385,7 @@ function renderLogin() {
 
 // ─── Shell ──────────────────────────────────────────────────────────────────
 const NAV = [
+  ["jarvis", "JARVIS", "spark"],
   ["today", "Heute", "home"],
   ["chat", "Chat", "chat"],
   ["activity", "Aktivität", "activity"],
@@ -305,12 +393,13 @@ const NAV = [
   ["email", "E-Mail", "mail"],
   ["tasks", "Aufgaben", "tasks"],
   ["contacts", "Kontakte", "users"],
+  ["files", "Dateien", "folder"],
   ["automations", "Automationen", "bolt"],
   ["review", "Rückblick", "chart"],
   ["memory", "Gedächtnis", "memory"],
   ["settings", "Einstellungen", "settings"],
 ];
-const MOBILE_NAV = ["today", "chat", "calendar", "email"];
+const MOBILE_NAV = ["jarvis", "today", "calendar", "chat"];
 const isMobile = () => matchMedia("(max-width: 860px)").matches;
 
 function renderShell() {
@@ -318,9 +407,9 @@ function renderShell() {
     h("button", { class: "nav-item", "data-view": id, onclick: () => go(id) }, icon(ic), h("span", {}, label), id === "activity" ? h("span", { class: "count hidden", "data-count": "pending" }) : null);
   const sidebar = h("nav", { class: "sidebar", "aria-label": "Navigation" },
     h("div", { class: "brand" }, h("div", { class: "orb" }), "JARVIS"),
-    NAV.slice(0, 2).map((n) => navBtn(...n)),
+    NAV.slice(0, 3).map((n) => navBtn(...n)),
     h("div", { class: "nav-sep" }),
-    NAV.slice(2).map((n) => navBtn(...n)),
+    NAV.slice(3).map((n) => navBtn(...n)),
     h("div", { class: "sidebar-foot" },
       h("button", { class: "nav-item", onclick: openNotifications }, icon("bell"), h("span", {}, "Benachrichtigungen"), h("span", { class: "count hidden", "data-count": "notif" })),
       h("button", { class: "nav-item", onclick: cycleTheme }, icon("moon"), h("span", {}, "Design")),
@@ -393,11 +482,14 @@ function go(view, params = "") {
   location.hash = `${view}${params}`;
 }
 
+let unmountView = null;
 async function route() {
   if (voice.listening) voice.stopListening();
   if (voice.speaking) voice.stopSpeaking();
+  try { unmountView?.(); } catch { /* ignore */ }
+  unmountView = null;
   const [view, query = ""] = location.hash.replace(/^#/, "").split("?");
-  state.view = VIEWS[view] ? view : "today";
+  state.view = VIEWS[view] ? view : "jarvis";
   document.querySelectorAll("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === state.view));
   $("#more-btn")?.classList.toggle("active", !MOBILE_NAV.includes(state.view));
   const main = $("#main");
@@ -597,6 +689,171 @@ function speakReply(reply) {
   else again();
 }
 
+// ─── Vorschläge (proaktiver Butler) ─────────────────────────────────────────
+const SUGG_ICON = { meeting: "calendar", lead: "bolt", invoice: "file", deadline: "clock", reply: "reply", newsletter: "inbox" };
+
+function suggestionCard(s, onChange) {
+  const btns = h("div", { class: "sugg-actions" });
+  const busy = (fn) => async (e) => {
+    btns.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    e.currentTarget.classList.add("loading");
+    try { await fn(); } catch (err) { fail(err); }
+    onChange();
+  };
+  const accept = h("button", { class: "btn primary sm" }, icon("check"), h("span", {}, s.acceptLabel ?? "Annehmen"));
+  accept.onclick = busy(async () => {
+    const r = await api(`/api/suggestions/${s.id}/accept`, { method: "POST" });
+    if (r.status === "needs_confirmation") { toast("Kritische Aktion — bitte im Chat bestätigen.", "info"); state.conversationId = r.conversationId; go("chat"); return; }
+    toast(r.status === "failed" ? `Teilweise fehlgeschlagen:\n${r.result}` : "Erledigt.", r.status === "failed" ? "err" : "ok");
+  });
+  const edit = h("button", { class: "btn sm" }, icon("edit"), h("span", {}, "Bearbeiten"));
+  edit.onclick = () => startChat(s.editPrompt, { send: false });
+  const ignore = h("button", { class: "btn ghost sm" }, "Ignorieren");
+  ignore.onclick = busy(() => api(`/api/suggestions/${s.id}/ignore`, { method: "POST" }));
+  if (s.status === "auto") {
+    const undo = h("button", { class: "btn sm" }, icon("history"), h("span", {}, "Rückgängig"));
+    undo.onclick = busy(async () => { await api(`/api/suggestions/${s.id}/undo`, { method: "POST" }); toast("Rückgängig gemacht.", "ok"); });
+    const okBtn = h("button", { class: "btn ghost sm" }, "OK");
+    okBtn.onclick = busy(() => api(`/api/suggestions/${s.id}/ignore`, { method: "POST" }));
+    append(btns, [undo, okBtn]);
+  } else if (s.status === "needs_confirmation") {
+    append(btns, [h("button", { class: "btn primary sm", onclick: () => { state.conversationId = s.conversationId; go("chat"); } }, icon("shield"), h("span", {}, "Im Chat bestätigen"))]);
+  } else {
+    append(btns, [s.actions.length ? accept : null, edit, ignore]);
+  }
+  const [summary, ...draft] = (s.body ?? "").split("\n\nEntwurf:\n");
+  return h("div", { class: `sugg ${s.kind} ${s.status}` },
+    h("div", { class: "sugg-ic" }, icon(SUGG_ICON[s.kind] ?? "bolt")),
+    h("div", { class: "main" },
+      h("div", { class: "title" }, s.status === "auto" ? `✓ ${s.title}` : s.title),
+      summary ? h("div", { class: "sub" }, summary) : null,
+      draft.length ? h("details", { class: "sugg-draft" }, h("summary", {}, "Entwurf ansehen"), h("div", {}, draft.join("\n"))) : null,
+      s.actions.length && s.status === "open" ? h("details", { class: "sugg-draft" }, h("summary", {}, `Was „${s.acceptLabel ?? "Annehmen"}“ genau tut`), h("ul", {}, s.actions.map((a) => h("li", {}, a.label)))) : null,
+      s.warning ? h("div", { class: "sugg-warn" }, icon("alert"), s.warning) : null,
+      s.status === "auto" && s.result ? h("div", { class: "muted small" }, s.result) : null,
+      btns));
+}
+
+async function suggestionsCard(onChange) {
+  const data = await api("/api/suggestions").catch(() => null);
+  if (!data || !data.suggestions.length) return null;
+  return h("div", { class: "card sugg-card", style: "margin-bottom:16px" },
+    cardHead(`Vorschläge (${data.suggestions.length})`, "bolt", h("button", { class: "btn ghost sm", onclick: () => go("settings", "?focus=triage") }, "Einstellungen")),
+    h("div", { class: "card-body sugg-list" }, data.suggestions.map((s) => suggestionCard(s, onChange))));
+}
+
+function triageSettingsCard() {
+  const card = h("div", { class: "card" }, h("div", { class: "card-body", style: "padding:18px" }, h("div", { class: "spinner" })));
+  const render = async () => {
+    const d = await api("/api/suggestions");
+    const sw = (checked, onchange, label) => { const i = h("input", { type: "checkbox", checked, "aria-label": label }); i.addEventListener("change", () => onchange(i.checked)); return h("label", { class: "switch" }, i, h("span")); };
+    const save = async (patch) => { await api("/api/settings/triage", { method: "PUT", body: patch }).catch(fail); render(); };
+    const check = h("button", { class: "btn sm" }, icon("refresh"), h("span", {}, "Jetzt prüfen"));
+    check.onclick = async () => {
+      check.disabled = true;
+      try { const r = await api("/api/suggestions/check", { method: "POST" }); toast(r.skipped ? `Übersprungen: ${r.skipped}` : `${r.classified} E-Mail(s) geprüft, ${r.suggestions} Vorschlag/Vorschläge.`, "ok"); } catch (e) { fail(e); }
+      render();
+    };
+    set(card,
+      h("label", { class: "toggle-row" }, h("div", { class: "main" }, h("div", { class: "title" }, "Neue E-Mails prüfen und Vorschläge machen"),
+        h("div", { class: "sub" }, `Terminanfragen, Kundenanfragen, Rechnungen, Fristen. Kleines Modell, nur neue Mails · heute ${d.usedToday} von ${d.dailyLimit}.`)),
+        sw(d.settings.enabled, (v) => save({ enabled: v }), "Proaktive Hinweise")),
+      h("label", { class: "toggle-row" }, h("div", { class: "main" }, h("div", { class: "title" }, "Aufgaben für Rechnungen & Fristen automatisch anlegen"),
+        h("div", { class: "sub" }, "Mit „Rückgängig“ auf der Heute-Seite.")),
+        sw(d.settings.autoTasks, (v) => save({ autoTasks: v }), "Aufgaben automatisch")),
+      d.settings.mutedKinds.length || d.settings.mutedSenders.length
+        ? h("div", { class: "card-body", style: "padding:12px 18px" }, h("div", { class: "small muted", style: "margin-bottom:6px" }, "Stummgeschaltet (weil mehrfach ignoriert):"),
+            h("div", { class: "filters", style: "flex-wrap:wrap" },
+              d.settings.mutedKinds.map((k) => h("button", { class: "chip", title: "Wieder einschalten", onclick: async () => { await api("/api/settings/triage/unmute", { method: "POST", body: { kind: k } }).catch(fail); render(); } }, d.labels[k] ?? k, icon("x"))),
+              d.settings.mutedSenders.map((ks) => { const [k, ...rest] = ks.split(":"); const sender = rest.join(":"); return h("button", { class: "chip", title: "Wieder einschalten", onclick: async () => { await api("/api/settings/triage/unmute", { method: "POST", body: { kind: k, sender } }).catch(fail); render(); } }, `${d.labels[k] ?? k}: ${sender}`, icon("x")); })))
+        : null,
+      h("div", { class: "card-body", style: "padding:12px 18px" }, check));
+  };
+  render().catch((e) => set(card, h("div", { class: "card-body" }, h("div", { class: "empty" }, e.message))));
+  return card;
+}
+
+// ─── View: JARVIS (voice home) ──────────────────────────────────────────────
+function viewJarvis(main) {
+  unmountView = mountJarvis(main, {
+    h, set, append, icon, api, apiStream, go, toast, state, fmt, greeting, avatar,
+    toSpeech: (t) => voice.toSpeech(t),
+    unlockAudio: () => voice.unlock(),
+    pickVoice: () => voice.pickVoice(),
+    voicePrefs: () => ({ speak: voice.prefs.speak, conversation: true }),
+    voiceRate: () => voice.prefs.rate,
+  });
+}
+
+
+// ─── Tagesring (Heute) ──────────────────────────────────────────────────────
+const SVG_NS = "http://www.w3.org/2000/svg";
+function svg(tag, attrs = {}, ...children) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) if (v !== undefined && v !== null) node.setAttribute(k, String(v));
+  for (const c of children.flat()) if (c) node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  return node;
+}
+const RING_COLORS = ["#64D2FF", "#7D7AFF", "#30D158", "#FF9F0A", "#FF6482"];
+const minutesOfDay = (d) => { const x = new Date(d); return x.getHours() * 60 + x.getMinutes(); };
+function inHours(ms) {
+  const m = Math.max(1, Math.round(ms / 60000));
+  return m < 60 ? `in ${m} Min.` : `in ${Math.floor(m / 60)} Std.${m % 60 ? ` ${m % 60} Min.` : ""}`;
+}
+
+/** 24-hour ring: midnight at the top, today's events as glowing arcs, a pulsing "now". */
+function dayRing(events, ok) {
+  const R = 112, C = 2 * Math.PI * R, now = new Date(), nowMin = minutesOfDay(now);
+  const timed = events.filter((e) => !e.allDay).sort((a, b) => new Date(a.start) - new Date(b.start));
+  const arc = (fromMin, toMin, attrs) => svg("circle", { cx: 150, cy: 150, r: R, fill: "none", "stroke-dasharray": `${Math.max(1.5, ((toMin - fromMin) / 1440) * C).toFixed(2)} ${C.toFixed(2)}`, "stroke-dashoffset": (-(fromMin / 1440) * C).toFixed(2), ...attrs });
+  const span = (e) => {
+    const s = new Date(e.start), en = new Date(e.end), day0 = new Date(now); day0.setHours(0, 0, 0, 0);
+    const from = s < day0 ? 0 : minutesOfDay(s);
+    const to = en.getTime() - day0.getTime() >= 86400000 ? 1440 : Math.max(from + 5, minutesOfDay(en));
+    return [from, to];
+  };
+  const arcs = timed.map((e, i) => ({ e, color: RING_COLORS[i % RING_COLORS.length], span: span(e), past: new Date(e.end) < now }));
+  const at = (min, r) => { const a = (min / 1440) * 2 * Math.PI - Math.PI / 2; return [150 + r * Math.cos(a), 150 + r * Math.sin(a)]; };
+  const ticks = [...Array(24)].map((_, hIdx) => {
+    const major = hIdx % 6 === 0;
+    const [x1, y1] = at(hIdx * 60, major ? 90 : 95), [x2, y2] = at(hIdx * 60, 99);
+    return svg("line", { x1: x1.toFixed(2), y1: y1.toFixed(2), x2: x2.toFixed(2), y2: y2.toFixed(2), stroke: major ? "rgba(255,255,255,.5)" : "rgba(255,255,255,.22)", "stroke-width": major ? 1.6 : 1.2, "stroke-linecap": "round" });
+  });
+  const labels = [[0, "0"], [360, "6"], [720, "12"], [1080, "18"]].map(([m, t]) => { const [x, y] = at(m, 134); return svg("text", { x: x.toFixed(1), y: y.toFixed(1) }, t); });
+  const [nx, ny] = at(nowMin, R);
+  const title = ok ? `Tagesring: ${timed.map((e) => `${e.title} ${fmt.time(e.start)}`).join(", ") || "keine Termine"}, jetzt ${fmt.time(now)}` : "Tagesring";
+  const ringSvg = svg("svg", { viewBox: "0 0 300 300", class: "ring-svg", role: "img", "aria-label": title },
+    svg("defs", {},
+      svg("filter", { id: "ringGlow", x: "-50%", y: "-50%", width: "200%", height: "200%" }, svg("feGaussianBlur", { stdDeviation: 5 })),
+      svg("mask", { id: "ringReveal", maskUnits: "userSpaceOnUse", x: 0, y: 0, width: 300, height: 300 },
+        svg("circle", { class: "ring-reveal", cx: 150, cy: 150, r: R, fill: "none", stroke: "#fff", "stroke-width": 44 }))),
+    svg("g", { transform: "rotate(-90 150 150)", mask: "url(#ringReveal)" },
+      arc(0, 1440, { stroke: "rgba(255,255,255,.07)", "stroke-width": 12, class: "ring-track" }),
+      arc(0, nowMin, { stroke: "rgba(255,255,255,.16)", "stroke-width": 2 }),
+      svg("g", { filter: "url(#ringGlow)", opacity: 0.8 }, arcs.filter((a) => !a.past).map((a) => arc(...a.span, { stroke: a.color, "stroke-width": 14, "stroke-linecap": "round" }))),
+      arcs.map((a) => arc(...a.span, { stroke: a.color, "stroke-width": 12, "stroke-linecap": "round", opacity: a.past ? 0.35 : 1 }))),
+    svg("g", {}, ticks),
+    svg("g", { class: "ring-labels" }, labels),
+    svg("circle", { cx: nx.toFixed(2), cy: ny.toFixed(2), r: 13, fill: "#fff", "fill-opacity": 0.14 }),
+    svg("circle", { class: "ring-now", cx: nx.toFixed(2), cy: ny.toFixed(2), r: 6, fill: "none", stroke: "#fff", "stroke-width": 1.5 }),
+    svg("circle", { cx: nx.toFixed(2), cy: ny.toFixed(2), r: 5.5, fill: "#fff" }));
+
+  const current = timed.find((e) => new Date(e.start) <= now && new Date(e.end) > now);
+  const next = timed.find((e) => new Date(e.start) > now);
+  const center = !ok
+    ? [h("span", { class: "mono ring-kicker" }, "KALENDER"), h("span", { class: "ring-title" }, "Nicht verbunden"), h("button", { class: "ring-sub link", onclick: () => go("settings") }, "Jetzt verbinden")]
+    : current
+      ? [h("span", { class: "mono ring-kicker live-k" }, `JETZT · BIS ${fmt.time(current.end)}`), h("span", { class: "ring-title" }, current.title), h("span", { class: "ring-sub" }, next ? `danach ${next.title} · ${fmt.time(next.start)}` : "danach frei")]
+      : next
+        ? [h("span", { class: "mono ring-kicker" }, `ALS NÄCHSTES · ${fmt.time(next.start)}`), h("span", { class: "ring-title" }, next.title), h("span", { class: "ring-sub" }, inHours(new Date(next.start) - now))]
+        : [h("span", { class: "mono ring-kicker" }, "HEUTE"), h("span", { class: "ring-title" }, timed.length ? "Alles erledigt" : "Kein Termin"), h("span", { class: "ring-sub" }, "Der Rest des Tages gehört dir.")];
+  const legend = arcs.filter((a) => !a.past).slice(0, 4).map((a) =>
+    h("button", { class: "ring-leg", onclick: () => openEventSheet(a.e, timed) }, h("span", { class: "dot", style: `background:${a.color}` }), h("span", { class: "mono" }, fmt.time(a.e.start)), h("span", { class: "t" }, a.e.title)));
+  return h("div", { class: "ring-wrap" },
+    h("div", { class: "ring" }, ringSvg, h("div", { class: "ring-center" }, center)),
+    legend.length ? h("div", { class: "ring-legend" }, legend) : null);
+}
+
 // ─── View: Heute ────────────────────────────────────────────────────────────
 function greeting() {
   const hr = new Date().getHours();
@@ -604,8 +861,8 @@ function greeting() {
 }
 
 async function viewToday(main) {
-  set(main, h("div", { class: "view" }, h("div", { class: "card hero" }, h("div", { class: "orb xl busy" }), h("div", {}, h("h1", {}, `${greeting()}.`), h("p", {}, "Einen Moment, ich sehe mir deinen Tag an …")))));
-  const [b, setup] = await Promise.all([api("/api/briefing"), api("/api/setup")]);
+  set(main, h("div", { class: "view today" }, h("div", { class: "today-top" }, h("div", { class: "today-hello" }, h("div", { class: "today-date" }, fmt.long(new Date()).toUpperCase()), h("h1", {}, `${greeting()}.`), h("p", { class: "today-sum shim" }, "Einen Moment, ich sehe mir deinen Tag an …")))));
+  const [b, setup, sugg] = await Promise.all([api("/api/briefing"), api("/api/setup"), suggestionsCard(() => viewToday(main))]);
   const now = Date.now();
 
   const events = b.events.ok ? b.events.data : [];
@@ -615,13 +872,12 @@ async function viewToday(main) {
   const dueTasks = tasks.filter((t) => t.due && t.due.slice(0, 10) <= today);
   const pending = b.pending.ok ? b.pending.data : [];
   const upcoming = events.filter((e) => e.allDay || new Date(e.end).getTime() > now);
-  const next = upcoming.find((e) => !e.allDay);
 
   const summary = [];
   if (b.events.ok) summary.push(events.length ? `${events.length} ${events.length === 1 ? "Termin" : "Termine"} heute` : "keine Termine heute");
   if (b.emails.ok) summary.push(`${emails.length} ungelesene E-Mail${emails.length === 1 ? "" : "s"}`);
   summary.push(`${tasks.length} offene Aufgabe${tasks.length === 1 ? "" : "n"}`);
-  const name = state.userName ? `, ${state.userName}` : "";
+  const name = state.userName ? `, ${state.userName.split(/\s+/)[0]}` : "";
 
   const stat = (n, l, ic, cls, view) => h("div", { class: "card stat", onclick: () => go(view) }, h("div", { class: `ic ${cls}` }, icon(ic)), h("div", {}, h("div", { class: "n" }, n), h("div", { class: "l" }, l)));
 
@@ -658,14 +914,21 @@ async function viewToday(main) {
 
   const setupDone = setup.steps.filter((s) => s.done).length;
 
-  set(main, h("div", { class: "view" },
-    h("div", { class: "card hero" },
-      h("div", { class: "orb xl" }),
-      h("div", { class: "grow" },
+  set(main, h("div", { class: "view today" },
+    h("div", { class: "today-top" },
+      h("div", { class: "today-hello" },
+        h("div", { class: "today-date" }, fmt.long(new Date()).toUpperCase()),
         h("h1", {}, `${greeting()}${name}.`),
-        h("p", {}, `${fmt.long(new Date())} — ${summary.join(", ")}.`),
-        next ? h("p", { class: "small muted" }, `Als Nächstes: ${next.title} um ${fmt.time(next.start)}`) : null),
-      h("button", { class: "btn primary", onclick: () => startChat("Guten Morgen, JARVIS. Bereite mir meinen Tag vor.") }, icon("bolt"), "Briefing starten")),
+        h("p", { class: "today-sum" }, `${summary.join(", ")}.`)),
+      h("button", { class: "orb-btn", "aria-label": "Mit JARVIS sprechen", onclick: () => go("jarvis") }, h("span", { class: "orb breathe" }))),
+    h("div", { class: "today-hero" },
+      dayRing(events, b.events.ok),
+      h("div", { class: "brief glass" },
+        h("button", { class: "brief-play", "aria-label": "Briefing von JARVIS vorlesen lassen", onclick: () => { voice.unlock(); state.jarvisPrompt = "Guten Morgen, JARVIS. Bereite mir meinen Tag vor."; go("jarvis"); } },
+          icon("play")),
+        h("div", { class: "brief-text" }, h("b", {}, greeting() === "Guten Morgen" ? "Morgenbriefing" : "Tagesbriefing"), h("span", {}, "Termine, Mails, Entscheidungen — gesprochen")),
+        h("span", { class: "eq" }, h("i"), h("i"), h("i"), h("i"), h("i"), h("i"), h("i")),
+        h("button", { class: "btn sm ghost", onclick: () => startChat("Guten Morgen, JARVIS. Bereite mir meinen Tag vor.") }, "Als Text"))),
     !setup.complete
       ? h("div", { class: "banner info", style: "max-width:none" }, icon("plug"),
           h("div", { style: "flex:1" }, h("b", {}, `Einrichtung: ${setupDone} von ${setup.steps.length} Schritten erledigt. `), h("span", { class: "muted" }, setup.steps.find((s) => !s.done)?.title ?? "")),
@@ -676,6 +939,7 @@ async function viewToday(main) {
       stat(b.emails.ok ? emails.length : "–", "Ungelesene E-Mails", "mail", "", "email"),
       stat(dueTasks.length, "Heute fällige Aufgaben", "tasks", "ok", "tasks"),
       stat(pending.length, "Warten auf dich", "shield", pending.length ? "warn" : "", "activity")),
+    sugg,
     pending.length
       ? h("div", { class: "card", style: "margin-bottom:16px" }, cardHead("Wartet auf deine Bestätigung", "shield"),
           h("div", { class: "card-body" }, pending.map((p) => confirmCard(p, () => viewToday(main)))))
@@ -713,7 +977,10 @@ async function viewChat(main, params = new URLSearchParams()) {
     ? h("button", { class: "btn ghost icon mic", id: "mic-btn", type: "button", title: "Sprechen", "aria-label": "Sprechen", "aria-pressed": "false",
         onclick: () => (voice.listening ? voice.stopListening() : startVoiceInput()) }, icon("mic"))
     : null;
-  const form = h("form", { class: "composer", onsubmit: (e) => { e.preventDefault(); voice.unlock(); const t = input.value; input.value = ""; autosize(); sendMessage(t); } }, micBtn, input, sendBtn);
+  const picker = h("input", { type: "file", multiple: true, accept: FILE_ACCEPT, hidden: true, onchange: () => { addAttachments(picker.files); picker.value = ""; } });
+  const attachBtn = h("button", { class: "btn ghost icon attach", type: "button", title: "Datei anhängen", "aria-label": "Datei anhängen", onclick: () => picker.click() }, icon("clip"));
+  const form = h("form", { class: "composer", onsubmit: (e) => { e.preventDefault(); voice.unlock(); const t = input.value; input.value = ""; autosize(); sendMessage(t); } }, attachBtn, micBtn, input, sendBtn, picker);
+  input.addEventListener("paste", (e) => { const fl = e.clipboardData?.files; if (fl?.length) { e.preventDefault(); addAttachments(fl); } });
   const autosize = () => { input.style.height = "auto"; input.style.height = `${Math.min(input.scrollHeight, 220)}px`; };
   input.addEventListener("input", autosize);
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); } });
@@ -734,23 +1001,29 @@ async function viewChat(main, params = new URLSearchParams()) {
     h("div", {}, h("b", {}, "Sicherheitshinweis: "), "In dieser Unterhaltung wurde ein möglicher Manipulationsversuch (Prompt Injection) erkannt. Externe Aktionen erfordern erhöhte Bestätigung."));
 
   set(main, h("div", { class: "view chat" }, top, scroll,
-    h("div", { class: "composer-wrap" }, secBanner, form, h("div", { class: "composer-hint" }, voice.canListen ? "Enter zum Senden · 🎤 zum Sprechen · Externe Aktionen immer erst nach deiner Bestätigung" : "Enter zum Senden · Shift+Enter für neue Zeile · Externe Aktionen immer erst nach deiner Bestätigung"))));
+    h("div", { class: "composer-wrap" }, secBanner, h("div", { class: "attach-row", id: "attach-row" }), form, h("div", { class: "composer-hint" }, voice.canListen ? "Enter zum Senden · 🎤 zum Sprechen · Externe Aktionen immer erst nach deiner Bestätigung" : "Enter zum Senden · Shift+Enter für neue Zeile · Externe Aktionen immer erst nach deiner Bestätigung"))));
 
   state.renderedPending = new Set();
+  dropZone(main.querySelector(".view.chat"), addAttachments);
+  renderAttachRow();
   voiceUi();
   if (state.conversationId) {
     const data = await api(`/api/conversations/${state.conversationId}/messages`);
     title.textContent = data.conversation.title ?? "Unterhaltung";
     secBanner.classList.toggle("hidden", !data.conversation.tainted);
     for (const m of data.messages) {
-      if (m.role === "user") addUser(m.text, m.createdAt);
+      if (m.role === "user") {
+        const lines = (m.text ?? "").split("\n");
+        const files = lines.filter((l) => l.startsWith("📎 ")).map((l) => l.slice(3));
+        addUser(lines.filter((l) => !l.startsWith("📎 ")).join("\n"), m.createdAt, files);
+      }
       else addAssistant().finish(m.text, [], m.createdAt);
     }
     renderPendingCards(data.pendingActions);
   } else {
     thread.append(h("div", { class: "welcome" },
       h("div", { class: "orb xl" }),
-      h("h2", {}, `${greeting()}${state.userName ? `, ${state.userName}` : ""}.`),
+      h("h2", {}, `${greeting()}${state.userName ? `, ${state.userName.split(/\s+/)[0]}` : ""}.`),
       h("p", {}, "Wie kann ich helfen? Ich lese, plane und bereite vor — und frage, bevor etwas dein Postfach oder deinen Kalender verlässt."),
       h("div", { class: "suggest-grid" }, SUGGESTIONS.map(([ic, text, sub]) =>
         h("button", { class: "suggest", onclick: () => sendMessage(text) }, icon(ic), h("div", {}, h("b", {}, text), h("span", {}, sub)))))));
@@ -770,9 +1043,12 @@ function scrollDown() {
   if (s) s.scrollTop = s.scrollHeight;
 }
 
-function addUser(text, at) {
+function addUser(text, at, files = []) {
   $(".welcome")?.remove();
-  $("#thread").append(h("div", { class: "msg user" }, h("div", {}, h("div", { class: "bubble" }, text), at ? h("div", { class: "msg-time", style: "text-align:right" }, fmt.rel(at)) : null)));
+  $("#thread").append(h("div", { class: "msg user" }, h("div", {},
+    files.length ? h("div", { class: "user-files" }, files.map((n) => h("span", { class: "attach-chip done" }, icon("clip"), h("span", { class: "name" }, n)))) : null,
+    text ? h("div", { class: "bubble" }, text) : null,
+    at ? h("div", { class: "msg-time", style: "text-align:right" }, fmt.rel(at)) : null)));
   scrollDown();
 }
 
@@ -791,12 +1067,17 @@ function addAssistant() {
   return {
     content,
     step(a) {
-      let el = map.get(a.activityId);
+      const prev = map.get(a.activityId);
       const label = a.description.split("\n")[0];
-      const ic = a.status === "executing" || a.status === "planned" ? h("div", { class: "spinner" }) : icon(STEP_ICON[a.status] ?? "check");
-      const next = h("div", { class: `step ${a.status}`, title: a.error ?? a.description }, ic, h("span", { class: "label" }, label), a.error ? h("span", { class: "muted" }, `— ${a.error}`) : null);
-      if (el) el.replaceWith(next); else steps.append(next);
-      map.set(a.activityId, next);
+      const running = a.status === "executing" || a.status === "planned";
+      const t0 = prev?.t0 ?? performance.now();
+      const secs = !running && prev ? (performance.now() - t0) / 1000 : null;
+      const ic = running ? h("span", { class: "spin-v" }) : h("span", { class: `step-ic ${a.status}` }, icon(STEP_ICON[a.status] ?? "check"));
+      const next = h("div", { class: `step ${a.status}`, title: a.error ?? a.description }, ic, h("span", { class: "label" }, label),
+        a.error ? h("span", { class: "muted err-note" }, a.error) : null,
+        secs !== null && secs >= 0.05 ? h("span", { class: "mono step-t" }, `${secs.toFixed(1).replace(".", ",")} s`) : null);
+      if (prev) prev.el.replaceWith(next); else steps.append(next);
+      map.set(a.activityId, { el: next, t0 });
       scrollDown();
     },
     finish(text, actions = [], at) {
@@ -827,14 +1108,44 @@ function handleReply(reply, turn, opts = {}) {
   refreshCounts();
 }
 
+// ─── Chat-Anhänge ──────────────────────────────────────────────────────────
+function renderAttachRow() {
+  const row = $("#attach-row");
+  if (!row) return;
+  set(row, state.attachments.map((a) => h("div", { class: `attach-chip ${a.error ? "err" : a.file ? "done" : ""}`, title: a.error ?? a.name },
+    icon(a.error ? "alert" : FILE_ICON[a.file?.format] ?? "file"),
+    h("span", { class: "name" }, a.name),
+    h("span", { class: "meta" }, a.error ? "Fehler" : a.file ? fmtSize(a.size) : `${Math.round(a.progress * 100)} %`),
+    h("button", { type: "button", class: "x", "aria-label": `${a.name} entfernen`, onclick: () => { state.attachments = state.attachments.filter((x) => x !== a); renderAttachRow(); } }, icon("x")))));
+}
+
+function addAttachments(fileList) {
+  for (const f of [...fileList].slice(0, 10 - state.attachments.length)) {
+    const a = { name: f.name, size: f.size, progress: 0, file: null, error: null };
+    a.promise = uploadFile(f, (p) => { a.progress = p; renderAttachRow(); }, state.conversationId ?? undefined)
+      .then((file) => { a.file = file; })
+      .catch((e) => { a.error = e.message; toast(`${f.name}: ${e.message}`, "err"); })
+      .finally(renderAttachRow);
+    state.attachments.push(a);
+  }
+  renderAttachRow();
+  $("#chat-input")?.focus();
+}
+
 async function sendMessage(text, opts = {}) {
   text = text.trim();
-  if (!text || state.busy) return;
+  const pending = state.attachments.filter((a) => !a.error);
+  if ((!text && !pending.length) || state.busy) return;
   state.busy = true;
-  addUser(text);
+  state.attachments = [];
+  renderAttachRow();
+  addUser(text, undefined, pending.map((a) => a.name));
   const turn = addAssistant();
   try {
-    const reply = await apiStream("/api/chat/stream", { conversationId: state.conversationId ?? undefined, message: text }, (ev) => ev.type === "action" && turn.step(ev.action));
+    await Promise.all(pending.map((a) => a.promise));
+    const ids = pending.filter((a) => a.file).map((a) => a.file.id);
+    if (!text && !ids.length) throw new Error("Upload fehlgeschlagen.");
+    const reply = await apiStream("/api/chat/stream", { conversationId: state.conversationId ?? undefined, message: text, attachments: ids.length ? ids : undefined }, (ev) => ev.type === "action" && turn.step(ev.action));
     handleReply(reply, turn, opts);
   } catch (err) {
     turn.error(err.message);
@@ -868,6 +1179,28 @@ function describePreview(desc) {
   return { headline: first, body: rest.join("\n").trim() };
 }
 
+/** "Press and hold to run": fills over 1.2 s, fires once. Works with pointer and Space/Enter. */
+function holdButton(onFire, label = "Halten zum Ausführen") {
+  const btn = h("button", { class: "hold-btn", "aria-label": `${label} (1 Sekunde)` },
+    h("span", { class: "base" }, icon("send"), label),
+    h("span", { class: "fill" }, icon("send"), "Weiter halten …"),
+    h("span", { class: "done" }, icon("check"), "Bestätigt"));
+  let timer = null;
+  const down = (e) => {
+    if (btn.disabled || btn.classList.contains("sent")) return;
+    if (e?.pointerId !== undefined) btn.setPointerCapture?.(e.pointerId);
+    btn.classList.add("on");
+    timer = setTimeout(() => { btn.classList.remove("on"); btn.classList.add("sent"); navigator.vibrate?.(12); onFire(); }, 1200);
+  };
+  const up = () => { clearTimeout(timer); btn.classList.remove("on"); };
+  btn.addEventListener("pointerdown", down);
+  for (const ev of ["pointerup", "pointercancel", "lostpointercapture"]) btn.addEventListener(ev, up);
+  btn.addEventListener("contextmenu", (e) => e.preventDefault());
+  btn.addEventListener("keydown", (e) => { if ((e.key === " " || e.key === "Enter") && !e.repeat) { e.preventDefault(); down(); } });
+  btn.addEventListener("keyup", (e) => (e.key === " " || e.key === "Enter") && up());
+  return btn;
+}
+
 /** Confirmation card. inChat → the follow-up turn streams into the thread. */
 function confirmCard(p, onDone, inChat = false) {
   const crit = p.risk >= 3;
@@ -897,12 +1230,18 @@ function confirmCard(p, onDone, inChat = false) {
     } catch (err) {
       fail(err);
       foot.querySelectorAll("button").forEach((b) => (b.disabled = false));
+      foot.querySelector(".hold-btn")?.classList.remove("sent");
     }
   };
-  foot.append(
-    h("button", { class: `btn ${crit ? "danger" : "ok"}`, onclick: () => decide(true) }, icon("check"), crit ? "Trotzdem ausführen" : "Bestätigen & ausführen"),
-    h("button", { class: "btn ghost", onclick: () => decide(false) }, "Ablehnen"),
-    h("span", { class: "muted" }, `gültig bis ${fmt.time(p.expiresAt)}`));
+  // Level 2: press and hold (1.2 s) — a deliberate gesture instead of a stray tap.
+  // Level 3 keeps the explicit "Trotzdem ausführen" button.
+  const approveBtn = crit
+    ? h("button", { class: "btn danger", onclick: () => decide(true) }, icon("alert"), "Trotzdem ausführen")
+    : holdButton(() => decide(true));
+  foot.append(approveBtn,
+    h("div", { class: "confirm-row" },
+      h("button", { class: "btn ghost reject", onclick: () => decide(false) }, "Ablehnen"),
+      h("span", { class: "muted" }, icon("shield"), `Erst nach deiner Bestätigung · gültig bis ${fmt.time(p.expiresAt)}`)));
   return card;
 }
 
@@ -939,8 +1278,17 @@ const RISK = [["Lesen", ""], ["Niedrig", "accent"], ["Extern", "warn"], ["Kritis
 
 async function viewActivity(main) {
   const [pending, activity, audit] = await Promise.all([api("/api/confirmations"), api("/api/activity"), api("/api/audit")]);
-  const filters = { all: "Alle", awaiting_confirmation: "Wartet", succeeded: "Erfolgreich", failed: "Fehler" };
-  const shown = activity.filter((a) => state.activityFilter === "all" || a.status === state.activityFilter || (state.activityFilter === "failed" && a.status === "denied"));
+  const filters = { all: "Alle", awaiting_confirmation: "Wartet", succeeded: "Erfolgreich", failed: "Fehler", autonomous: "Autonom" };
+  const shown = activity.filter((a) => state.activityFilter === "all" || a.status === state.activityFilter || (state.activityFilter === "failed" && a.status === "denied") || (state.activityFilter === "autonomous" && a.autonomous));
+  const undoBtn = (a) => {
+    const b = h("button", { class: "btn sm", title: "Rückgängig" }, icon("history"), h("span", {}, "Rückgängig"));
+    b.onclick = async () => {
+      b.disabled = true;
+      try { const r = await api(`/api/activity/${a.id}/undo`, { method: "POST" }); toast(`Rückgängig: ${r.label}`, "ok"); } catch (e) { fail(e); }
+      viewActivity(main);
+    };
+    return b;
+  };
   set(main, h("div", { class: "view" },
     viewHead("Aktivität", "Alles, was JARVIS getan hat oder tun möchte — nachvollziehbar.", h("button", { class: "btn ghost", onclick: () => route() }, icon("refresh"), "Aktualisieren")),
     pending.length ? h("div", {}, h("div", { class: "section-title" }, icon("shield"), `Wartet auf Bestätigung (${pending.length})`),
@@ -954,7 +1302,11 @@ async function viewActivity(main) {
         h("div", { class: `tl-ic ${a.status}` }, a.status === "executing" ? h("div", { class: "spinner" }) : icon(STEP_ICON[a.status] ?? "dot")),
         h("div", { style: "min-width:0" }, h("div", { class: "title" }, a.description.split("\n")[0]),
           h("div", { class: "sub" }, `${fmt.dt(a.createdAt)} · ${a.toolName}${a.error ? ` · ${a.error}` : ""}`)),
-        h("div", { class: "right" }, h("span", { class: `badge ${RISK[a.risk]?.[1] ?? ""}` }, RISK[a.risk]?.[0] ?? a.risk), h("span", { class: `badge ${cls}` }, label)));
+        h("div", { class: "right" },
+          a.autonomous ? h("span", { class: "badge accent", title: "Von einer Automation selbst ausgeführt" }, "autonom") : null,
+          a.undoneAt ? h("span", { class: "badge" }, "rückgängig gemacht") : null,
+          h("span", { class: `badge ${RISK[a.risk]?.[1] ?? ""}` }, RISK[a.risk]?.[0] ?? a.risk), h("span", { class: `badge ${cls}` }, label),
+          a.canUndo ? undoBtn(a) : null));
     })) : h("div", { class: "card-body", style: "padding:18px" }, h("div", { class: "empty" }, "Noch keine Einträge."))),
     h("details", { class: "fold" },
       h("summary", { class: "section-title" }, icon("shield"), "Audit-Log (externe & ändernde Aktionen)"),
@@ -977,6 +1329,17 @@ function weekStart(offset) {
 }
 
 async function viewCalendar(main) {
+  const focusId = state.calendarFocusId;
+  state.calendarFocusId = null;
+  if (state.calendarFocus) {
+    const focus = new Date(state.calendarFocus);
+    state.calendarFocus = null;
+    if (!Number.isNaN(focus.getTime())) {
+      focus.setHours(0, 0, 0, 0);
+      focus.setDate(focus.getDate() - ((focus.getDay() + 6) % 7));
+      state.weekOffset = Math.round((focus - weekStart(0)) / 604800000);
+    }
+  }
   const start = weekStart(state.weekOffset);
   const end = new Date(start);
   end.setDate(end.getDate() + 7);
@@ -999,11 +1362,13 @@ async function viewCalendar(main) {
   }
 
   const days = [...Array(7)].map((_, i) => { const d = new Date(start); d.setDate(d.getDate() + i); return d; });
+  const focused = focusId && events.find((e) => e.id === focusId);
+  if (focused) setTimeout(() => openEventSheet(focused, events), 350);
   if (isMobile()) return renderAgenda(main, head, days, events);
   const headRow = h("div", { class: "cal-head" }, h("div"), days.map((d) =>
     h("div", { class: isToday(d) ? "today" : "" }, d.toLocaleDateString("de-DE", { weekday: "short" }), h("b", {}, d.getDate()))));
   const allday = h("div", { class: "cal-allday" }, h("div", {}, "ganzt."), days.map((d) =>
-    h("div", {}, events.filter((e) => e.allDay && e.start.slice(0, 10) <= ymd(d) && e.end.slice(0, 10) > ymd(d)).map((e) => h("div", { class: "cal-chip", title: e.title }, e.title)))));
+    h("div", {}, events.filter((e) => e.allDay && e.start.slice(0, 10) <= ymd(d) && e.end.slice(0, 10) > ymd(d)).map((e) => h("button", { class: "cal-chip", title: e.title, onclick: () => openEventSheet(e, events) }, e.title)))));
   const hours = h("div", { class: "cal-hours" }, [...Array(24)].map((_, i) => h("div", {}, i ? `${String(i).padStart(2, "0")}:00` : "")));
   const cols = days.map((d) => {
     const col = h("div", { class: `cal-day ${isToday(d) ? "today" : ""}`, style: `height:${24 * HOUR_PX}px` });
@@ -1024,7 +1389,7 @@ async function viewCalendar(main) {
     for (const { e, s, en, lane } of placed) {
       const top = ((s - dayStart) / 3600000) * HOUR_PX;
       const height = Math.max(22, ((en - s) / 3600000) * HOUR_PX - 2);
-      col.append(h("div", { class: `cal-ev ${e.busy ? "" : "free"}`, style: `top:${top}px;height:${height}px;left:calc(${(lane / n) * 100}% + 3px);width:calc(${100 / n}% - 6px);right:auto`, title: `${e.title}\n${fmt.time(e.start)}–${fmt.time(e.end)}${e.location ? `\n${e.location}` : ""}` },
+      col.append(h("button", { class: `cal-ev ${e.busy ? "" : "free"}`, onclick: () => openEventSheet(e, events), style: `top:${top}px;height:${height}px;left:calc(${(lane / n) * 100}% + 3px);width:calc(${100 / n}% - 6px);right:auto`, title: `${e.title}\n${fmt.time(e.start)}–${fmt.time(e.end)}${e.location ? `\n${e.location}` : ""}` },
         h("b", {}, e.title), height > 34 ? h("span", {}, `${fmt.time(e.start)}–${fmt.time(e.end)}`) : null));
     }
     if (isToday(d)) {
@@ -1037,6 +1402,56 @@ async function viewCalendar(main) {
   set(main, h("div", { class: "view" }, head, h("div", { class: "card cal" }, headRow, allday, body),
     h("div", { class: "muted small", style: "margin-top:10px" }, `${events.length} Termine · Zeitzone ${state.status?.timezone ?? TZ}`)));
   body.scrollTop = 7 * HOUR_PX;
+}
+
+
+// ─── Termin-Sheet ───────────────────────────────────────────────────────────
+const RSVP = { accepted: ["Zugesagt", "ok"], declined: ["Abgesagt", "err"], tentative: ["Vielleicht", "warn"], needsAction: ["Offen", ""] };
+
+/** Event details as a glass sheet (phone) / dialog (desktop). Event texts are rendered as text only. */
+function openEventSheet(e, sameDayEvents = []) {
+  document.querySelector(".ev-wrap")?.remove();
+  const close = () => { wrap.classList.add("closing"); setTimeout(() => wrap.remove(), 260); document.removeEventListener("keydown", onKey); };
+  const onKey = (ev) => ev.key === "Escape" && close();
+  const start = new Date(e.start);
+  const dayKey = start.toDateString();
+  const sameDay = sameDayEvents.filter((x) => !x.allDay && new Date(x.start).toDateString() === dayKey);
+  const pos = (iso) => { const d = new Date(iso); return Math.max(0, Math.min(100, ((d.getHours() + d.getMinutes() / 60 - 7) / 14) * 100)); };
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const diff = Math.round((new Date(start.getFullYear(), start.getMonth(), start.getDate()) - today) / 86400000);
+  const chip = diff === 0 ? "Heute" : diff === 1 ? "Morgen" : diff === -1 ? "Gestern" : diff > 1 && diff < 7 ? `in ${diff} Tagen` : null;
+  const mins = e.allDay ? 0 : Math.round((new Date(e.end) - start) / 60000);
+  const safeLink = typeof e.htmlLink === "string" && /^https:\/\//.test(e.htmlLink) ? e.htmlLink : null;
+  const body = h("div", { class: "jc jc-event ev-card" },
+    h("div", { class: "jc-head" }, h("span", { class: "jc-glyph k-event" }, icon("calendar")), h("span", { class: "jc-label" }, "Termin"),
+      e.status === "tentative" ? h("span", { class: "jc-chip orange" }, "Vorläufig") : chip ? h("span", { class: "jc-chip" }, chip) : null,
+      h("button", { class: "ev-x", "aria-label": "Schließen", onclick: close }, icon("x"))),
+    h("div", { class: "jc-date" }, start.toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long" })),
+    e.allDay ? h("div", { class: "jc-big" }, "Ganztägig")
+      : h("div", { class: "jc-timeRow" }, h("span", { class: "jc-big" }, fmt.time(e.start)), h("span", { class: "jc-to" }, `– ${fmt.time(e.end)}`),
+          h("span", { class: "jc-dur mono" }, mins >= 60 ? `${Math.floor(mins / 60)} STD${mins % 60 ? ` ${mins % 60} MIN` : ""}` : `${mins} MIN`)),
+    h("div", { class: "jc-title" }, e.title),
+    e.allDay || !sameDay.length ? null : h("div", { class: "jc-daybar" },
+      h("div", { class: "track" }),
+      sameDay.map((x) => h("div", { class: `seg ${x.id === e.id ? "me" : ""}`, title: `${x.title} ${fmt.time(x.start)}`, style: `left:${pos(x.start)}%;width:${Math.max(2.5, pos(x.end) - pos(x.start))}%` })),
+      h("div", { class: "ticks mono" }, ["7", "10", "13", "16", "19", "21"].map((t) => h("span", {}, t)))),
+    h("div", { class: "jc-meta" },
+      e.location ? h("div", {}, icon("pin"), e.location) : null,
+      e.organizer ? h("div", {}, icon("users"), `Organisiert von ${e.organizer}`) : null),
+    e.attendees?.length ? h("div", { class: "ev-people" }, e.attendees.slice(0, 8).map((a) => {
+      const [label, cls] = RSVP[a.responseStatus] ?? RSVP.needsAction;
+      return h("div", { class: "ev-person" }, avatar(a.name || a.email), h("div", { class: "main" }, h("div", { class: "title" }, a.name || a.email), a.name ? h("div", { class: "sub" }, a.email) : null), h("span", { class: `badge ${cls}` }, label));
+    }), e.attendees.length > 8 ? h("div", { class: "muted small" }, `+ ${e.attendees.length - 8} weitere`) : null) : null,
+    e.description ? h("div", { class: "jc-preview ev-desc" }, e.description.slice(0, 1200)) : null,
+    h("div", { class: "jc-actions" },
+      e.location ? h("a", { class: "jc-btn primary", href: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(e.location)}`, target: "_blank", rel: "noopener noreferrer" }, "Route") : null,
+      h("button", { class: `jc-btn ${e.location ? "" : "primary"}`, onclick: () => { close(); startChat(`Zum Termin „${e.title}“ am ${fmt.dt(e.start)}: `, { send: false }); } }, "Mit JARVIS"),
+      safeLink ? h("a", { class: "jc-btn", href: safeLink, target: "_blank", rel: "noopener noreferrer", "aria-label": "In Google Kalender öffnen" }, icon("external")) : null));
+  const wrap = h("div", { class: "ev-wrap", onclick: (ev) => ev.target === wrap && close() },
+    h("div", { class: "ev-sheet glass", role: "dialog", "aria-modal": "true", "aria-label": e.title }, h("div", { class: "jv-grip ev-grip", "aria-hidden": "true" }), body));
+  document.addEventListener("keydown", onKey);
+  document.body.append(wrap);
+  wrap.querySelector(".ev-x")?.focus();
 }
 
 /** Phones: a readable day-by-day list instead of the 7-column grid. */
@@ -1068,7 +1483,7 @@ function renderAgenda(main, head, days, events) {
             today ? h("span", { class: "badge accent" }, "Heute") : null),
           evs.length
             ? h("div", { class: "card agenda-list" }, evs.map((e) =>
-                h("div", { class: `agenda-ev ${e.busy ? "" : "free"}` },
+                h("button", { class: `agenda-ev ${e.busy ? "" : "free"}`, onclick: () => openEventSheet(e, events) },
                   h("div", { class: "t" }, e.allDay ? h("b", {}, "ganztägig") : [h("b", {}, fmt.time(e.start)), h("span", {}, fmt.time(e.end))]),
                   h("div", { class: "main" }, h("div", { class: "title" }, e.title),
                     e.location ? h("div", { class: "sub" }, icon("pin"), e.location) : null,
@@ -1201,6 +1616,114 @@ async function viewTasks(main) {
         h("span", { class: `badge ${r.status === "scheduled" ? "accent" : ""}` }, { scheduled: "geplant", fired: "erinnert", cancelled: "storniert" }[r.status]),
         r.status === "scheduled" ? h("button", { class: "btn ghost icon sm", "aria-label": "Stornieren", onclick: async () => { await api(`/api/reminders/${r.id}`, { method: "DELETE" }).catch(fail); viewTasks(main); } }, icon("x")) : null))
       : h("div", { class: "card-body", style: "padding:18px" }, h("div", { class: "empty" }, "Keine Erinnerungen. Beispiel: „Erinnere mich morgen um 9 an den Zahnarzt.“")))));
+}
+
+// ─── View: Dateien ──────────────────────────────────────────────────────────
+const SOURCE_LABEL = { upload: "hochgeladen", generated: "von JARVIS erstellt", edited: "bearbeitet", converted: "umgewandelt", drive: "aus Drive", browser: "aus dem Web", telegram: "per Telegram" };
+
+function chatAboutFile(file) {
+  state.conversationId = null;
+  state.attachments = [{ name: file.name, size: file.size, progress: 1, file, error: null, promise: Promise.resolve() }];
+  go("chat");
+}
+
+async function previewFile(file) {
+  const body = h("div", { class: "preview-body" }, h("div", { class: "spinner", style: "margin:30px auto" }));
+  const close = () => { wrap.remove(); if (url) URL.revokeObjectURL(url); };
+  let url = null;
+  const wrap = h("div", { class: "modal-wrap", onclick: (e) => e.target === wrap && close() },
+    h("div", { class: "modal preview-modal", role: "dialog", "aria-modal": "true" },
+      h("div", { class: "preview-head" }, h("h3", {}, file.name), h("button", { class: "btn ghost icon", "aria-label": "Schließen", onclick: close }, icon("x"))),
+      body,
+      h("div", { class: "foot" },
+        h("button", { class: "btn", onclick: () => { close(); chatAboutFile(file); } }, icon("chat"), h("span", {}, "Mit JARVIS besprechen")),
+        h("button", { class: "btn primary", onclick: () => downloadFile(file.id, file.name, file.size) }, icon("download"), h("span", {}, "Herunterladen")))));
+  wrap.addEventListener("keydown", (e) => e.key === "Escape" && close());
+  document.body.append(wrap);
+  try {
+    if (file.format === "png" || file.format === "jpg") {
+      url = URL.createObjectURL(await fetchFileBlob(file.id, file.size));
+      set(body, h("img", { src: url, alt: file.name, class: "preview-img" }));
+    } else {
+      const p = await api(`/api/files/${file.id}/preview`);
+      set(body,
+        p.sheets ? h("div", { class: "muted small" }, p.sheets.map((s) => `${s.name}: ${s.rows} × ${s.columns}`).join(" · ")) : null,
+        p.needsVision ? h("div", { class: "banner warn", style: "max-width:none;margin:0" }, icon("alert"), h("div", {}, "Kaum Text gefunden (Scan?) — JARVIS kann das PDF trotzdem visuell lesen.")) : null,
+        h("pre", { class: "preview-text" }, p.text || "(kein Text)"),
+        p.truncated ? h("div", { class: "muted small" }, "Vorschau gekürzt.") : null);
+    }
+  } catch (e) { set(body, h("div", { class: "empty" }, e.message)); }
+}
+
+async function viewFiles(main, params) {
+  const q = params.get("q") ?? "";
+  const data = await api(`/api/files${q ? `?q=${encodeURIComponent(q)}` : ""}`);
+  const previewId = params.get("preview");
+  if (previewId) {
+    // Opened from a JARVIS context card: show that file right away.
+    const f = data.files.find((x) => x.id === previewId) ?? (await api(`/api/files/${encodeURIComponent(previewId)}`).catch(() => null))?.file;
+    if (f) setTimeout(() => previewFile(f), 0);
+  }
+  const reload = (query = q) => go("files", query ? `?q=${encodeURIComponent(query)}` : "");
+  const progress = h("div", { class: "upload-list" });
+  const doUpload = async (list) => {
+    for (const f of [...list]) {
+      const bar = h("div", { class: "bar" }, h("div", { style: "width:0%" }));
+      const row = h("div", { class: "upload-item" }, icon("upload"), h("span", { class: "name" }, f.name), bar);
+      progress.append(row);
+      try {
+        await uploadFile(f, (p) => { bar.firstChild.style.width = `${Math.round(p * 100)}%`; });
+        row.remove();
+        toast(`${f.name} hochgeladen.`, "ok");
+      } catch (e) { row.classList.add("err"); set(row, icon("alert"), h("span", { class: "name" }, `${f.name}: ${e.message}`)); }
+    }
+    if (!progress.querySelector(".err")) viewFiles(main, params);
+  };
+  const picker = h("input", { type: "file", multiple: true, accept: FILE_ACCEPT, hidden: true, onchange: () => { doUpload(picker.files); picker.value = ""; } });
+  let t;
+  const search = h("input", { class: "field", type: "search", placeholder: "Dateien und Inhalte durchsuchen …", value: q, "aria-label": "Dateien durchsuchen",
+    oninput: () => { clearTimeout(t); t = setTimeout(() => reload(search.value.trim()), 400); } });
+
+  const versionsBox = (f) => {
+    const box = h("div", { class: "versions" });
+    api(`/api/files/${f.id}`).then((d) => set(box, d.versions.map((v) => h("div", { class: "version" },
+      h("span", { class: "badge" }, `v${v.version}`),
+      h("div", { class: "main" }, h("div", {}, v.note ?? SOURCE_LABEL[v.source] ?? v.source), h("div", { class: "muted small" }, `${fmtSize(v.size)} · ${fmt.rel(v.createdAt)}`)),
+      h("button", { class: "btn ghost icon sm", "aria-label": `Version ${v.version} herunterladen`, onclick: () => downloadFile(v.id, v.name, v.size) }, icon("download")))))).catch((e) => set(box, e.message));
+    return box;
+  };
+
+  const row = (f) => {
+    const det = h("details", { class: "file-row" },
+      h("summary", {},
+        h("div", { class: `file-ic ${f.format}` }, icon(FILE_ICON[f.format] ?? "file")),
+        h("div", { class: "main" }, h("div", { class: "title" }, f.name),
+          h("div", { class: "sub" }, [f.format.toUpperCase(), fmtSize(f.size), f.versions > 1 ? `${f.versions} Versionen` : null, SOURCE_LABEL[f.source], fmt.rel(f.createdAt), f.storage === "drive" ? "Google Drive" : null].filter(Boolean).join(" · "))),
+        h("div", { class: "actions", onclick: (e) => e.preventDefault() },
+          h("button", { class: "btn ghost icon sm", "aria-label": "Vorschau", title: "Vorschau", onclick: () => previewFile(f) }, icon("eye")),
+          h("button", { class: "btn ghost icon sm", "aria-label": "Herunterladen", title: "Herunterladen", onclick: () => downloadFile(f.id, f.name, f.size) }, icon("download")),
+          f.driveUrl && /^https:\/\/(drive|docs)\.google\.com\//.test(f.driveUrl) ? h("a", { class: "btn ghost icon sm hide-mobile", href: f.driveUrl, target: "_blank", rel: "noopener noreferrer", "aria-label": "In Google Drive öffnen", title: "In Google Drive öffnen" }, icon("globe")) : null,
+          h("button", { class: "btn ghost icon sm hide-mobile", "aria-label": "Mit JARVIS besprechen", title: "Mit JARVIS besprechen", onclick: () => chatAboutFile(f) }, icon("chat")),
+          h("button", { class: "btn ghost icon sm", "aria-label": "Löschen", title: "Löschen", onclick: async () => {
+            if (!(await dialog({ title: `„${f.name}“ löschen?`, text: f.versions > 1 ? `Alle ${f.versions} Versionen werden gelöscht.${f.storage === "drive" ? " In Google Drive landen sie im Papierkorb." : ""}` : f.storage === "drive" ? "Die Datei landet im Drive-Papierkorb." : "Die Datei wird endgültig gelöscht.", confirmLabel: "Löschen", danger: true }))) return;
+            await api(`/api/files/${f.id}?all=1`, { method: "DELETE" }).catch(fail); viewFiles(main, params);
+          } }, icon("trash")))));
+    det.addEventListener("toggle", () => { if (det.open && !det.querySelector(".versions")) det.append(versionsBox(f)); });
+    return det;
+  };
+
+  const usedPct = Math.round((data.limits.dbUsedBytes / data.limits.dbQuotaBytes) * 100);
+  const zone = h("button", { class: "drop-zone", onclick: () => picker.click() }, icon("upload"),
+    h("div", {}, h("b", {}, "Dateien hierher ziehen oder tippen zum Auswählen"), h("div", { class: "muted small" }, `PDF, Word, Excel, CSV, PowerPoint, Text, Markdown, Bilder · max. ${Math.round(data.limits.maxBytes / 1048576)} MB`)));
+  set(main, h("div", { class: "view" },
+    viewHead("Dateien", data.storage === "drive" ? "Gespeichert in deinem Google Drive (Ordner „JARVIS“)" : `Gespeichert in JARVIS · ${fmtSize(data.limits.dbUsedBytes)} von ${fmtSize(data.limits.dbQuotaBytes)} belegt (${usedPct} %)`,
+      h("button", { class: "btn primary", onclick: () => picker.click() }, icon("upload"), h("span", {}, "Hochladen")), picker),
+    zone, progress,
+    h("div", { class: "card", style: "padding:12px;margin:14px 0" }, search),
+    data.files.length ? h("div", { class: "card files-card" }, data.files.map(row))
+      : h("div", { class: "empty" }, q ? "Keine Treffer." : "Noch keine Dateien. Lade etwas hoch oder bitte JARVIS z.B. „Erstelle mir eine Excel-Liste meiner Fixkosten“."),
+    data.storage === "db" ? h("div", { class: "muted small", style: "margin-top:10px" }, "Tipp: Mit Google Drive (Einstellungen → Integrationen) liegen Dateien in deinem Drive statt in der JARVIS-Datenbank.") : null));
+  dropZone(main.querySelector(".view"), doUpload);
 }
 
 // ─── View: Kontakte ─────────────────────────────────────────────────────────
@@ -1400,12 +1923,54 @@ function pushCard(onChange) {
   return card;
 }
 
+function telegramCard() {
+  const card = h("div", { class: "card" }, h("div", { class: "card-body", style: "padding:18px" }, h("div", { class: "spinner" })));
+  const render = async () => {
+    const st = await api("/api/telegram/status");
+    const busy = (btn, fn) => async () => { btn.disabled = true; try { await fn(); } catch (e) { fail(e); } finally { btn.disabled = false; render(); } };
+    if (!st.configured) {
+      set(card, h("div", { class: "card-body", style: "padding:18px;display:grid;gap:8px" },
+        h("div", {}, "Schreib JARVIS über Telegram — Text, Sprachnachrichten und Dateien. Bestätigungen und Vorschläge kommen mit Knöpfen."),
+        h("div", { class: "muted small" }, "Einrichtung: Bot bei @BotFather anlegen, TELEGRAM_BOT_TOKEN in Vercel eintragen, neu deployen. Anleitung: docs/TELEGRAM.md")));
+      return;
+    }
+    const rows = [];
+    rows.push(h("div", { class: "integration" }, h("div", { class: "logo", style: "color:#229ed9" }, icon("send")),
+      h("div", { class: "main" }, h("div", { class: "title" }, st.bot ? `@${st.bot.username}` : "Bot"), h("div", { class: "sub" }, st.error ? `Fehler: ${st.error}` : st.chatIdSet ? "Nur dein Chat wird beantwortet." : "TELEGRAM_CHAT_ID fehlt: schreib dem Bot /start, er nennt dir die Chat-ID.")),
+      h("span", { class: `badge ${st.webhook?.active && st.chatIdSet ? "ok" : "warn"}` }, st.webhook?.active ? (st.chatIdSet ? "verbunden" : "Chat-ID fehlt") : "Webhook fehlt")));
+    if (st.webhook?.lastError) rows.push(h("div", { class: "muted small", style: "padding:0 18px" }, `Letzter Fehler bei Telegram: ${st.webhook.lastError}`));
+    const hook = h("button", { class: `btn ${st.webhook?.active ? "" : "primary"}` }, h("span", {}, st.webhook?.active ? "Webhook erneuern" : "Webhook einrichten"));
+    hook.disabled = !st.httpsReady;
+    hook.onclick = busy(hook, async () => { await api("/api/telegram/setup", { method: "POST" }); toast("Telegram-Webhook eingerichtet.", "ok"); });
+    const test = h("button", { class: "btn" }, icon("bell"), h("span", {}, "Test senden"));
+    test.disabled = !st.chatIdSet;
+    test.onclick = busy(test, async () => { await api("/api/telegram/test", { method: "POST" }); toast("Testnachricht gesendet.", "ok"); });
+    const i = h("input", { type: "checkbox", checked: st.settings?.notifications ?? true });
+    i.addEventListener("change", async () => { try { await api("/api/telegram/settings", { method: "PUT", body: { notifications: i.checked } }); toast("Gespeichert.", "ok"); } catch (e) { fail(e); } });
+    rows.push(h("div", { class: "card-body", style: "padding:12px 18px;display:flex;gap:8px;flex-wrap:wrap" }, hook, test,
+      st.httpsReady ? null : h("span", { class: "muted small" }, "Webhook braucht eine https-Adresse (JARVIS_PUBLIC_URL).")));
+    rows.push(h("label", { class: "toggle-row" }, h("div", { class: "main" }, h("div", { class: "title" }, "Benachrichtigungen auch per Telegram"),
+      h("div", { class: "sub" }, `Briefings, Erinnerungen, Vorschläge und Bestätigungen. Sprachnachrichten: ${st.transcription ? "aktiv" : "aus (TRANSCRIBE_API_KEY fehlt)"}.`)),
+      h("label", { class: "switch" }, i, h("span"))));
+    set(card, rows);
+  };
+  render().catch((e) => set(card, h("div", { class: "card-body" }, h("div", { class: "empty" }, e.message))));
+  return card;
+}
+
 // ─── View: Automationen ─────────────────────────────────────────────────────
 const WEEKDAYS = [[1, "Mo"], [2, "Di"], [3, "Mi"], [4, "Do"], [5, "Fr"], [6, "Sa"], [7, "So"]];
 const AUTO_STATUS = { ok: ["erledigt", "ok"], waiting: ["wartet auf dich", "warn"], nothing: ["nichts Neues", ""], error: ["Fehler", "err"] };
 
+let ALLOWLISTABLE = [];
 function automationEditor(a) {
   return new Promise((resolve) => {
+    const allowed = new Set(a?.allowedTools ?? []);
+    const limitField = h("input", { class: "field small", id: "au-limit", type: "number", min: 1, max: 200, value: a?.dailyActionLimit ?? 20, style: "width:110px" });
+    const allowBox = h("div", { class: "allow-list" }, ALLOWLISTABLE.map((t) => {
+      const cb = h("input", { type: "checkbox", checked: allowed.has(t.name), onchange: (e) => (e.target.checked ? allowed.add(t.name) : allowed.delete(t.name)) });
+      return h("label", { class: "allow-item" }, cb, h("div", {}, h("div", { class: "mono" }, t.name), h("div", { class: "muted small" }, t.description, t.rule ? h("b", {}, ` · ${t.rule}`) : null)));
+    }));
     const t = a?.trigger ?? { type: "schedule", time: "07:00", days: [1, 2, 3, 4, 5] };
     let type = t.type;
     const days = new Set(t.type === "schedule" ? t.days : [1, 2, 3, 4, 5]);
@@ -1440,7 +2005,7 @@ function automationEditor(a) {
         ? { type, time: f.time.value || "07:00", days: [...days].sort() }
         : { type, ...(f.from.value.trim() ? { from: f.from.value.trim() } : {}), ...(f.subject.value.trim() ? { subject: f.subject.value.trim() } : {}) };
       if (type === "schedule" && !trigger.days.length) { err.textContent = "Mindestens einen Wochentag wählen."; return; }
-      const body = { name: f.name.value.trim(), prompt: f.prompt.value.trim(), trigger };
+      const body = { name: f.name.value.trim(), prompt: f.prompt.value.trim(), trigger, allowedTools: [...allowed], dailyActionLimit: Math.max(1, Math.min(200, Number(limitField.value) || 20)) };
       try {
         close(a?.id ? await api(`/api/automations/${a.id}`, { method: "PATCH", body }) : await api("/api/automations", { method: "POST", body }));
       } catch (ex) { err.textContent = ex.message; }
@@ -1449,7 +2014,11 @@ function automationEditor(a) {
       h("label", { class: "small muted", for: "au-name" }, "Name"), f.name,
       h("div", { class: "small muted" }, "Auslöser"), seg, scheduleBox, emailBox,
       h("label", { class: "small muted", for: "au-prompt" }, "Auftrag an JARVIS"), f.prompt,
-      h("div", { class: "muted small" }, "Es gelten dieselben Regeln wie im Chat: Senden, Einladen, Löschen usw. werden nur vorbereitet — du bestätigst sie über die Push-Nachricht."),
+      h("details", { class: "fold allow-fold", open: allowed.size > 0 },
+        h("summary", { class: "small" }, icon("shield"), `Selbstständig erlauben (Stufe 2) — ${allowed.size ? `${allowed.size} freigegeben` : "nichts freigegeben"}`),
+        h("div", { class: "muted small" }, "Lesen und Stufe 1 (Labels, Archivieren, Aufgaben …) darf jede Automation. Hier gibst du zusätzliche Werkzeuge nur für diese Automation frei. Nie ohne dich: E-Mails an neue Empfänger, Termine mit Gästen, Löschen ohne Papierkorb, Zahlungen, Verträge, Logins, alles Kritische."),
+        allowBox,
+        h("label", { class: "small muted", for: "au-limit", style: "display:flex;align-items:center;gap:10px;margin-top:6px" }, "Höchstens", limitField, "selbstständige Aktionen pro Tag")),
       err,
       h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: () => close(null) }, "Abbrechen"), h("button", { class: "btn primary", type: "submit" }, "Speichern")));
     const wrap = h("div", { class: "modal-wrap", onclick: (e) => e.target === wrap && close(null) }, form);
@@ -1461,6 +2030,13 @@ function automationEditor(a) {
 
 async function viewAutomations(main) {
   const data = await api("/api/automations");
+  ALLOWLISTABLE = data.allowlistable ?? [];
+  const pauseBtn = h("button", { class: `btn ${data.paused.paused ? "primary" : "danger"}` }, icon(data.paused.paused ? "bolt" : "stop"), h("span", {}, data.paused.paused ? "Fortsetzen" : "Alle pausieren"));
+  pauseBtn.onclick = async () => {
+    if (!data.paused.paused && !(await dialog({ title: "Alle Automationen pausieren?", text: "Not-Aus: Keine Automation läuft mehr, bis du fortsetzt — auch keine E-Mail-Auslöser.", confirmLabel: "Pausieren", danger: true }))) return;
+    await api("/api/automations/pause", { method: "PUT", body: { paused: !data.paused.paused } }).catch(fail);
+    viewAutomations(main);
+  };
   const reload = () => viewAutomations(main);
   const sw = (checked, onchange) => { const i = h("input", { type: "checkbox", checked, "aria-label": "Aktiv" }); i.addEventListener("change", () => onchange(i.checked)); return h("label", { class: "switch" }, i, h("span")); };
   const card = (a) => {
@@ -1481,6 +2057,9 @@ async function viewAutomations(main) {
         h("div", { class: "main" }, h("div", { class: "title" }, a.name), h("div", { class: "sub" }, a.triggerText, a.enabled && a.nextRunAt && a.trigger.type === "schedule" ? ` · nächste: ${fmt.dt(a.nextRunAt)}` : "")),
         sw(a.enabled, async (v) => { await api(`/api/automations/${a.id}`, { method: "PATCH", body: { enabled: v } }).catch(fail); reload(); })),
       h("div", { class: "auto-prompt" }, a.prompt),
+      a.allowedTools?.length || a.autonomousToday ? h("div", { class: "auto-allow" }, icon("shield"),
+        a.allowedTools?.length ? h("span", {}, `Selbstständig: ${a.allowedTools.join(", ")}`) : h("span", {}, "Nur Stufe 0–1 selbstständig"),
+        h("span", { class: "muted" }, ` · heute ${a.autonomousToday ?? 0}/${a.dailyActionLimit} Aktionen`)) : null,
       a.lastRunAt ? h("div", { class: "auto-last" },
         h("div", { class: "auto-last-head" }, st ? h("span", { class: `badge ${st[1]}` }, st[0]) : null, h("span", { class: "muted small" }, `zuletzt ${fmt.rel(a.lastRunAt)} · ${a.runCount}× gelaufen`)),
         a.lastResult ? h("div", { class: "small auto-result" }, a.lastResult.length > 280 ? `${a.lastResult.slice(0, 280)} …` : a.lastResult) : null) : null,
@@ -1498,7 +2077,10 @@ async function viewAutomations(main) {
   const templates = data.templates.filter((t) => !have.has(t.name));
   set(main, h("div", { class: "view" },
     viewHead("Automationen", "JARVIS erledigt Dinge von selbst und schickt dir das Ergebnis aufs Handy.",
+      pauseBtn,
       h("button", { class: "btn primary", onclick: async () => { if (await automationEditor(null)) { toast("Automation angelegt.", "ok"); reload(); } } }, icon("plus"), h("span", {}, "Neue Automation"))),
+    data.paused.paused ? h("div", { class: "banner warn", style: "max-width:none" }, icon("stop"),
+      h("div", { style: "flex:1" }, h("b", {}, "Not-Aus aktiv: "), `Alle Automationen sind seit ${fmt.rel(data.paused.since)} pausiert.`)) : null,
     data.pushDevices ? null : h("div", { class: "banner warn", style: "max-width:none" }, icon("bell"),
       h("div", { style: "flex:1" }, h("b", {}, "Push ist noch aus. "), "Ohne Push siehst du Ergebnisse nur hier und unter Benachrichtigungen."),
       h("button", { class: "btn sm", onclick: () => go("settings", "?focus=push") }, "Einrichten")),
@@ -1610,7 +2192,7 @@ async function viewSettings(main, params) {
   if (flash) { toast(flash === "connected" ? "Google wurde verbunden." : `Google-Verbindung fehlgeschlagen: ${flash}`, flash === "connected" ? "ok" : "err"); history.replaceState(null, "", "#settings"); }
   const [setup, integrations, perms, status] = await Promise.all([api("/api/setup"), api("/api/integrations"), api("/api/settings/permissions"), api("/api/status")]);
   const done = setup.steps.filter((s) => s.done).length;
-  if (params.get("focus") === "push") setTimeout(() => $("#push-section")?.scrollIntoView({ behavior: "smooth" }), 300);
+  if (params.get("focus")) setTimeout(() => $(`#${params.get("focus")}-section`)?.scrollIntoView({ behavior: "smooth" }), 300);
   const settings = perms.settings;
   const save = async () => { try { await api("/api/settings/permissions", { method: "PUT", body: settings }); toast("Berechtigungen gespeichert.", "ok"); } catch (e) { fail(e); } };
   const sw = (checked, onchange) => { const i = h("input", { type: "checkbox", checked }); i.addEventListener("change", () => onchange(i.checked)); return h("label", { class: "switch" }, i, h("span")); };
@@ -1630,15 +2212,19 @@ async function viewSettings(main, params) {
       return h("div", { class: "integration" }, h("div", { class: "logo", style: `color:${c}` }, l),
         h("div", { class: "main" }, h("div", { class: "title" }, i.name, i.account ? h("span", { class: "muted", style: "font-weight:400" }, ` · ${i.account}`) : null), h("div", { class: "sub" }, i.detail)),
         h("span", { class: `badge ${stateBadge[1]}` }, stateBadge[0]),
-        i.id === "google" && i.state === "not_configured" ? h("a", { class: "btn primary sm", href: "/api/integrations/google/connect" }, "Verbinden") : null,
+        i.id === "google" && (i.state === "not_configured" || i.needsReconnect) ? h("a", { class: "btn primary sm", href: "/api/integrations/google/connect" }, i.needsReconnect ? "Neu verbinden" : "Verbinden") : null,
         i.id === "google" && i.state === "connected" ? h("button", { class: "btn danger sm", onclick: async () => {
           if (!(await dialog({ title: "Google trennen?", text: "Die Tokens werden gelöscht und der Zugriff bei Google widerrufen.", confirmLabel: "Trennen", danger: true }))) return;
           await api("/api/integrations/google/disconnect", { method: "POST" }).catch(fail); viewSettings(main, new URLSearchParams());
         } }, "Trennen") : null);
     })),
 
+    h("div", { class: "section-title", id: "triage-section" }, icon("bolt"), "Proaktive Hinweise"),
+    triageSettingsCard(),
     h("div", { class: "section-title", id: "push-section" }, icon("bell"), "Push-Benachrichtigungen"),
     pushCard(),
+    h("div", { class: "section-title", id: "telegram-section" }, icon("send"), "Telegram"),
+    telegramCard(),
     h("div", { class: "section-title" }, icon("mail"), "E-Mail-Konten"),
     mailAccountsCard(main),
     h("div", { class: "section-title" }, icon("shield"), "Berechtigungen"),
@@ -1800,7 +2386,7 @@ async function openNotifications() {
 }
 
 // ─── Boot ───────────────────────────────────────────────────────────────────
-const VIEWS = { today: viewToday, chat: viewChat, activity: viewActivity, calendar: viewCalendar, email: viewEmail, tasks: viewTasks, contacts: viewContacts, automations: viewAutomations, review: viewReview, memory: viewMemory, settings: viewSettings };
+const VIEWS = { jarvis: viewJarvis, today: viewToday, chat: viewChat, activity: viewActivity, calendar: viewCalendar, email: viewEmail, tasks: viewTasks, contacts: viewContacts, files: viewFiles, automations: viewAutomations, review: viewReview, memory: viewMemory, settings: viewSettings };
 
 let routerBound = false;
 async function boot() {

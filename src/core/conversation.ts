@@ -70,7 +70,9 @@ export class ConversationStore {
     );
     await this.db.run("UPDATE conversations SET updated_at = $1 WHERE id = $2", [ts, conversationId]);
     if (displayText && message.role === "user") {
-      await this.db.run("UPDATE conversations SET title = $1 WHERE id = $2 AND title IS NULL", [displayText.slice(0, 80), conversationId]);
+      const lines = displayText.split("\n");
+      const title = lines.filter((l) => !l.startsWith("📎 ")).join(" ").trim() || lines.map((l) => l.replace(/^📎 /, "")).join(", ");
+      await this.db.run("UPDATE conversations SET title = $1 WHERE id = $2 AND title IS NULL", [title.slice(0, 80), conversationId]);
     }
   }
 

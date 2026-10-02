@@ -27,10 +27,24 @@ gesprochen — außer bei kritischen Aktionen, die brauchen immer den Knopf.
 - **Automationen:** JARVIS erledigt Dinge von selbst — z.B. Morgen-Briefing um 7 Uhr,
   „Rechnung per Mail → Aufgabe", Wochenrückblick am Freitag. Vorlagen unter *Automationen*,
   oder im Chat: „Schick mir jeden Montag um 8 eine Wochenübersicht."
-  Senden/Löschen/Einladen bereitet eine Automation nur vor — du bestätigst.
+  Senden/Löschen/Einladen bereitet eine Automation nur vor — außer du gibst es für diese Automation ausdrücklich frei.
 - **Push aufs Handy:** Erinnerungen und Ergebnisse kommen als Benachrichtigung
   (iPhone: JARVIS zuerst „Zum Home-Bildschirm" hinzufügen).
 - **Wochenrückblick:** was erledigt wurde, was offen ist, was ansteht — und was JARVIS ungefähr gekostet hat.
+
+## Dateien, Drive, Hinweise, Browser, Telegram
+
+- **Dateien:** PDF, Word, Excel, CSV, PowerPoint (lesen), Text, Markdown, Bilder hochladen —
+  im Chat (📎) oder auf der Seite *Dateien*. JARVIS liest, bearbeitet (als neue Version),
+  erstellt und wandelt um. Mit Google Drive landen Dateien im Ordner „JARVIS“. → docs/FILES.md
+- **Proaktive Hinweise:** neue Mails werden mit einem kleinen Modell sortiert; auf *Heute* erscheinen
+  Vorschläge (Termin zusagen, Rechnung → Aufgabe, Lead beantworten …) mit *Annehmen / Bearbeiten / Ignorieren*. → docs/PROACTIVE.md
+- **Selbstständige Automationen:** pro Automation freigeben, welche Aktionen sie ohne Rückfrage darf;
+  Protokoll, Rückgängig, Tageslimit, Not-Aus. → docs/AUTONOMY.md
+- **Browser-Agent:** „Schau nach, wann die Bäckerei offen hat“ — JARVIS öffnet Webseiten, sucht, liest,
+  lädt herunter; Käufe/Logins nur nach deiner ausdrücklichen Bestätigung. → docs/BROWSER.md
+- **Telegram:** JARVIS als Telegram-Bot — Text, Sprachnachrichten, Dateien, Bestätigungen per Knopf. → docs/TELEGRAM.md
+- **Sprachmodus & Kontextkarten:** Startseite mit lebendigem Partikel-Kern. Du sprichst mit JARVIS, und während er redet, gleiten passende Karten herein (Kalender, Finanzen, Mails, Aufgaben …). Realistische Stimme optional über ElevenLabs Free. → docs/VOICE.md
 
 ## Kontakte
 

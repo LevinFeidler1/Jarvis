@@ -19,7 +19,9 @@ Dauer: ca. 10 Minuten. Du brauchst nur dein eigenes Google-Konto.
 | `https://www.googleapis.com/auth/calendar.events` | Termine lesen und schreiben. Keine Kalender-Freigaben/-Einstellungen. |
 | `https://www.googleapis.com/auth/contacts` | Kontakte lesen, anlegen, ändern |
 | `https://www.googleapis.com/auth/contacts.other.readonly` | „Weitere Kontakte" (Personen, mit denen du gemailt hast) lesen |
+| `https://www.googleapis.com/auth/drive.file` | Google Drive: **nur** Dateien, die JARVIS selbst anlegt (Ordner „JARVIS“) oder die du mit JARVIS öffnest. Der Rest deines Drives bleibt unsichtbar. |
 | `openid`, `email` | Anzeige, welches Konto verbunden ist |
+| *optional* `https://www.googleapis.com/auth/drive.readonly` | Nur wenn `JARVIS_DRIVE_READ_ALL=true`: ganzes Drive **lesend** durchsuchen. Standardmäßig aus (Least Privilege). |
 
 ## Schritt für Schritt
 
@@ -31,13 +33,15 @@ Dauer: ca. 10 Minuten. Du brauchst nur dein eigenes Google-Konto.
    - Gmail API
    - Google Calendar API
    - People API
+   - Google Drive API
 
 3. **OAuth-Zustimmungsbildschirm** (*Google Auth Platform* bzw. *APIs & Dienste → OAuth-Zustimmungsbildschirm*)
    - *Branding*: App-Name `JARVIS`, deine E-Mail als Support- und Entwickler-Kontakt.
    - *Zielgruppe*:
      - **Google Workspace**: „Intern" wählen — keine Prüfung, keine Ablaufzeit. Fertig.
      - **Privates Gmail**: „Extern" wählen. Unter *Testnutzer* **deine eigene Adresse** hinzufügen.
-   - *Datenzugriff*: *Bereiche hinzufügen* → die fünf Scopes aus der Tabelle oben eintragen.
+   - *Datenzugriff*: *Bereiche hinzufügen* → die Scopes aus der Tabelle oben eintragen
+     (inkl. `drive.file`; `drive.readonly` nur, wenn du das ganze Drive durchsuchbar machen willst).
 
    > **Hinweis für private Gmail-Konten:** Solange die App im Status *Testen* ist,
    > laufen Refresh-Tokens nach **7 Tagen** ab — JARVIS meldet dann
@@ -92,3 +96,24 @@ Dauer: ca. 10 Minuten. Du brauchst nur dein eigenes Google-Konto.
 | `access_denied` / „App wird getestet" | Deine Adresse fehlt unter *Testnutzer* |
 | „Google hat kein Refresh-Token geliefert" | Unter <https://myaccount.google.com/permissions> JARVIS entfernen, dann erneut verbinden |
 | „Keine Berechtigung bei Google" (403) | API im Projekt nicht aktiviert oder Scope beim Verbinden abgewählt |
+
+## Google Drive nachrüsten (bestehende Verbindung)
+
+Wenn Google schon verbunden war, bevor es Drive in JARVIS gab:
+
+1. Google Cloud Console → *APIs & Dienste → Bibliothek* → **Google Drive API** aktivieren.
+2. *Google Auth Platform → Datenzugriff → Bereiche hinzufügen* →
+   `https://www.googleapis.com/auth/drive.file` eintragen → *Aktualisieren* → *Speichern*.
+3. Optional fürs Durchsuchen des **ganzen** Drives (nur lesend): zusätzlich
+   `https://www.googleapis.com/auth/drive.readonly` eintragen und in Vercel
+   `JARVIS_DRIVE_READ_ALL=true` setzen → Redeploy.
+4. In JARVIS: *Einstellungen → Integrationen → Google →* **„Neu verbinden“** (der Knopf erscheint,
+   solange die Drive-Berechtigung fehlt) → alle Häkchen setzen.
+
+Danach landen neue Dateien in deinem Drive im Ordner **„JARVIS“**; Bearbeitungen werden
+dort als Versionen derselben Datei gespeichert (Drive → Datei → *Versionen verwalten*).
+Dateien, die vorher in der JARVIS-Datenbank lagen, bleiben dort.
+
+**Warum `drive.file` und nicht voller Zugriff?** Mit `drive.file` kann JARVIS deine übrigen
+Dokumente weder lesen noch ändern oder löschen — ein manipulierter Auftrag (Prompt Injection)
+kann also nichts außerhalb des JARVIS-Ordners anrichten. Schreibender Vollzugriff (`drive`) wird nie angefragt.

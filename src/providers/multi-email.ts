@@ -64,6 +64,11 @@ export class MultiAccountEmail implements EmailProvider {
     return { entry: this.find(acct), raw: id.slice(acct.length + SEP.length) };
   }
 
+  /** Which kind of mailbox a message id belongs to (undo support differs: IMAP moves change ids). */
+  kindOf(id: string): "gmail" | "imap" {
+    return this.route(id).entry.kind;
+  }
+
   private tag(entry: MailboxEntry, m: EmailSummary): EmailSummary {
     return { ...m, id: `${entry.email}${SEP}${m.id}`, account: entry.email };
   }

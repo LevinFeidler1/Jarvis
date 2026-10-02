@@ -237,6 +237,116 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX llm_usage_ts_idx ON llm_usage (ts);
   `,
+  // 5 — files & documents (versions share a root_id; bytes in file_blobs or Google Drive).
+  `
+  CREATE TABLE files (
+    id TEXT PRIMARY KEY,
+    root_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    parent_id TEXT,
+    name TEXT NOT NULL,
+    format TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    storage TEXT NOT NULL,
+    storage_key TEXT NOT NULL,
+    drive_url TEXT,
+    source TEXT NOT NULL,
+    note TEXT,
+    conversation_id TEXT,
+    text_cache TEXT,
+    created_at TEXT NOT NULL,
+    deleted_at TEXT
+  );
+  CREATE INDEX files_root_idx ON files (root_id, version);
+  CREATE TABLE file_blobs (
+    key TEXT PRIMARY KEY,
+    data BYTEA NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE upload_sessions (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    chunk_size INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE upload_chunks (
+    session_id TEXT NOT NULL,
+    idx INTEGER NOT NULL,
+    data BYTEA NOT NULL,
+    PRIMARY KEY (session_id, idx)
+  );
+  `,
+  // 6 — proactive butler: mail triage and suggestions.
+  `
+  CREATE TABLE triage_seen (
+    email_id TEXT PRIMARY KEY,
+    account TEXT,
+    day TEXT NOT NULL,
+    classified BOOLEAN NOT NULL,
+    category TEXT,
+    processed_at TEXT NOT NULL
+  );
+  CREATE INDEX triage_seen_day_idx ON triage_seen (day);
+  CREATE TABLE suggestions (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    email_id TEXT,
+    account TEXT,
+    sender TEXT,
+    actions_json TEXT NOT NULL,
+    accept_label TEXT,
+    edit_prompt TEXT NOT NULL,
+    warning TEXT,
+    status TEXT NOT NULL,
+    result TEXT,
+    conversation_id TEXT,
+    undo_json TEXT,
+    created_at TEXT NOT NULL,
+    resolved_at TEXT
+  );
+  CREATE INDEX suggestions_status_idx ON suggestions (status, created_at);
+  CREATE TABLE suggestion_feedback (
+    kind TEXT NOT NULL,
+    sender TEXT NOT NULL,
+    accepted INTEGER NOT NULL DEFAULT 0,
+    ignored INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (kind, sender)
+  );
+  `,
+  // 7 — autonomous automations: per-automation allowlist + daily limit, undo for actions.
+  `
+  ALTER TABLE automations ADD COLUMN allowed_tools TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE automations ADD COLUMN daily_action_limit INTEGER NOT NULL DEFAULT 20;
+  ALTER TABLE activity ADD COLUMN automation_id TEXT;
+  ALTER TABLE activity ADD COLUMN autonomous BOOLEAN NOT NULL DEFAULT FALSE;
+  ALTER TABLE activity ADD COLUMN undo_json TEXT;
+  ALTER TABLE activity ADD COLUMN undone_at TEXT;
+  CREATE INDEX activity_automation_idx ON activity (automation_id, created_at);
+  `,
+  // 8 — browser agent tasks (recorded steps for replays + last page state for risk checks).
+  `
+  CREATE TABLE browser_tasks (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    steps_json TEXT NOT NULL,
+    last_json TEXT,
+    calls INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  `,
+  // 9 — Telegram: processed update ids (Telegram retries webhooks; each update is handled once).
+  `
+  CREATE TABLE telegram_updates (
+    update_id BIGINT PRIMARY KEY,
+    created_at TEXT NOT NULL
+  );
+  `,
 ];
 
 async function migrate(db: Db): Promise<void> {

@@ -42,8 +42,13 @@ export type ActionStatus =
   | "expired"
   | "denied";
 
+/** Binary content handed to the model next to the JSON result (vision / PDF reading). */
+export type ToolAttachment =
+  | { type: "image"; mediaType: "image/png" | "image/jpeg"; base64: string }
+  | { type: "document"; base64: string };
+
 export type ToolResult =
-  | { ok: true; data: unknown; partial?: boolean; externalData?: ExternalDataInfo }
+  | { ok: true; data: unknown; partial?: boolean; externalData?: ExternalDataInfo; attachments?: ToolAttachment[] }
   | { ok: false; error: string; code?: ToolErrorCode };
 
 export type ToolErrorCode =
@@ -85,6 +90,11 @@ export interface ToolDefinition<I = any> {
    * max(risk, riskFor(input)) — it can only ever raise the level.
    */
   riskFor?(input: I): RiskLevel;
+  /**
+   * Optional risk that depends on external state (e.g. which button on a web
+   * page is clicked). Like riskFor it can only raise the level.
+   */
+  assessRisk?(input: I, ctx: ToolContext): Promise<{ risk: RiskLevel; reasons: string[] } | undefined>;
   /** Human readable, precise description used for confirmations and activity. */
   describe(input: I): string;
   /** Audit target (e.g. recipient). Masked before storage. */
@@ -97,6 +107,11 @@ export interface ToolDefinition<I = any> {
    * user to confirm an action that could not run anyway.
    */
   precheck?(input: I, ctx: ToolContext): Promise<ToolResult | void>;
+  /**
+   * Optional inverse action after a successful run (archive → back to inbox,
+   * create → delete). Offered as "Rückgängig" in the activity log.
+   */
+  undo?(input: I, data: unknown, ctx: ToolContext): Promise<{ tool: string; input: Record<string, unknown>; label: string } | undefined> | { tool: string; input: Record<string, unknown>; label: string } | undefined;
   execute(input: I, ctx: ToolContext): Promise<ToolResult>;
 }
 

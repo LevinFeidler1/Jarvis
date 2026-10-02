@@ -26,6 +26,8 @@ export const DEFAULT_PERMISSION_SETTINGS: PermissionSettings = {
     tasks: true,
     reminders: true,
     memory: true,
+    files: true,
+    web: true,
   },
   disabledTools: [],
 };
@@ -34,6 +36,8 @@ export interface PermissionContext {
   /** Suspicious external content was read earlier in this agent run. */
   tainted: boolean;
   settings: PermissionSettings;
+  /** Result of tool.assessRisk (raises the level, never lowers it). */
+  assessed?: { risk: RiskLevel; reasons: string[] };
 }
 
 /**
@@ -45,6 +49,10 @@ export function decidePermission<I>(tool: ToolDefinition<I>, input: I, ctx: Perm
   const reasons: string[] = [];
   let risk = tool.risk;
   if (tool.riskFor) risk = Math.max(risk, tool.riskFor(input)) as RiskLevel;
+  if (ctx.assessed && ctx.assessed.risk > risk) {
+    risk = ctx.assessed.risk;
+    reasons.push(...ctx.assessed.reasons);
+  }
 
   if (ctx.settings.disabledTools.includes(tool.name)) {
     return { decision: "deny", risk, reasons: [`Das Tool ${tool.name} ist in den Einstellungen deaktiviert.`] };

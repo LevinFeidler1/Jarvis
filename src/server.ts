@@ -17,7 +17,11 @@ import type { Db } from "./db/database.js";
 import { MEMORY_CATEGORIES, type MemoryStore } from "./memory/memory.js";
 import { AUTOMATION_TEMPLATES, type Automation, type AutomationInput, AutomationRunner, describeTrigger } from "./core/automations.js";
 import { buildWeekReview } from "./core/review.js";
+import { KIND_LABEL, TriageService } from "./core/triage.js";
+import { allowlistableTools } from "./core/autonomy.js";
 import { automationTriggerSchema } from "./tools/automation.js";
+import { ACCEPTED_EXTENSIONS } from "./files/formats/detect.js";
+import { DOWNLOAD_RANGE_BYTES, UPLOAD_CHUNK_BYTES } from "./files/service.js";
 import { CombinedContacts } from "./providers/combined-contacts.js";
 import { parseVCards, toVCards } from "./providers/local/vcard.js";
 import { MAIL_PRESETS } from "./providers/imap/accounts.js";
@@ -27,6 +31,10 @@ import type { ProviderHub } from "./providers/hub.js";
 import { safeEqual } from "./security/crypto.js";
 import { SessionStore } from "./security/sessions.js";
 import type { ToolRegistry } from "./tools/registry.js";
+import { type TelegramBot, checkTelegramSecret, telegramWebhookSecret } from "./telegram/bot.js";
+import type { TgUpdate } from "./telegram/api.js";
+import { OpenAiCompatibleTranscriber, type Transcriber } from "./telegram/transcribe.js";
+import { ElevenLabsSynth, type SpeechSynth, TtsQuotaError } from "./voice/tts.js";
 
 const SESSION_COOKIE = "jarvis_session";
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
@@ -40,6 +48,13 @@ export interface ServerDeps {
   registry: ToolRegistry;
   scheduler: Scheduler;
   llmConfigured: boolean;
+  /** Mail triage / suggestions (created with a no-op classifier when omitted). */
+  triage?: TriageService;
+  /** Telegram bot (only when TELEGRAM_BOT_TOKEN is set). */
+  telegram?: TelegramBot;
+  /** Voice mode overrides (tests). Default: from config. */
+  transcriber?: Transcriber;
+  synth?: SpeechSynth;
   /** Serve public/ from Fastify (local). On Vercel the CDN serves it. */
   serveStatic?: boolean;
 }
@@ -51,7 +66,7 @@ declare module "fastify" {
 }
 
 const CSP =
-  "default-src 'self'; img-src 'self' data:; style-src 'self'; " +
+  "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self'; " +
   "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
@@ -70,7 +85,7 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   await app.register(rateLimit, { global: true, max: 300, timeWindow: "1 minute" });
 
   app.addHook("onSend", async (_req, reply, payload) => {
-    reply.header("Content-Security-Policy", CSP);
+    if (!reply.hasHeader("Content-Security-Policy")) reply.header("Content-Security-Policy", CSP);
     reply.header("X-Frame-Options", "DENY");
     reply.header("X-Content-Type-Options", "nosniff");
     reply.header("Referrer-Policy", "no-referrer");
@@ -82,8 +97,8 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   // ─── Auth + CSRF ──────────────────────────────────────────────────────
   // The OAuth callback arrives as a cross-site navigation (SameSite=Strict cookie is not sent);
   // it is protected by the single-use, unguessable state + PKCE verifier instead.
-  // The cron endpoint authenticates with CRON_SECRET.
-  const PUBLIC_API = new Set(["/api/login", "/api/session", "/api/integrations/google/callback", "/api/cron/tick", "/api/health"]);
+  // The cron endpoint authenticates with CRON_SECRET, the Telegram webhook with its secret header.
+  const PUBLIC_API = new Set(["/api/login", "/api/session", "/api/integrations/google/callback", "/api/cron/tick", "/api/health", "/api/telegram"]);
   app.addHook("preHandler", async (req, reply) => {
     const path = req.url.split("?")[0]!;
     if (!path.startsWith("/api/") || PUBLIC_API.has(path)) return;
@@ -209,16 +224,92 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   // ─── Chat ─────────────────────────────────────────────────────────────
-  const chatBody = z.object({ conversationId: z.uuid().optional(), message: z.string().trim().min(1).max(8000) });
+  const idParam = z.object({ id: z.uuid() });
+  const chatBody = z.object({
+    conversationId: z.uuid().optional(),
+    message: z.string().trim().max(8000),
+    attachments: z.array(z.uuid()).max(10).optional(),
+    /** Sent by the voice home: the answer is read aloud (short, low effort). */
+    voice: z.boolean().optional(),
+  }).refine((b) => b.message.length > 0 || (b.attachments?.length ?? 0) > 0, { message: "Nachricht oder Anhang erforderlich" });
+  const chatOpts = async (b: z.infer<typeof chatBody>) => ({
+    ...(b.attachments?.length ? { attachments: await Promise.all(b.attachments.map((fid) => providers.files.get(fid))) } : {}),
+    ...(b.voice ? { voice: true } : {}),
+  });
 
   app.post("/api/chat", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req) => {
     const body = chatBody.parse(req.body);
-    return agent.handleUserMessage(body.conversationId, body.message);
+    return agent.handleUserMessage(body.conversationId, body.message, undefined, await chatOpts(body));
   });
 
   app.post("/api/chat/stream", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req, reply) => {
     const body = chatBody.parse(req.body);
-    await streamAgent(reply, (emit) => agent.handleUserMessage(body.conversationId, body.message, emit));
+    const opts = await chatOpts(body);
+    await streamAgent(reply, (emit) => agent.handleUserMessage(body.conversationId, body.message, emit, opts));
+  });
+
+  // ─── Files (Phase A) ──────────────────────────────────────────────────
+  const files = providers.files;
+  app.addContentTypeParser("application/octet-stream", { parseAs: "buffer", bodyLimit: UPLOAD_CHUNK_BYTES + 1024 }, (_req, body, done) => done(null, body));
+  app.get("/api/files", async (req) => {
+    const { q } = z.object({ q: z.string().trim().max(200).optional() }).parse(req.query);
+    return {
+      files: await files.list({ query: q || undefined, limit: 200 }),
+      limits: { maxBytes: files.limits.maxBytes, dbQuotaBytes: files.limits.dbQuotaBytes, dbUsedBytes: await files.dbUsage() },
+      storage: (await files.defaultStorage()).kind,
+      accept: ACCEPTED_EXTENSIONS,
+    };
+  });
+  app.get("/api/files/:id", async (req) => {
+    const f = await files.get(idParam.parse(req.params).id);
+    return { file: f, versions: await files.versions(f.rootId) };
+  });
+  app.get("/api/files/:id/preview", async (req) => {
+    const { id } = idParam.parse(req.params);
+    const f = await files.get(id);
+    if (f.format === "png" || f.format === "jpg") return { file: f, text: null };
+    const { extracted } = await files.extract(id);
+    return { file: f, text: extracted.text.slice(0, 6000), truncated: extracted.text.length > 6000, sheets: extracted.sheets ?? null, needsVision: !!extracted.needsVision };
+  });
+  // Ranged download: every response stays below Vercel's 4.5 MB limit; the UI joins the parts.
+  app.get("/api/files/:id/content", async (req, reply) => {
+    const { id } = idParam.parse(req.params);
+    const f = await files.get(id);
+    const range = /^bytes=(\d+)-(\d*)$/.exec(String(req.headers.range ?? ""));
+    const start = range ? Number(range[1]) : 0;
+    const end = Math.min(f.size - 1, range?.[2] ? Number(range[2]) : start + DOWNLOAD_RANGE_BYTES - 1, start + DOWNLOAD_RANGE_BYTES - 1);
+    if (start >= f.size || end < start) return reply.code(416).header("content-range", `bytes */${f.size}`).send();
+    const { data } = start === 0 && end === f.size - 1 ? await files.read(id) : await files.readRange(id, start, end);
+    const ascii = f.name.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "'");
+    reply
+      .header("content-type", f.mime)
+      .header("content-disposition", `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(f.name)}`)
+      .header("content-security-policy", "sandbox; default-src 'none'")
+      .header("cache-control", "private, no-store")
+      .header("accept-ranges", "bytes")
+      .header("x-file-size", String(f.size));
+    if (start > 0 || end < f.size - 1) reply.code(206).header("content-range", `bytes ${start}-${end}/${f.size}`);
+    return reply.send(data);
+  });
+  app.post("/api/files/uploads", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req) => {
+    const b = z.object({ name: z.string().trim().min(1).max(200), size: z.number().int().positive() }).parse(req.body);
+    return files.beginUpload(b.name, b.size);
+  });
+  app.put("/api/files/uploads/:id/:index", { bodyLimit: UPLOAD_CHUNK_BYTES + 1024 }, async (req) => {
+    const p = z.object({ id: z.uuid(), index: z.coerce.number().int().min(0).max(100) }).parse(req.params);
+    if (!Buffer.isBuffer(req.body)) throw new ToolError("Upload-Teil muss application/octet-stream sein.", "INVALID_INPUT");
+    await files.addChunk(p.id, p.index, req.body);
+    return { ok: true };
+  });
+  app.post("/api/files/uploads/:id/complete", async (req) => {
+    const { id } = idParam.parse(req.params);
+    const b = z.object({ conversationId: z.uuid().optional() }).parse(req.body ?? {});
+    return files.completeUpload(id, { conversationId: b.conversationId ?? null });
+  });
+  app.delete("/api/files/:id", async (req) => {
+    const { id } = idParam.parse(req.params);
+    const { all } = z.object({ all: z.enum(["0", "1"]).optional() }).parse(req.query);
+    return { deleted: await files.delete(id, all === "1") };
   });
 
   app.get("/api/conversations", async () => agent.conversations.list());
@@ -274,7 +365,6 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   // ─── Tasks, reminders, notifications (direct UI access) ───────────────
-  const idParam = z.object({ id: z.uuid() });
   app.get("/api/tasks", async (req) => {
     const { status } = z.object({ status: z.enum(["open", "done", "all"]).optional() }).parse(req.query);
     return providers.tasks.list({ status: status ?? "all" });
@@ -370,6 +460,95 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
     return { fired, automations: await automations };
   });
 
+  // ─── Voice mode ───────────────────────────────────────────────────────
+  const transcriber = deps.transcriber ?? (config.transcribe ? new OpenAiCompatibleTranscriber(config.transcribe) : undefined);
+  const synth = deps.synth ?? (config.elevenlabs ? new ElevenLabsSynth(config.elevenlabs) : undefined);
+  let ttsBlockedUntil = 0;
+  app.addContentTypeParser(/^audio\//, { parseAs: "buffer", bodyLimit: 4 * 1024 * 1024 }, (_req, body, done) => done(null, body));
+
+  app.get("/api/voice/config", async () => ({
+    stt: transcriber ? "server" : "browser",
+    tts: synth && Date.now() > ttsBlockedUntil ? "server" : "browser",
+  }));
+
+  app.post("/api/voice/transcribe", { config: { rateLimit: { max: 40, timeWindow: "1 minute" } } }, async (req, reply) => {
+    if (!transcriber) return reply.code(409).send({ error: "Spracherkennung ist nicht eingerichtet (TRANSCRIBE_API_KEY)." });
+    const body = req.body;
+    if (!Buffer.isBuffer(body) || body.length < 800) return { text: "" };
+    const mime = String(req.headers["content-type"] ?? "audio/webm").split(";")[0]!;
+    const ext = mime.includes("mp4") || mime.includes("m4a") || mime.includes("aac") ? "m4a" : mime.includes("ogg") ? "ogg" : mime.includes("wav") ? "wav" : "webm";
+    const text = await transcriber.transcribe(body, `sprache.${ext}`, mime);
+    return { text };
+  });
+
+  app.post("/api/voice/speak", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (req, reply) => {
+    if (!synth || Date.now() < ttsBlockedUntil) return reply.code(409).send({ error: "Server-Stimme nicht verfügbar." });
+    const { text } = z.object({ text: z.string().trim().min(1).max(600) }).parse(req.body);
+    try {
+      const { audio, mime } = await synth.speak(text);
+      return reply.header("content-type", mime).header("cache-control", "no-store").send(audio);
+    } catch (err) {
+      if (err instanceof TtsQuotaError) ttsBlockedUntil = Date.now() + 30 * 60_000;
+      return reply.code(409).send({ error: (err as Error).message });
+    }
+  });
+
+  // ─── Telegram ─────────────────────────────────────────────────────────
+  const telegram = deps.telegram;
+  app.post("/api/telegram", { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } }, async (req, reply) => {
+    if (!telegram) return reply.code(404).send({ error: "Telegram ist nicht eingerichtet" });
+    if (!checkTelegramSecret(req.headers["x-telegram-bot-api-secret-token"], config.encryptionKey)) return reply.code(401).send({ error: "Unauthorized" });
+    const update = req.body as TgUpdate;
+    if (!update || typeof update !== "object" || typeof update.update_id !== "number") return { ok: true };
+    const work = telegram.handleUpdate(update).catch((err) => {
+      app.log.error({ err: (err as Error).message }, "telegram update failed");
+      return "ignored" as const;
+    });
+    // Answer Telegram at once (it retries slow webhooks); on Vercel the agent keeps working after the response.
+    if (process.env.VERCEL) {
+      waitUntil(work);
+      return { ok: true };
+    }
+    return { ok: true, result: await work };
+  });
+
+  app.get("/api/telegram/status", async () => {
+    if (!telegram) return { configured: false, chatIdSet: !!config.telegram.chatId, transcription: !!config.transcribe };
+    const api = telegram.api;
+    const [me, hook] = await Promise.all([api.getMe().catch((e: Error) => ({ error: e.message })), api.getWebhookInfo().catch(() => undefined)]);
+    const expected = `${config.publicUrl}/api/telegram`;
+    return {
+      configured: true,
+      chatIdSet: !!config.telegram.chatId,
+      transcription: !!config.transcribe,
+      bot: "error" in me ? null : { username: me.username, name: me.first_name },
+      error: "error" in me ? me.error : undefined,
+      webhook: hook ? { active: hook.url === expected, pending: hook.pending_update_count, lastError: hook.last_error_message ?? null } : null,
+      httpsReady: config.publicUrl.startsWith("https://"),
+      settings: await telegram.settings(),
+    };
+  });
+
+  app.post("/api/telegram/setup", { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } }, async (_req, reply) => {
+    if (!telegram) return reply.code(409).send({ error: "TELEGRAM_BOT_TOKEN ist nicht gesetzt." });
+    if (!config.publicUrl.startsWith("https://")) return reply.code(409).send({ error: "Telegram braucht eine öffentliche https-Adresse (JARVIS_PUBLIC_URL)." });
+    const api = telegram.api;
+    await api.setWebhook(`${config.publicUrl}/api/telegram`, telegramWebhookSecret(config.encryptionKey));
+    const me = await api.getMe();
+    return { ok: true, bot: { username: me.username, name: me.first_name } };
+  });
+
+  app.post("/api/telegram/test", { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } }, async (_req, reply) => {
+    if (!telegram || !config.telegram.chatId) return reply.code(409).send({ error: "TELEGRAM_BOT_TOKEN und TELEGRAM_CHAT_ID müssen gesetzt sein." });
+    await telegram.api.sendMessage(config.telegram.chatId, "🔔 Test von JARVIS — Telegram ist verbunden.");
+    return { ok: true };
+  });
+
+  app.put("/api/telegram/settings", async (req, reply) => {
+    if (!telegram) return reply.code(409).send({ error: "Telegram ist nicht eingerichtet" });
+    return telegram.saveSettings(z.object({ notifications: z.boolean() }).parse(req.body));
+  });
+
   // ─── Push notifications ───────────────────────────────────────────────
   const pushSub = z.object({
     endpoint: z.url().max(2000),
@@ -397,15 +576,27 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // ─── Automations ──────────────────────────────────────────────────────
   const automationRunner = new AutomationRunner(providers.automations, agent, providers);
+  const allowlistable = allowlistableTools(registry);
   const automationInput = z.object({
     name: z.string().trim().min(1).max(80),
     prompt: z.string().trim().min(5).max(2000),
     trigger: automationTriggerSchema,
     enabled: z.boolean().optional(),
+    allowedTools: z
+      .array(z.string())
+      .max(20)
+      .refine((l) => l.every((n) => allowlistable.some((t) => t.name === n)), "Nur Stufe-2-Werkzeuge, die freigegeben werden dürfen")
+      .optional(),
+    dailyActionLimit: z.number().int().min(1).max(200).optional(),
   });
   const withText = (a: Automation) => ({ ...a, triggerText: describeTrigger(a.trigger) });
+  const todayStart = () => zonedToUtc(localDate(new Date(), config.timezone), "00:00", config.timezone).toISOString();
   app.get("/api/automations", async () => ({
-    automations: (await providers.automations.list()).map(withText),
+    automations: await Promise.all(
+      (await providers.automations.list()).map(async (a) => ({ ...withText(a), autonomousToday: await agent.activity.countAutonomous(a.id, todayStart()) })),
+    ),
+    allowlistable,
+    paused: await providers.automations.paused(),
     templates: AUTOMATION_TEMPLATES.map((t) => ({ ...t, triggerText: describeTrigger(t.trigger) })),
     pushDevices: (await providers.push.devices()).length,
     cronConfigured: !!config.cronSecret,
@@ -418,9 +609,40 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.delete("/api/automations/:id", async (req, reply) =>
     (await providers.automations.delete(idParam.parse(req.params).id)) ? { ok: true } : reply.code(404).send({ error: "Nicht gefunden" }),
   );
+  app.put("/api/automations/pause", async (req) => {
+    const { paused } = z.object({ paused: z.boolean() }).parse(req.body);
+    return providers.automations.setPaused(paused);
+  });
+  app.post("/api/activity/:id/undo", async (req, reply) => {
+    const { id } = idParam.parse(req.params);
+    const u = await agent.activity.getUndo(id);
+    if (!u) return reply.code(409).send({ error: "Für diese Aktion gibt es kein Rückgängig (mehr)." });
+    const conv = u.conversationId ?? (await agent.conversations.create("Rückgängig")).id;
+    const r = await agent.runApprovedAction(conv, u.undo.tool, u.undo.input, { actor: "rückgängig" });
+    if (r.status !== "succeeded" && r.status !== "partially_succeeded") return reply.code(502).send({ error: r.error ?? "Rückgängig fehlgeschlagen", status: r.status });
+    await agent.activity.markUndone(id);
+    return { ok: true, label: u.undo.label };
+  });
   app.post("/api/automations/:id/run", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) =>
     automationRunner.runNow(idParam.parse(req.params).id),
   );
+
+  // ─── Suggestions (Phase C) ────────────────────────────────────────────
+  const triage = deps.triage ?? new TriageService({ db, config, providers, memory, agent, dailyLimit: config.triage.dailyLimit });
+  const kindEnum = z.enum(["meeting", "lead", "invoice", "deadline", "reply", "newsletter"]);
+  app.get("/api/suggestions", async () => ({ suggestions: await triage.list(), settings: await triage.settings(), usedToday: await triage.usageToday(), dailyLimit: config.triage.dailyLimit, labels: KIND_LABEL }));
+  app.post("/api/suggestions/:id/accept", async (req) => triage.accept(idParam.parse(req.params).id));
+  app.post("/api/suggestions/:id/ignore", async (req) => triage.ignore(idParam.parse(req.params).id));
+  app.post("/api/suggestions/:id/undo", async (req) => triage.undo(idParam.parse(req.params).id));
+  app.post("/api/suggestions/check", { config: { rateLimit: { max: 4, timeWindow: "1 minute" } } }, async () => triage.runTick());
+  app.put("/api/settings/triage", async (req) => {
+    const b = z.object({ enabled: z.boolean().optional(), autoTasks: z.boolean().optional() }).parse(req.body);
+    return triage.saveSettings(b);
+  });
+  app.post("/api/settings/triage/unmute", async (req) => {
+    const b = z.object({ kind: kindEnum, sender: z.string().max(320).optional() }).parse(req.body);
+    return triage.unmute(b.kind, b.sender);
+  });
 
   // ─── Weekly review ────────────────────────────────────────────────────
   app.get("/api/review", async (req) => {

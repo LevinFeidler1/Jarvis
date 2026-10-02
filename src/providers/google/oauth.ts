@@ -19,7 +19,13 @@ export const GOOGLE_SCOPES = [
   // Read/write saved contacts, and read "other contacts" (people you emailed).
   "https://www.googleapis.com/auth/contacts",
   "https://www.googleapis.com/auth/contacts.other.readonly",
+  // Only files JARVIS creates or the user opens with it — not the rest of the Drive.
+  "https://www.googleapis.com/auth/drive.file",
 ];
+
+export const DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+/** Optional (JARVIS_DRIVE_READ_ALL=true): search and read the whole Drive, read-only. */
+export const DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -31,6 +37,8 @@ export interface GoogleOAuthConfig {
   clientId: string;
   clientSecret: string;
   redirectUri: string;
+  /** Additionally request drive.readonly (search the whole Drive). */
+  driveReadAll?: boolean;
 }
 
 interface TokenResponse {
@@ -80,7 +88,7 @@ export class GoogleAuth {
       client_id: this.cfg.clientId,
       redirect_uri: this.cfg.redirectUri,
       response_type: "code",
-      scope: GOOGLE_SCOPES.join(" "),
+      scope: [...GOOGLE_SCOPES, ...(this.cfg.driveReadAll ? [DRIVE_READONLY_SCOPE] : [])].join(" "),
       access_type: "offline",
       prompt: "consent",
       include_granted_scopes: "false",

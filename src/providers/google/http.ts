@@ -7,6 +7,12 @@ export interface GoogleRequest {
   body?: unknown;
   /** Only idempotent requests are retried on 429/5xx. Sending mail is never retried. */
   idempotent?: boolean;
+  /** Raw body (e.g. multipart upload) instead of JSON. */
+  rawBody?: Buffer;
+  contentType?: string;
+  headers?: Record<string, string>;
+  /** Return the response body as bytes instead of parsed JSON. */
+  responseType?: "json" | "buffer";
 }
 
 const MAX_RETRIES = 3;
@@ -42,8 +48,10 @@ export class GoogleHttp {
           headers: {
             authorization: `Bearer ${token}`,
             ...(req.body !== undefined ? { "content-type": "application/json" } : {}),
+            ...(req.rawBody !== undefined && req.contentType ? { "content-type": req.contentType } : {}),
+            ...req.headers,
           },
-          body: req.body !== undefined ? JSON.stringify(req.body) : undefined,
+          body: req.rawBody !== undefined ? new Uint8Array(req.rawBody) : req.body !== undefined ? JSON.stringify(req.body) : undefined,
           signal: AbortSignal.timeout(30_000),
         });
       } catch (err) {
@@ -55,6 +63,7 @@ export class GoogleHttp {
       }
 
       if (res.ok) {
+        if (req.responseType === "buffer") return Buffer.from(await res.arrayBuffer()) as T;
         if (res.status === 204) return undefined as T;
         const text = await res.text();
         return (text ? JSON.parse(text) : undefined) as T;

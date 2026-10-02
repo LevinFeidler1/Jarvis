@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { RiskLevel, type ToolDefinition, type ToolResult } from "../core/types.js";
 import { accountOfId, MultiAccountEmail } from "../providers/multi-email.js";
+import { ImapEmailProvider } from "../providers/imap/imap.js";
 import type { EmailSummary } from "../providers/types.js";
 import { defineTool, emailAddress, external, id, ok, singleLine } from "./common.js";
 
@@ -80,6 +81,13 @@ const replyInput = z.object({
   subject: singleLine(300).optional().describe("Leer lassen für 'Re: <Originalbetreff>'."),
   body: z.string().min(1).max(50_000),
 });
+
+/** Gmail labels can be reverted; IMAP "labels" are folder moves that change the message id. */
+async function labelUndoPossible(ids: string[], ctx: Parameters<ToolDefinition["execute"]>[1]): Promise<boolean> {
+  const provider = await ctx.providers.email();
+  if (provider instanceof MultiAccountEmail) return ids.every((id) => provider.kindOf(id) === "gmail");
+  return !(provider instanceof ImapEmailProvider);
+}
 
 const recipients = (i: { to: string[]; cc?: string[]; bcc?: string[] }) => [...i.to, ...(i.cc ?? []), ...(i.bcc ?? [])].join(", ");
 /** Fails early (before any confirmation) when the sending mailbox is unclear. */
@@ -229,6 +237,10 @@ export const emailTools: ToolDefinition[] = [
       const mail = await ctx.providers.email();
       return bulk(input.message_ids, (mid) => mail.archive(mid));
     },
+    async undo(input, _data, ctx) {
+      if (!(await labelUndoPossible(input.message_ids, ctx))) return undefined;
+      return { tool: "label_email", input: { message_ids: input.message_ids, add: ["INBOX"] }, label: "Zurück in den Posteingang" };
+    },
   }),
   defineTool({
     name: "mark_as_read",
@@ -241,6 +253,7 @@ export const emailTools: ToolDefinition[] = [
       const mail = await ctx.providers.email();
       return bulk(input.message_ids, (mid) => mail.markRead(mid, true));
     },
+    undo: (input) => ({ tool: "mark_as_unread", input: { message_ids: input.message_ids }, label: "Wieder als ungelesen markieren" }),
   }),
   defineTool({
     name: "mark_as_unread",
@@ -253,6 +266,7 @@ export const emailTools: ToolDefinition[] = [
       const mail = await ctx.providers.email();
       return bulk(input.message_ids, (mid) => mail.markRead(mid, false));
     },
+    undo: (input) => ({ tool: "mark_as_read", input: { message_ids: input.message_ids }, label: "Wieder als gelesen markieren" }),
   }),
   defineTool({
     name: "label_email",
@@ -269,6 +283,10 @@ export const emailTools: ToolDefinition[] = [
     async execute(input, ctx) {
       const mail = await ctx.providers.email();
       return bulk(input.message_ids, (mid) => mail.modifyLabels(mid, { add: input.add, remove: input.remove }));
+    },
+    async undo(input, _data, ctx) {
+      if (!(await labelUndoPossible(input.message_ids, ctx))) return undefined;
+      return { tool: "label_email", input: { message_ids: input.message_ids, add: input.remove, remove: input.add }, label: "Labels zurücksetzen" };
     },
   }),
   defineTool({

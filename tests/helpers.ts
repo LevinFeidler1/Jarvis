@@ -34,6 +34,10 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     maxAgentSteps: 8,
     confirmationTtlMinutes: 30,
     compactAtTokens: 60_000,
+    files: { maxBytes: 20 * 1024 * 1024, dbQuotaBytes: 150 * 1024 * 1024 },
+    triage: { model: "test-small", dailyLimit: 100 },
+    browser: { mode: "off", maxSteps: 25, taskMinutes: 15 },
+    telegram: {},
     ...overrides,
   };
 }
@@ -43,7 +47,7 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 let shared: Promise<Db> | undefined;
 const TABLES = [
   "messages", "conversations", "pending_actions", "activity", "audit_log", "memory", "tasks",
-  "reminders", "notifications", "oauth_tokens", "oauth_states", "settings", "sessions", "email_accounts", "contacts", "push_subscriptions", "automations", "llm_usage",
+  "reminders", "notifications", "oauth_tokens", "oauth_states", "settings", "sessions", "email_accounts", "contacts", "push_subscriptions", "automations", "llm_usage", "files", "file_blobs", "upload_sessions", "upload_chunks", "triage_seen", "suggestions", "suggestion_feedback", "browser_tasks", "telegram_updates",
 ];
 
 /** One in-process Postgres (PGlite) per test worker, emptied for every test. */
@@ -125,15 +129,24 @@ export class FakeEmail implements EmailProvider {
     this.forwarded.push({ id, to });
     return { id: `fwd_${this.forwarded.length}` };
   }
-  async modifyLabels(id: string) {
+  labels: Array<{ id: string; add?: string[]; remove?: string[] }> = [];
+  archived: string[] = [];
+  trashed: string[] = [];
+  async modifyLabels(id: string, change: { add?: string[]; remove?: string[] } = {}) {
     if (this.failOn.has(id)) throw new Error("upstream failed");
+    this.labels.push({ id, ...change });
   }
   async markRead(id: string, read: boolean) {
     if (this.failOn.has(id)) throw new Error("upstream failed");
     if (read) this.read.add(id);
+    else this.read.delete(id);
   }
-  async archive() {}
-  async trash() {}
+  async archive(id: string) {
+    this.archived.push(id);
+  }
+  async trash(id: string) {
+    this.trashed.push(id);
+  }
 }
 
 export function makeEmail(partial: Partial<Email> & { id: string }): Email {
@@ -206,7 +219,8 @@ export class FakeContacts implements ContactProvider {
   readonly name = "FakeContacts";
   constructor(public contacts: Contact[] = []) {}
   async searchContacts(q: string) {
-    return this.contacts.filter((c) => c.name.toLowerCase().includes(q.toLowerCase()));
+    const n = q.toLowerCase();
+    return this.contacts.filter((c) => c.name.toLowerCase().includes(n) || c.emails.some((e) => e.toLowerCase().includes(n)));
   }
   async getContact(id: string) {
     return this.contacts.find((c) => c.id === id)!;

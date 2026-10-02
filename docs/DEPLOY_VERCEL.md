@@ -119,12 +119,40 @@ Keine zusätzlichen Variablen nötig — der Schlüssel wird beim ersten Aufruf 
 - **Android / Desktop (Chrome, Edge, Firefox):** *Einstellungen → Push-Benachrichtigungen → Aktivieren*.
 - **Test senden** prüft die Zustellung. Jedes Gerät einzeln aktivieren.
 
+## 8b. Telegram, Sprachmodus, Browser, Google Drive (optional)
+
+- **Sprachmodus:** funktioniert ohne Einstellungen (Browser-Spracherkennung + Gerätestimme). Besser:
+  `TRANSCRIBE_API_KEY` (Groq, kostenlos) für Whisper-Erkennung und `ELEVENLABS_API_KEY` (ElevenLabs Free)
+  für eine realistische Stimme. → docs/VOICE.md
+
+- **Telegram-Bot:** docs/TELEGRAM.md — `TELEGRAM_BOT_TOKEN` (BotFather), dann *Einstellungen → Telegram →
+  Webhook einrichten*, `/start` an den Bot, `TELEGRAM_CHAT_ID` eintragen, Redeploy. Sprachnachrichten
+  optional mit `TRANSCRIBE_API_KEY` (Groq, kostenlos).
+- **Browser-Agent:** läuft ohne weitere Einstellungen in der eigenen Funktion `api/browser.ts`
+  (Chromium via @sparticuz/chromium, max. 60 s pro Schritt). Abschalten: `JARVIS_BROWSER=off`. → docs/BROWSER.md
+- **Google Drive:** Drive API im Google-Cloud-Projekt aktivieren, Scope `drive.file` im
+  Zustimmungsbildschirm ergänzen, dann in JARVIS *Einstellungen → Google → Neu verbinden*. → docs/SETUP_GOOGLE.md
+
 ## 9. Kosten im Blick
 
 *Rückblick* zeigt die geschätzten Claude-Kosten der Woche. Zusätzlich in der
 Anthropic Console unter *Settings → Limits* ein **monatliches Ausgabenlimit** setzen.
 Lange Unterhaltungen fasst JARVIS ab 60 000 Tokens automatisch zusammen
 (`JARVIS_COMPACT_AT_TOKENS`, optional).
+
+**Eingebaute Sparmaßnahmen (gleiches Modell, gleiche Qualität):**
+
+| Hebel | Wirkung |
+|---|---|
+| Prompt-Cache, 2 Ebenen | Werkzeuge + Systemprompt (~11 000 Tokens) bleiben **1 Stunde** im Cache, der Gesprächsverlauf 5 Minuten. Eine neue Unterhaltung 20 Minuten nach der letzten liest das Präfix für 10 % statt es neu zu schreiben (Schreiben einmalig 2× statt 1,25× – lohnt sich ab dem 2. Gespräch pro Stunde). |
+| Stabiler Systemprompt | Uhrzeit, Gedächtnis und Automations-Kontext stehen in der Benutzer-Nachricht, nie im Systemprompt – sonst würde jeder Aufruf den Cache verfehlen. |
+| Sprachmodus | Antworten werden vorgelesen: höchstens 3 kurze Sätze und Denk-Aufwand `low` statt `medium`. Ausgabe-Tokens sind der teuerste Teil (5× Eingabe) – und kurze Antworten sind schneller da. |
+| Mail-Vorsortierung | läuft auf `claude-haiku-4-5` mit Tageslimit (`JARVIS_TRIAGE_DAILY_LIMIT`), nicht auf dem Hauptmodell. |
+| Kompaktierung | lange Unterhaltungen werden serverseitig zusammengefasst statt immer länger mitgeschickt. |
+
+Bewusst **nicht** gemacht: ein kleineres Modell für den Chat, weniger Werkzeuge oder kürzere Antworten
+im Text-Chat – das hätte die Qualität gesenkt. Das Modell bestimmt allein `ANTHROPIC_MODEL`
+(Standard im Code: `claude-opus-5-5`; mit `claude-sonnet-5-5` kosten Ein- und Ausgabe die Hälfte).
 
 ## Sicherheit
 
@@ -143,7 +171,9 @@ Lange Unterhaltungen fasst JARVIS ab 60 000 Tokens automatisch zusammen
 |---|---|
 | Laufzeit pro Anfrage | max. 300 s (in `vercel.json` gesetzt) — lange Agent-Läufe stoppen vorher am Schritt-Limit |
 | Cron | 1× täglich eingebaut — Takt alle 5 Min. über cron-job.org (Schritt 7) |
-| Neon Free | 0,5 GB Speicher — für JARVIS mehr als genug |
+| Neon Free | 0,5 GB Speicher — ohne Google Drive liegen Dateien in der DB (Quote `JARVIS_DB_FILE_QUOTA_MB`, Standard 150 MB) |
+| Request-/Antwortgröße | 4,5 MB — Uploads/Downloads laufen deshalb in Teilen |
+| Funktionsgröße | 250 MB — Chromium liegt nur in `api/browser.ts` |
 
 ## Fehlerbehebung
 

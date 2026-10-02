@@ -29,9 +29,27 @@ const EnvSchema = z.object({
   JARVIS_USER_NAME: optionalString,
   JARVIS_MAX_AGENT_STEPS: z.coerce.number().int().min(1).max(50).default(12),
   JARVIS_COMPACT_AT_TOKENS: z.coerce.number().int().min(50_000).max(900_000).default(60_000),
+  JARVIS_TRIAGE_MODEL: optionalString.transform((v) => v ?? "claude-haiku-4-5"),
+  JARVIS_TRIAGE_DAILY_LIMIT: z.coerce.number().int().min(0).max(2000).default(150),
+  JARVIS_BROWSER: z.enum(["auto", "off", "local", "remote"]).default("auto"),
+  JARVIS_BROWSER_URL: optionalString,
+  JARVIS_CHROMIUM_PATH: optionalString,
+  JARVIS_BROWSER_MAX_STEPS: z.coerce.number().int().min(3).max(100).default(25),
+  JARVIS_BROWSER_TASK_MINUTES: z.coerce.number().int().min(1).max(60).default(15),
+  JARVIS_MAX_FILE_MB: z.coerce.number().int().min(1).max(50).default(20),
+  JARVIS_DB_FILE_QUOTA_MB: z.coerce.number().int().min(10).max(400).default(150),
   JARVIS_CONFIRMATION_TTL_MINUTES: z.coerce.number().int().min(1).max(1440).default(30),
+  JARVIS_DRIVE_READ_ALL: z.enum(["true", "false"]).optional().transform((v) => v === "true"),
   GOOGLE_CLIENT_ID: optionalString,
   GOOGLE_CLIENT_SECRET: optionalString,
+  TELEGRAM_BOT_TOKEN: optionalString.refine((v) => !v || /^\d+:[\w-]{30,}$/.test(v), { message: "TELEGRAM_BOT_TOKEN hat nicht das Format 123456:ABC… (von @BotFather)" }),
+  TELEGRAM_CHAT_ID: optionalString.refine((v) => !v || /^-?\d{1,20}$/.test(v), { message: "TELEGRAM_CHAT_ID muss eine Zahl sein" }),
+  TRANSCRIBE_API_KEY: optionalString,
+  TRANSCRIBE_API_URL: optionalString.transform((v) => v ?? "https://api.groq.com/openai/v1/audio/transcriptions"),
+  TRANSCRIBE_MODEL: optionalString.transform((v) => v ?? "whisper-large-v3-turbo"),
+  ELEVENLABS_API_KEY: optionalString,
+  ELEVENLABS_VOICE_ID: optionalString.transform((v) => v ?? "JBFqnCBsd6RMkjVDRZzb"),
+  ELEVENLABS_MODEL: optionalString.transform((v) => v ?? "eleven_flash_v2_5"),
 });
 
 export interface AppConfig {
@@ -56,7 +74,18 @@ export interface AppConfig {
   confirmationTtlMinutes: number;
   /** Conversations longer than this (input tokens) are summarized server-side. */
   compactAtTokens: number;
-  google?: { clientId: string; clientSecret: string };
+  files: { maxBytes: number; dbQuotaBytes: number };
+  /** Browser agent (Phase E). mode auto: Vercel → own /api/browser function; local → JARVIS_CHROMIUM_PATH. */
+  browser: { mode: "auto" | "off" | "local" | "remote"; url?: string; chromiumPath?: string; maxSteps: number; taskMinutes: number };
+  /** Mail triage (Phase C): small model and max. mails classified per day. */
+  triage: { model: string; dailyLimit: number };
+  google?: { clientId: string; clientSecret: string; driveReadAll?: boolean };
+  /** Telegram bot (Phase F). Only messages from chatId are accepted. */
+  telegram: { botToken?: string; chatId?: string };
+  /** Speech-to-text for Telegram voice messages (OpenAI-compatible endpoint, default Groq free tier). */
+  transcribe?: { apiKey: string; url: string; model: string };
+  /** Optional realistic voice for voice mode (ElevenLabs free tier). */
+  elevenlabs?: { apiKey: string; voiceId: string; model: string };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -92,9 +121,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     maxAgentSteps: e.JARVIS_MAX_AGENT_STEPS,
     confirmationTtlMinutes: e.JARVIS_CONFIRMATION_TTL_MINUTES,
     compactAtTokens: e.JARVIS_COMPACT_AT_TOKENS,
+    browser: { mode: e.JARVIS_BROWSER, url: e.JARVIS_BROWSER_URL, chromiumPath: e.JARVIS_CHROMIUM_PATH, maxSteps: e.JARVIS_BROWSER_MAX_STEPS, taskMinutes: e.JARVIS_BROWSER_TASK_MINUTES },
+    triage: { model: e.JARVIS_TRIAGE_MODEL, dailyLimit: e.JARVIS_TRIAGE_DAILY_LIMIT },
+    files: { maxBytes: e.JARVIS_MAX_FILE_MB * 1024 * 1024, dbQuotaBytes: e.JARVIS_DB_FILE_QUOTA_MB * 1024 * 1024 },
     google:
       e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET
-        ? { clientId: e.GOOGLE_CLIENT_ID, clientSecret: e.GOOGLE_CLIENT_SECRET }
+        ? { clientId: e.GOOGLE_CLIENT_ID, clientSecret: e.GOOGLE_CLIENT_SECRET, driveReadAll: e.JARVIS_DRIVE_READ_ALL }
         : undefined,
+    telegram: { botToken: e.TELEGRAM_BOT_TOKEN, chatId: e.TELEGRAM_CHAT_ID },
+    elevenlabs: e.ELEVENLABS_API_KEY ? { apiKey: e.ELEVENLABS_API_KEY, voiceId: e.ELEVENLABS_VOICE_ID, model: e.ELEVENLABS_MODEL } : undefined,
+    transcribe: e.TRANSCRIBE_API_KEY ? { apiKey: e.TRANSCRIBE_API_KEY, url: e.TRANSCRIBE_API_URL, model: e.TRANSCRIBE_MODEL } : undefined,
   };
 }

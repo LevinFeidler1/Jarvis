@@ -3,7 +3,7 @@ import type { Db } from "../../db/database.js";
 import { nowIso } from "../../db/database.js";
 import { ToolError } from "../../core/types.js";
 import type { PushService } from "../push.js";
-import type { NotificationProvider, Reminder, Task, TaskPriority, TaskProvider, TaskStatus } from "../types.js";
+import type { NotificationProvider, NotifyOptions, Reminder, Task, TaskPriority, TaskProvider, TaskStatus } from "../types.js";
 
 const TASK_SELECT = `SELECT id, title, notes, due, priority, status, project, created_at AS "createdAt",
   updated_at AS "updatedAt", completed_at AS "completedAt" FROM tasks`;
@@ -135,12 +135,19 @@ export interface AppNotification {
 /** In-app notifications shown in the UI, mirrored as Web Push to the user's devices. */
 export class InAppNotificationProvider implements NotificationProvider {
   readonly name = "In-App + Push";
+  private mirrors: Array<(title: string, body: string | undefined, opts: NotifyOptions) => Promise<unknown>> = [];
+
   constructor(
     private readonly db: Db,
     private readonly push?: PushService,
   ) {}
 
-  async notify(title: string, body?: string, opts: { url?: string; tag?: string } = {}): Promise<{ id: string; pushed?: number }> {
+  /** Additional channel (Telegram) that receives every notification, best effort. */
+  addMirror(fn: (title: string, body: string | undefined, opts: NotifyOptions) => Promise<unknown>): void {
+    this.mirrors.push(fn);
+  }
+
+  async notify(title: string, body?: string, opts: NotifyOptions = {}): Promise<{ id: string; pushed?: number }> {
     const id = randomUUID();
     await this.db.run("INSERT INTO notifications (id, title, body, read, created_at) VALUES ($1, $2, $3, FALSE, $4)", [
       id,
@@ -150,6 +157,7 @@ export class InAppNotificationProvider implements NotificationProvider {
     ]);
     // Push is best effort: the in-app notification is already stored.
     const pushed = this.push ? (await this.push.send({ title, body, url: opts.url, tag: opts.tag }).catch(() => ({ sent: 0 }))).sent : undefined;
+    for (const m of this.mirrors) await m(title, body, opts).catch(() => undefined);
     return { id, pushed };
   }
 

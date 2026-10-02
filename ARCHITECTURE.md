@@ -15,8 +15,8 @@ Bestätigung zurückhält.
 │  Tasks, Memory │               └──────────────┬─────────────────────────────────────────┘
 │  Settings      │                              │
 └──────────────┘                              ▼
-   (später: Voice-Client,        ┌───────────────────────────────┐
-    gleiche API)                 │  Agent Core (src/core/agent)  │
+   Telegram-Bot ──▶ /api/telegram ┌───────────────────────────────┐
+   Cron ──▶ /api/cron/tick       │  Agent Core (src/core/agent)  │
                                  │  UNDERSTAND → CONTEXT → PLAN  │
                                  │  → PERMISSION → EXECUTE       │
                                  │  → VERIFY → MEMORY → RESPOND  │
@@ -60,6 +60,12 @@ Bestätigung zurückhält.
 | `src/memory/*` | Strukturiertes, kontrollierbares Gedächtnis |
 | `src/db/*` | Postgres-Schicht (Neon via `pg`, lokal PGlite), Migrationen |
 | `src/security/*` | Token-Verschlüsselung (AES-256-GCM), Sessions |
+| `src/files/*` | Dateien: Formaterkennung, Lesen/Erstellen/Bearbeiten/Umwandeln, Versionen, Speicher (Drive oder Postgres), Chunk-Upload |
+| `src/core/triage*.ts` | Mail-Hinweise: Klassifizierung mit kleinem Modell, Vorschläge, Lernen aus Feedback |
+| `src/core/autonomy.ts` | Regeln für selbstständige Aktionen in Automationen (Allowlist, Nie-Regeln, Tageslimit) |
+| `src/browser/*` | Browser-Agent: Playwright-Engine, Remote-Aufruf, Aufgaben/Schritte, Element-Risiko |
+| `api/browser.ts` | Eigene Vercel-Funktion mit @sparticuz/chromium (hält das Hauptbundle klein) |
+| `src/telegram/*` | Telegram-Bot: API-Client, Webhook-Logik, Transkription |
 | `public/` | Web-UI ohne Build-Schritt: Heute-Dashboard, Chat mit Live-Schritten, Kalender, E-Mail, Aufgaben, Gedächtnis, Einstellungen; PWA-fähig |
 
 ## 3. Agent Loop
@@ -189,6 +195,21 @@ Antworttext → Text-to-Speech. Umgesetzt im Browser mit der Web Speech API
 merkt nicht, ob Text getippt oder gesprochen wurde. Bestätigungen laufen über
 dieselbe `PendingAction`-Mechanik; es gibt keinen Voice-spezifischen Bypass —
 kritische Aktionen (Stufe 3) lassen sich generell nicht per „Ja" im Chat bestätigen.
+
+## 8b. Erweiterungen (Dateien, Drive, Hinweise, Autonomie, Browser, Telegram)
+
+* **Lange Aufgaben in Schritten:** Vercel-Funktionen laufen max. 300 s ohne dauerhaftes Dateisystem.
+  Uploads kommen in 3-MB-Teilen (Vercel-Limit 4,5 MB pro Request), Downloads per Range in 4-MB-Teilen.
+  Mail-Hinweise und Automationen arbeiten pro 5-Minuten-Cron-Tick einen begrenzten Stapel ab
+  (Claim in der DB, Rest beim nächsten Tick). Browser-Aufgaben speichern ihre Schritte und spielen sie
+  auf einer kalten Instanz deterministisch nach.
+* **Bundle-Größe:** Chromium (@sparticuz) liegt nur in `api/browser.ts`; das Hauptbundle importiert
+  Playwright über einen berechneten Specifier, damit Vercels Tracing es nicht mitnimmt.
+* **ESM auf Vercel:** `npm run check:esm` lädt alle Abhängigkeiten wie Vercel (ohne
+  `require(esm)`); ESM-only-Pakete werden per dynamischem `import()` geladen.
+* **Benachrichtigungen** gehen an In-App + Web-Push und über `addMirror` zusätzlich an Telegram.
+* **Vorbereitete Aktionen** (Vorschläge, Telegram-Knöpfe) laufen über `Agent.runApprovedAction` bzw.
+  `resolveConfirmation` — ohne LLM-Aufruf, aber durch dieselbe Permission-Engine.
 
 ## 9. Architekturentscheidungen (ADR-Kurzform)
 

@@ -91,6 +91,28 @@ Treffer plus eine ehrliche Warnung.
 | `get_integration_status` | 0 | Welche Konten sind verbunden |
 | `web_search` | 0 | Server-Tool der Claude API (`web_search_20260209`); abschaltbar mit `JARVIS_WEB_SEARCH=false` |
 
+## Dateien (`src/tools/files.ts`) — Details: docs/FILES.md
+
+| Tool | Stufe | Beschreibung |
+|---|---|---|
+| `list_files` | 0 | Dateien (neueste Version je Dokument), Suche in Name und Inhalt |
+| `read_file` | 0 | Text/Tabellen/Folien lesen (seitenweise), Bilder und Scans visuell — immer `external_data` |
+| `create_file` | 1 | DOCX/PDF/MD/TXT aus Markdown, XLSX mit Formeln, CSV |
+| `edit_file` | 1 | Text ersetzen/anhängen, Zellen/Formeln, Zeilen, Blätter, PDF zusammenführen/Seiten — immer neue Version |
+| `convert_file` | 1 | Formatumwandlung als neue Datei |
+| `delete_file` | 2 | Löschen (Drive: Papierkorb) |
+
+## Google Drive (`src/tools/drive.ts`) — Scope `drive.file` (optional `drive.readonly`)
+
+| Tool | Stufe | Beschreibung |
+|---|---|---|
+| `search_drive` | 0 | Name/Volltext; ohne Vollzugriff nur JARVIS-eigene Dateien |
+| `read_drive_file` | 0 (1 mit `import`) | Docs/Slides als Text, Sheets als CSV, Binärdateien ausgelesen; `import` legt bearbeitbare Kopie (DOCX/XLSX) in JARVIS an |
+| `save_file_to_drive` | 1 | JARVIS-Datei in `JARVIS/<Unterordner>` ablegen bzw. dorthin verschieben |
+
+Ist Drive verbunden, speichert JARVIS neue Dateien automatisch im Drive-Ordner „JARVIS“;
+Versionen sind Drive-Revisionen derselben Datei (`keepForever`).
+
 ## Automationen & Rückblick (`src/tools/automation.ts`)
 
 Automationen laufen ohne Zutun des Benutzers (Zeitplan oder neue E-Mail) durch
@@ -104,12 +126,33 @@ denselben Agent und dasselbe Permission-System; das Ergebnis kommt als Push.
 | `delete_automation` | 2 | Löschen |
 | `get_week_review` | 0 | Wochenrückblick: Erledigtes, Offenes, nächste Woche, geschätzte API-Kosten |
 
+Autonomie (docs/AUTONOMY.md): Eine Automation darf Stufe-2-Tools nur ausführen, wenn sie
+in ihrer Allowlist stehen; nie autonom: Senden an neue Empfänger, Löschen ohne Papierkorb,
+Stufe 3. Ausgeführte Aktionen mit `undo` lassen sich unter *Aktivität* zurücknehmen.
+
+## Browser-Agent (`src/tools/browser.ts`) — Details: docs/BROWSER.md
+
+Jede Seite ist `external_data`. Die Stufe von `click`/`type` wird aus dem konkreten Element
+berechnet (`src/browser/risk.ts`).
+
+| Tool | Stufe | Beschreibung |
+|---|---|---|
+| `open_page` | 0 | Neue Browser-Aufgabe, Seite öffnen (nur öffentliche http/https-Adressen) |
+| `navigate` | 0 | Andere Adresse in derselben Aufgabe |
+| `extract_information` | 0 | Text, Links und Bedienelemente der aktuellen Seite |
+| `screenshot` | 0 | Bild der Seite (JPEG) zur visuellen Prüfung |
+| `click` | 1–3 | Link/Suche 1 · Formular absenden 2 · Kauf/Zahlung/Login/Vertrag 3 |
+| `type` | 1–3 | Suchfeld 1 · Formularfeld mit Absenden 2 · Passwort/Karte 3 |
+| `download_file` | 1 | Datei herunterladen und in *Dateien* speichern |
+
+## Telegram (kein Tool) — docs/TELEGRAM.md
+
+Telegram ist ein zweiter Eingang zum selben Agenten: alle Tools und Stufen gelten unverändert.
+Stufe 2 lässt sich per Knopf bestätigen, Stufe 3 nur in der App.
+
 ## Geplant (siehe ROADMAP.md)
 
-`open_page`, `navigate`, `click`, `type`, `extract_information`, `download_file`
-(Browser-Agent, Phase 4) · `search_files`, `read_file`, `create_file`,
-`update_file`, `summarize_file` (Google Drive / OneDrive, Phase 2b) · Outlook,
-Microsoft Calendar/Contacts (Microsoft Graph).
+OneDrive · PPTX erzeugen · Outlook, Microsoft Calendar/Contacts (Microsoft Graph) · CalDAV.
 
 ## Tool-Ergebnisse
 

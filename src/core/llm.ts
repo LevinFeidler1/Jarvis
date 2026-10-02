@@ -9,6 +9,8 @@ export interface LlmRequest {
   system: LlmSystem;
   messages: LlmMessage[];
   tools: LlmTool[];
+  /** Thinking/effort budget for this turn (default "medium"). Voice turns use "low": short spoken answers. */
+  effort?: "low" | "medium" | "high";
 }
 
 /** The agent core depends only on this interface (tests use a scripted fake). */
@@ -46,6 +48,13 @@ export const COMPACTION_INSTRUCTIONS =
   "wartende Aktionen, genannte Personen mit E-Mail-Adressen, Termine mit Datum/Uhrzeit, E-Mail-IDs, Aufgaben-/Termin-IDs, " +
   "Entscheidungen und Vorlieben des Benutzers sowie Sicherheitshinweise (z.B. erkannte Manipulationsversuche). " +
   "Lass Smalltalk und bereits vollständig erledigte Details weg. Schreib nur die Zusammenfassung und rufe kein Werkzeug auf.";
+
+/** Marks the end of the system prompt as a 1-hour cache breakpoint (tools come before it in the prefix). */
+export function withLongCache(system: LlmSystem): LlmSystem {
+  if (!system.length) return system;
+  const last = system[system.length - 1]!;
+  return [...system.slice(0, -1), { ...last, cache_control: { type: "ephemeral", ttl: "1h" } }];
+}
 
 /** Claude Messages API with adaptive thinking, streaming and refusal fallback. */
 export class AnthropicLlm implements LlmClient {
@@ -87,9 +96,12 @@ export class AnthropicLlm implements LlmClient {
             },
           }
         : {}),
-      output_config: { effort: "medium" },
+      output_config: { effort: req.effort ?? "medium" },
+      // Two cache layers: the stable prefix (tools + system prompt, ~11k tokens) is kept for 1 hour, so a
+      // conversation started 20 minutes after the last one still reads it at 10 % instead of re-writing it;
+      // the growing conversation itself uses the automatic 5-minute breakpoint.
       cache_control: { type: "ephemeral" },
-      system: req.system,
+      system: extras ? withLongCache(req.system) : req.system,
       tools,
       messages: req.messages,
     });
@@ -106,7 +118,7 @@ export class AnthropicLlm implements LlmClient {
       } catch (err) {
         // Compaction / thinking-binding are optimizations: if this account or model rejects them,
         // continue without instead of failing every request.
-        if (err instanceof Anthropic.BadRequestError && /context_management|compact|block_binding|thinking-binding|beta/i.test(err.message)) {
+        if (err instanceof Anthropic.BadRequestError && /context_management|compact|block_binding|thinking-binding|beta|ttl|cache_control/i.test(err.message)) {
           console.warn("[llm] optional API features rejected, continuing without:", err.message);
           this.extrasDisabled = true;
           return await this.send(req, tools, false);
