@@ -88,11 +88,34 @@ const ICONS = {
   play: '<path d="M7 4.8v14.4a1 1 0 0 0 1.5.86l11.4-7.2a1 1 0 0 0 0-1.72L8.5 3.94A1 1 0 0 0 7 4.8z" fill="currentColor" stroke="none"/>',
   route: '<circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="5" r="2.5"/><path d="M8.5 19H16a3.5 3.5 0 0 0 0-7H8a3.5 3.5 0 0 1 0-7h7.5"/>',
   external: '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+  list: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/>',
+  news: '<path d="M4 5h13v14H6a2 2 0 0 1-2-2z"/><path d="M17 8h3v9a2 2 0 0 1-2 2M8 9h5M8 13h5M8 16h3"/>',
+  note: '<path d="M5 3h10l4 4v14H5z"/><path d="M14 3v5h5M8 12h8M8 16h5"/>',
+  "w-sun": '<circle cx="12" cy="12" r="4.2" fill="#FFD60A" stroke="#FFB340"/><path stroke="#FFB340" d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"/>',
+  "w-moon": '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.3 6.3 0 0 0 10.5 10.5z" fill="#CFE1FF" stroke="#A8C4FF"/>',
+  "w-partly": '<circle cx="9" cy="9" r="3.4" fill="#FFD60A" stroke="#FFB340"/><path stroke="#FFB340" d="M9 2.8v1.4M3.6 4.6l1 1M2.8 9h1.4M14.4 4.6l-1 1"/><path d="M8 20h9.5a3.5 3.5 0 0 0 .4-7 5 5 0 0 0-9.6.9A3 3 0 0 0 8 20z" fill="#E5E5EA" stroke="#C7C7CC"/>',
+  "w-cloud": '<path d="M7 19h10.5a4 4 0 0 0 .5-8 6 6 0 0 0-11.5 1.3A3.4 3.4 0 0 0 7 19z" fill="#D1D1D6" stroke="#AEAEB2"/>',
+  "w-fog": '<path d="M7 13h10.5a3.5 3.5 0 0 0 .4-7 5 5 0 0 0-9.6.9A3 3 0 0 0 7 13z" fill="#D1D1D6" stroke="#AEAEB2"/><path stroke="#AEAEB2" d="M4 16.5h16M6 20h12"/>',
+  "w-drizzle": '<path d="M7 15h10.5a3.5 3.5 0 0 0 .4-7 5 5 0 0 0-9.6.9A3 3 0 0 0 7 15z" fill="#D1D1D6" stroke="#AEAEB2"/><path stroke="#64D2FF" d="M9 18l-.6 1.6M13 18l-.6 1.6M17 18l-.6 1.6"/>',
+  "w-rain": '<path d="M7 14h10.5a3.5 3.5 0 0 0 .4-7 5 5 0 0 0-9.6.9A3 3 0 0 0 7 14z" fill="#C7C7CC" stroke="#8E8E93"/><path stroke="#0A84FF" stroke-width="2" d="M8.5 17l-1.2 3M12.5 17l-1.2 3M16.5 17l-1.2 3"/>',
+  "w-snow": '<path d="M7 14h10.5a3.5 3.5 0 0 0 .4-7 5 5 0 0 0-9.6.9A3 3 0 0 0 7 14z" fill="#E5E5EA" stroke="#AEAEB2"/><path stroke="#FFFFFF" d="M8 18h.01M12 20h.01M16 18h.01M10 21.5h.01M14 21.5h.01" stroke-width="2.6"/>',
+  "w-storm": '<path d="M7 13h10.5a3.5 3.5 0 0 0 .4-7 5 5 0 0 0-9.6.9A3 3 0 0 0 7 13z" fill="#8E8E93" stroke="#636366"/><path d="M12.5 13.5 10 18h3.5l-2 4.5" stroke="#FFD60A" stroke-width="2"/>',
   keyboard: '<rect x="2" y="5" width="20" height="14" rx="3"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M18 13h.01M9 15.5h6"/>',
   euro: '<path d="M18 6.5A7 7 0 1 0 18 17.5"/><path d="M4 10h9M4 14h9"/>',
   spark: '<path d="M12 2c.6 4.8 2.2 6.4 7 7-4.8.6-6.4 2.2-7 7-.6-4.8-2.2-6.4-7-7 4.8-.6 6.4-2.2 7-7z"/>',
   headset: '<path d="M3 14v-2a9 9 0 0 1 18 0v2"/><path d="M21 16a2 2 0 0 1-2 2h-1v-6h1a2 2 0 0 1 2 2zM3 16a2 2 0 0 0 2 2h1v-6H5a2 2 0 0 0-2 2z"/>',
 };
+/** The JARVIS mark: a glowing ring with a travelling light point (static markup only). */
+let logoSeq = 0;
+function logoMark(cls = "") {
+  const n = ++logoSeq;
+  const span = document.createElement("span");
+  span.className = `logo-mark ${cls}`;
+  span.setAttribute("aria-hidden", "true");
+  span.innerHTML = `<svg viewBox="0 0 64 64"><defs><linearGradient id="lr${n}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9ff0ff"/><stop offset=".45" stop-color="#3d8bff"/><stop offset="1" stop-color="#7a4dff"/></linearGradient><filter id="lg${n}" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="2.6"/></filter></defs><circle cx="32" cy="32" r="22" fill="none" stroke="url(#lr${n})" stroke-width="7" opacity=".8" filter="url(#lg${n})"/><circle class="lm-ring" cx="32" cy="32" r="22" fill="none" stroke="url(#lr${n})" stroke-width="4"/><circle cx="32" cy="32" r="3.2" fill="#fff"/><g class="lm-dot"><circle cx="47.6" cy="16.4" r="5" fill="#bdf4ff" filter="url(#lg${n})"/><circle cx="47.6" cy="16.4" r="2.6" fill="#fff"/></g></svg>`;
+  return span;
+}
+
 function icon(name, cls = "") {
   const span = document.createElement("span");
   span.innerHTML = `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] ?? ICONS.dot}</svg>`;
@@ -212,11 +235,33 @@ const state = {
   counts: { pending: 0, notif: 0 },
 };
 
-async function api(path, { method = "GET", body } = {}) {
+/**
+ * Client-side limits, slightly above the server's (src/server.ts REQUEST_TIMEOUTS):
+ * normal routes 25 s, file processing 45 s, agent work 270 s.
+ */
+const AGENT_ROUTE_RE = /^\/api\/(chat|confirmations\/[^/?]+|automations\/[^/?]+\/run|suggestions\/([^/?]+\/accept|check)|activity\/[^/?]+\/undo)(\?|$)/;
+const FILE_WORK_RE = /^\/api\/(files\/(uploads\/[^/?]+\/complete|[^/?]+\/preview)|finance\/scan)(\?|$)/;
+function defaultTimeout(path, method) {
+  if (method !== "GET" && AGENT_ROUTE_RE.test(path)) return 285_000;
+  if (FILE_WORK_RE.test(path)) return 50_000;
+  return 30_000;
+}
+
+async function api(path, { method = "GET", body, timeoutMs = defaultTimeout(path, method) } = {}) {
   const headers = {};
   if (body !== undefined) headers["content-type"] = "application/json";
   if (method !== "GET") headers["x-jarvis-csrf"] = state.csrf ?? "";
-  const res = await fetch(path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined, credentials: "same-origin" });
+  const ctrl = new AbortController();
+  const timer = timeoutMs ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+  let res;
+  try {
+    res = await fetch(path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined, credentials: "same-origin", signal: ctrl.signal });
+  } catch (err) {
+    if (err?.name === "AbortError") throw Object.assign(new Error("Zeitüberschreitung — bitte gleich noch einmal versuchen."), { status: 0, timeout: true });
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
   if (res.status === 401 && path !== "/api/login") {
     renderLogin();
     throw new Error("Bitte erneut anmelden.");
@@ -379,37 +424,40 @@ function renderLogin() {
     },
   }, h("label", { for: "token" }, "Zugangstoken"), input, h("button", { class: "btn primary", type: "submit" }, "Anmelden"), err);
   set($("#root"), h("section", { class: "login" },
-    h("div", { class: "login-card" }, h("div", { class: "orb xl" }), h("h1", {}, "JARVIS"), h("div", { class: "muted" }, "Dein persönlicher digitaler Butler"), form)));
+    h("div", { class: "login-card" }, logoMark("xl"), h("h1", {}, "JARVIS"), h("div", { class: "muted" }, "Dein persönlicher digitaler Butler"), form)));
   input.focus();
 }
 
 // ─── Shell ──────────────────────────────────────────────────────────────────
+/** [id, label, icon, group] — groups structure the sidebar and the "Mehr" sheet. */
 const NAV = [
-  ["jarvis", "JARVIS", "spark"],
-  ["today", "Heute", "home"],
-  ["chat", "Chat", "chat"],
-  ["activity", "Aktivität", "activity"],
-  ["calendar", "Kalender", "calendar"],
-  ["email", "E-Mail", "mail"],
-  ["tasks", "Aufgaben", "tasks"],
-  ["contacts", "Kontakte", "users"],
-  ["files", "Dateien", "folder"],
-  ["automations", "Automationen", "bolt"],
-  ["review", "Rückblick", "chart"],
-  ["memory", "Gedächtnis", "memory"],
-  ["settings", "Einstellungen", "settings"],
+  ["jarvis", "JARVIS", "spark", "main"],
+  ["calendar", "Kalender", "calendar", "main"],
+  ["chat", "Chat", "chat", "main"],
+  ["email", "E-Mail", "mail", "life"],
+  ["tasks", "Aufgaben", "tasks", "life"],
+  ["notes", "Notizen & Listen", "list", "life"],
+  ["finance", "Finanzen", "euro", "life"],
+  ["contacts", "Kontakte", "users", "life"],
+  ["files", "Dateien", "folder", "life"],
+  ["today", "Tagesring", "home", "jarvis"],
+  ["automations", "Automationen", "bolt", "jarvis"],
+  ["activity", "Aktivität", "activity", "jarvis"],
+  ["review", "Rückblick", "chart", "jarvis"],
+  ["memory", "Gedächtnis", "memory", "jarvis"],
+  ["settings", "Einstellungen", "settings", "jarvis"],
 ];
-const MOBILE_NAV = ["jarvis", "today", "calendar", "chat"];
+const NAV_GROUPS = { life: "Alltag", jarvis: "JARVIS" };
+const MOBILE_NAV = ["jarvis", "calendar"];
 const isMobile = () => matchMedia("(max-width: 860px)").matches;
 
 function renderShell() {
   const navBtn = (id, label, ic) =>
     h("button", { class: "nav-item", "data-view": id, onclick: () => go(id) }, icon(ic), h("span", {}, label), id === "activity" ? h("span", { class: "count hidden", "data-count": "pending" }) : null);
   const sidebar = h("nav", { class: "sidebar", "aria-label": "Navigation" },
-    h("div", { class: "brand" }, h("div", { class: "orb" }), "JARVIS"),
-    NAV.slice(0, 3).map((n) => navBtn(...n)),
-    h("div", { class: "nav-sep" }),
-    NAV.slice(3).map((n) => navBtn(...n)),
+    h("div", { class: "brand" }, logoMark(), h("span", {}, "JARVIS")),
+    NAV.filter((n) => n[3] === "main").map((n) => navBtn(...n)),
+    Object.entries(NAV_GROUPS).map(([g, title]) => [h("div", { class: "nav-group" }, title), NAV.filter((n) => n[3] === g).map((n) => navBtn(...n))]),
     h("div", { class: "sidebar-foot" },
       h("button", { class: "nav-item", onclick: openNotifications }, icon("bell"), h("span", {}, "Benachrichtigungen"), h("span", { class: "count hidden", "data-count": "notif" })),
       h("button", { class: "nav-item", onclick: cycleTheme }, icon("moon"), h("span", {}, "Design")),
@@ -418,7 +466,7 @@ function renderShell() {
   const mobile = h("nav", { class: "mobile-bar", "aria-label": "Navigation" },
     MOBILE_NAV.map((id) => {
       const [, label, ic] = NAV.find((n) => n[0] === id);
-      return h("button", { "data-view": id, onclick: () => go(id) }, icon(ic), h("span", {}, label), id === "today" ? h("span", { class: "count hidden", "data-count": "pending" }) : null);
+      return h("button", { "data-view": id, onclick: () => go(id) }, id === "jarvis" ? logoMark("tab") : icon(ic), h("span", {}, label), id === "jarvis" ? h("span", { class: "count hidden", "data-count": "pending" }) : null);
     }),
     h("button", { id: "more-btn", onclick: openMoreSheet, "aria-haspopup": "dialog" }, icon("grid"), h("span", {}, "Mehr"), h("span", { class: "count hidden", "data-count": "notif" })));
   set($("#root"), h("div", { class: "shell" }, sidebar, h("main", { id: "main" }), mobile));
@@ -432,9 +480,16 @@ function setCounts() {
   });
 }
 
-async function refreshCounts() {
+/** Never two refreshes at once: callers share the running one. Resolves true on success. */
+let countsInFlight = null;
+function refreshCounts() {
+  countsInFlight ??= loadCounts().finally(() => { countsInFlight = null; });
+  return countsInFlight;
+}
+
+async function loadCounts() {
   try {
-    const [pending, notifs] = await Promise.all([api("/api/confirmations"), api("/api/notifications")]);
+    const [pending, notifs] = await Promise.all([api("/api/confirmations", { timeoutMs: 20_000 }), api("/api/notifications", { timeoutMs: 20_000 })]);
     const unread = notifs.filter((n) => !n.read);
     if (unread.length > state.counts.notif && state.counts.notif !== undefined && state.bootedCounts) {
       unread.slice(0, unread.length - state.counts.notif).forEach((n) => toast(`${n.title}: ${n.body ?? ""}`));
@@ -442,8 +497,42 @@ async function refreshCounts() {
     state.bootedCounts = true;
     state.counts = { pending: pending.length, notif: unread.length };
     setCounts();
-  } catch { /* offline */ }
+    return true;
+  } catch {
+    return false; // offline / timeout — the poller backs off
+  }
 }
+
+/**
+ * Background polling: the next poll starts only after the previous one finished
+ * (or timed out), backs off on errors (30 s → 1 → 2 → 4 → max. 5 min) and pauses
+ * while the tab is hidden.
+ */
+const POLL_MS = 30_000;
+const poller = {
+  timer: null,
+  failures: 0,
+  schedule(delay) {
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.run(), delay);
+  },
+  async run() {
+    if (document.hidden) return; // resumed by visibilitychange
+    if (!state.csrf) return this.schedule(POLL_MS);
+    const ok = await refreshCounts();
+    this.failures = ok ? 0 : Math.min(this.failures + 1, 4);
+    this.schedule(this.failures ? Math.min(5 * 60_000, POLL_MS * 2 ** this.failures) : POLL_MS);
+  },
+  start() {
+    if (this.started) return;
+    this.started = true;
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) clearTimeout(this.timer);
+      else this.schedule(400); // fresh numbers right after returning to the tab
+    });
+    this.run();
+  },
+};
 
 function cycleTheme() {
   const next = { system: "dark", dark: "light", light: "system" }[getTheme()];
@@ -464,11 +553,13 @@ function openMoreSheet() {
     h("button", { class: `sheet-item ${active ? "active" : ""}`, onclick: () => { close(); onclick(); } }, h("span", { class: "sheet-ic" }, icon(ic)), h("span", {}, label), extra);
   const views = NAV.filter(([id]) => !MOBILE_NAV.includes(id));
   const themeLabel = { system: "System", dark: "Dunkel", light: "Hell" }[getTheme()];
+  const tile = ([id, label, ic]) => item(ic, label, () => go(id), id === "activity" && state.counts.pending ? h("span", { class: "count" }, state.counts.pending) : null, state.view === id);
   const wrap = h("div", { class: "modal-wrap sheet-wrap", onclick: (e) => e.target === wrap && close() },
     h("div", { class: "sheet", role: "dialog", "aria-modal": "true", "aria-label": "Mehr" },
       h("div", { class: "sheet-grip" }),
-      h("div", { class: "sheet-grid" }, views.map(([id, label, ic]) =>
-        item(ic, label, () => go(id), id === "activity" && state.counts.pending ? h("span", { class: "count" }, state.counts.pending) : null, state.view === id))),
+      h("div", { class: "sheet-grid" }, views.filter((n) => n[3] === "main" || n[3] === "life").map(tile)),
+      h("div", { class: "sheet-sub" }, "JARVIS"),
+      h("div", { class: "sheet-grid" }, views.filter((n) => n[3] === "jarvis").map(tile)),
       h("div", { class: "sheet-list" },
         item("bell", "Benachrichtigungen", openNotifications, state.counts.notif ? h("span", { class: "count" }, state.counts.notif) : null),
         item(getTheme() === "light" ? "sun" : "moon", `Design: ${themeLabel}`, cycleTheme),
@@ -987,7 +1078,7 @@ async function viewChat(main, params = new URLSearchParams()) {
 
   const title = h("div", { class: "title" }, "Neue Unterhaltung");
   const top = h("div", { class: "chat-top" },
-    h("div", { style: "display:flex;align-items:center;gap:10px;min-width:0" }, h("div", { class: "orb" }), title),
+    h("div", { style: "display:flex;align-items:center;gap:10px;min-width:0" }, logoMark("sm"), title),
     h("div", { class: "head-actions" },
       voice.canSpeak ? h("button", { class: "btn ghost sm", id: "speak-btn", title: "Antworten auf Spracheingaben vorlesen",
         onclick: () => { if (voice.speaking) return voice.stopSpeaking(); voice.prefs.speak = !voice.prefs.speak; voice.save(); voiceUi(); } }) : null,
@@ -1022,7 +1113,7 @@ async function viewChat(main, params = new URLSearchParams()) {
     renderPendingCards(data.pendingActions);
   } else {
     thread.append(h("div", { class: "welcome" },
-      h("div", { class: "orb xl" }),
+      logoMark("xl"),
       h("h2", {}, `${greeting()}${state.userName ? `, ${state.userName.split(/\s+/)[0]}` : ""}.`),
       h("p", {}, "Wie kann ich helfen? Ich lese, plane und bereite vor — und frage, bevor etwas dein Postfach oder deinen Kalender verlässt."),
       h("div", { class: "suggest-grid" }, SUGGESTIONS.map(([ic, text, sub]) =>
@@ -1059,7 +1150,7 @@ function addAssistant() {
   const steps = h("div", { class: "steps" });
   const typing = h("div", { class: "typing" }, h("i"), h("i"), h("i"));
   const content = h("div", { class: "content" }, steps, typing);
-  const orb = h("div", { class: "orb busy" });
+  const orb = logoMark("busy");
   const node = h("div", { class: "msg assistant" }, orb, content);
   $("#thread").append(node);
   scrollDown();
@@ -2179,13 +2270,40 @@ async function viewMemory(main) {
 }
 
 // ─── View: Einstellungen ────────────────────────────────────────────────────
+/** Home location (weather, "in der Nähe") and news sources. */
+function lifeSettingsCard() {
+  const card = h("div", { class: "card" }, h("div", { class: "card-body" }, h("div", { class: "spinner" })));
+  const render = (life) => {
+    const city = h("input", { class: "field", placeholder: "Stadt oder Stadtteil, z.B. Hamburg-Ottensen", value: life.home?.name ?? "", maxlength: "100", "aria-label": "Heimatort" });
+    const saveCity = async () => {
+      if (city.value.trim().length < 2) return;
+      try { render({ ...(await api("/api/life/settings", { method: "PUT", body: { city: city.value.trim() } })), feeds: life.feeds }); toast("Ort gespeichert.", "ok"); } catch (e) { fail(e); }
+    };
+    city.addEventListener("keydown", (e) => e.key === "Enter" && saveCity());
+    const toggle = async (id, on) => {
+      const next = on ? [...new Set([...life.newsFeeds, id])] : life.newsFeeds.filter((x) => x !== id);
+      try { render({ ...(await api("/api/life/settings", { method: "PUT", body: { newsFeeds: next } })), feeds: life.feeds }); } catch (e) { fail(e); }
+    };
+    set(card, h("div", { class: "card-body life-settings" },
+      h("label", { class: "muted small" }, "Heimatort — für Wetter, Regen-Hinweise vor Terminen und „in der Nähe“"),
+      h("div", { class: "list-add" }, city, h("button", { class: "btn primary", onclick: saveCity }, "Speichern")),
+      life.home ? h("div", { class: "muted small" }, icon("pin"), ` ${life.home.name}${life.home.region ? `, ${life.home.region}` : ""} · ${life.home.lat.toFixed(2)}, ${life.home.lon.toFixed(2)}`) : null,
+      h("label", { class: "muted small", style: "margin-top:14px;display:block" }, "Nachrichtenquellen (kostenlose RSS-Feeds)"),
+      h("div", { class: "chips" }, life.feeds.map((f) => h("button", { class: `chip ${life.newsFeeds.includes(f.id) ? "active" : ""}`, onclick: () => toggle(f.id, !life.newsFeeds.includes(f.id)) }, f.name, h("span", { class: "muted" }, ` · ${f.topic}`))))));
+  };
+  api("/api/life/settings").then(render).catch((e) => set(card, h("div", { class: "card-body empty" }, e.message)));
+  return card;
+}
+
 const CAT_LABELS = {
   email: ["E-Mail organisieren", "Labels, gelesen/ungelesen, archivieren, Entwürfe"],
   calendar: ["Private Termine", "Termine ohne Gäste anlegen und ändern"],
   contacts: ["Kontakte pflegen", "Kontakte anlegen und aktualisieren"],
   tasks: ["Aufgaben", "Anlegen, ändern, erledigen"],
   reminders: ["Erinnerungen", "Erinnerungen und In-App-Benachrichtigungen"],
-  memory: ["Gedächtnis", "Präferenzen und Notizen speichern"],
+  memory: ["Gedächtnis", "Präferenzen speichern"],
+  notes: ["Notizen & Listen", "Notizen speichern, Einkaufsliste & Co. pflegen"],
+  finance: ["Finanzen", "Rechnungen erfassen und als bezahlt markieren (nie Überweisungen)"],
 };
 async function viewSettings(main, params) {
   const flash = params.get("google");
@@ -2227,6 +2345,8 @@ async function viewSettings(main, params) {
     telegramCard(),
     h("div", { class: "section-title" }, icon("mail"), "E-Mail-Konten"),
     mailAccountsCard(main),
+    h("div", { class: "section-title" }, icon("w-partly"), "Wetter, Ort & Nachrichten"),
+    lifeSettingsCard(),
     h("div", { class: "section-title" }, icon("shield"), "Berechtigungen"),
     h("div", { class: "levels" },
       [["0", "Lesen", "", "E-Mails, Kalender, Kontakte lesen und suchen. Immer erlaubt."],
@@ -2386,7 +2506,144 @@ async function openNotifications() {
 }
 
 // ─── Boot ───────────────────────────────────────────────────────────────────
-const VIEWS = { jarvis: viewJarvis, today: viewToday, chat: viewChat, activity: viewActivity, calendar: viewCalendar, email: viewEmail, tasks: viewTasks, contacts: viewContacts, files: viewFiles, automations: viewAutomations, review: viewReview, memory: viewMemory, settings: viewSettings };
+
+// ─── View: Notizen & Listen ─────────────────────────────────────────────────
+async function viewNotes(main, params) {
+  const q = params.get("q") ?? "";
+  const [lists, notes] = await Promise.all([api("/api/lists"), api(`/api/notes${q ? `?q=${encodeURIComponent(q)}` : ""}`)]);
+  const reload = () => viewNotes(main, params);
+
+  const listCard = (l) => {
+    const input = h("input", { class: "field", placeholder: "Neuer Eintrag …", maxlength: "200", "aria-label": `Eintrag für ${l.name}` });
+    const add = async () => {
+      const items = input.value.split(/[,;\n]/).map((x) => x.trim()).filter(Boolean);
+      if (!items.length) return;
+      await api(`/api/lists/${encodeURIComponent(l.name)}/items`, { method: "POST", body: { items } }).catch(fail);
+      reload();
+    };
+    input.addEventListener("keydown", (e) => e.key === "Enter" && add());
+    const doneCount = l.items.filter((i) => i.done).length;
+    return h("div", { class: "card list-card" },
+      cardHead(l.name, "list", h("span", { class: "badge" }, `${l.open} offen`),
+        doneCount ? h("button", { class: "btn ghost icon sm", title: "Erledigte entfernen", "aria-label": "Erledigte entfernen", onclick: async () => { await api(`/api/lists/${encodeURIComponent(l.name)}/clear-done`, { method: "POST" }).catch(fail); reload(); } }, icon("trash")) : null),
+      h("div", { class: "card-body" },
+        h("div", { class: "list-items" }, l.items.map((it) => {
+          const row = h("div", { class: `list-item ${it.done ? "done" : ""}` },
+            h("button", { class: "jc-li-btn", "aria-label": it.done ? "Wieder öffnen" : "Abhaken", onclick: async () => {
+              const done = !row.classList.contains("done");
+              row.classList.toggle("done", done);
+              await api(`/api/list-items/${it.id}`, { method: "PATCH", body: { done } }).catch((e) => { row.classList.toggle("done", !done); fail(e); });
+            } }, h("span", { class: "tick" }, icon("check"))),
+            h("span", { class: "txt" }, it.text),
+            h("button", { class: "btn ghost icon sm", "aria-label": "Entfernen", onclick: async () => { await api(`/api/list-items/${it.id}`, { method: "DELETE" }).catch(fail); row.remove(); } }, icon("x")));
+          return row;
+        })),
+        h("div", { class: "list-add" }, input, h("button", { class: "btn primary", onclick: add }, icon("plus"), "Hinzufügen"))));
+  };
+
+  const newList = h("input", { class: "field", placeholder: "Neue Liste, z.B. Packliste Urlaub", maxlength: "80" });
+  const noteText = h("textarea", { class: "field note-input", placeholder: "Notiz schreiben … (Idee, Info, Text zum Merken)", rows: "3", maxlength: "10000" });
+  const search = h("input", { class: "field", type: "search", placeholder: "Notizen durchsuchen …", value: q, "aria-label": "Notizen durchsuchen" });
+  let t;
+  search.addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => go("notes", search.value.trim() ? `?q=${encodeURIComponent(search.value.trim())}` : ""), 400); });
+
+  set(main, h("div", { class: "view notes-view" },
+    viewHead("Notizen & Listen", "Sag einfach: „Schreib Milch auf die Einkaufsliste.“"),
+    h("div", { class: "section-title" }, icon("list"), "Listen"),
+    h("div", { class: "list-grid" },
+      lists.length ? lists.map(listCard) : h("div", { class: "empty" }, "Noch keine Liste."),
+      h("div", { class: "card new-list" }, h("div", { class: "card-body" },
+        h("div", { class: "muted small", style: "margin-bottom:8px" }, "Neue Liste"),
+        h("div", { class: "list-add" }, newList, h("button", { class: "btn", onclick: async () => {
+          const name = newList.value.trim();
+          if (!name) return;
+          const first = prompt(`Erster Eintrag für „${name}“:`);
+          if (!first?.trim()) return;
+          await api(`/api/lists/${encodeURIComponent(name)}/items`, { method: "POST", body: { items: [first.trim()] } }).catch(fail);
+          reload();
+        } }, icon("plus")))))),
+    h("div", { class: "section-title" }, icon("note"), "Notizen"),
+    h("div", { class: "card" }, h("div", { class: "card-body note-new" }, noteText,
+      h("div", { class: "head-actions" }, h("button", { class: "btn primary", onclick: async () => {
+        if (!noteText.value.trim()) return;
+        await api("/api/notes", { method: "POST", body: { body: noteText.value.trim() } }).catch(fail);
+        reload();
+      } }, icon("plus"), "Speichern")))),
+    h("div", { style: "margin:14px 0" }, search),
+    h("div", { class: "note-grid" }, notes.length ? notes.map((n) =>
+      h("div", { class: `card note ${n.pinned ? "pinned" : ""}` },
+        h("div", { class: "card-body" },
+          n.title ? h("div", { class: "note-title" }, n.title) : null,
+          h("div", { class: "note-body" }, n.body),
+          h("div", { class: "note-foot" }, h("span", { class: "muted small" }, fmt.rel(n.updatedAt)),
+            h("button", { class: "btn ghost icon sm", "aria-label": n.pinned ? "Lösen" : "Anheften", onclick: async () => { await api(`/api/notes/${n.id}`, { method: "PATCH", body: { pinned: !n.pinned } }).catch(fail); reload(); } }, icon("pin")),
+            h("button", { class: "btn ghost icon sm", "aria-label": "Löschen", onclick: async () => { if (!confirm("Notiz löschen?")) return; await api(`/api/notes/${n.id}`, { method: "DELETE" }).catch(fail); reload(); } }, icon("trash"))))))
+      : h("div", { class: "empty" }, q ? "Nichts gefunden." : "Noch keine Notizen."))));
+}
+
+// ─── View: Finanzen ─────────────────────────────────────────────────────────
+const euro = (c) => `${(c / 100).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+const INTERVAL_LABEL = { weekly: "wöchentlich", monthly: "monatlich", quarterly: "vierteljährlich", yearly: "jährlich" };
+
+async function viewFinance(main) {
+  const { overview: o, items } = await api("/api/finance");
+  const reload = () => viewFinance(main);
+  const setStatus = async (id, status) => { await api(`/api/finance/${id}`, { method: "PATCH", body: { status } }).catch(fail); reload(); };
+  const scanBtn = h("button", { class: "btn", onclick: async (e) => {
+    const b = e.currentTarget;
+    b.disabled = true;
+    set(b, h("span", { class: "spin-v" }), "Durchsuche Postfach …");
+    try { const r = await api("/api/finance/scan", { method: "POST" }); toast(r.added ? `${r.added} neue Einträge gefunden.` : "Nichts Neues gefunden.", "ok"); reload(); }
+    catch (err) { fail(err); b.disabled = false; set(b, icon("refresh"), "Postfach durchsuchen"); }
+  } }, icon("refresh"), "Postfach durchsuchen");
+
+  const today = ymd(new Date());
+  const invoiceRow = (i) => {
+    const overdue = i.dueDate && i.dueDate < today && i.status === "open";
+    return h("div", { class: `fin-row ${overdue ? "overdue" : ""}` },
+      avatar(i.vendor),
+      h("div", { class: "main" }, h("div", { class: "title" }, i.vendor), h("div", { class: "sub" }, i.title)),
+      h("div", { class: "fin-amt" }, h("b", {}, i.amountCents !== null ? euro(i.amountCents) : "–"),
+        h("span", { class: `muted small ${overdue ? "err-text" : ""}` }, i.dueDate ? `${overdue ? "überfällig seit" : "fällig"} ${new Date(`${i.dueDate}T12:00:00`).toLocaleDateString("de-DE", { day: "numeric", month: "short" })}` : i.source === "mail" ? "aus E-Mail" : "")),
+      h("div", { class: "fin-actions" },
+        h("button", { class: "btn sm ok", onclick: () => setStatus(i.id, "paid") }, icon("check"), "Bezahlt"),
+        h("button", { class: "btn ghost icon sm", title: "Keine Rechnung / ausblenden", "aria-label": "Ausblenden", onclick: () => setStatus(i.id, "ignored") }, icon("x"))));
+  };
+  const amount = h("input", { class: "field", type: "number", step: "0.01", min: "0", placeholder: "Betrag €" });
+  const vendor = h("input", { class: "field", placeholder: "Wer? (z.B. Vermieter, Netflix)", maxlength: "80" });
+  const kind = h("select", { class: "field" }, h("option", { value: "invoice" }, "Rechnung"), h("option", { value: "subscription" }, "Abo / Fixkosten"));
+  const due = h("input", { class: "field", type: "date", "aria-label": "Fällig am" });
+  const paid = items.filter((i) => i.status === "paid").slice(0, 10);
+
+  set(main, h("div", { class: "view finance-view" },
+    viewHead("Finanzen", o.lastScanAt ? `Postfach zuletzt geprüft ${fmt.rel(o.lastScanAt)}` : "Rechnungen und Abos aus deinen E-Mails — automatisch erkannt", scanBtn),
+    h("div", { class: "fin-tiles" },
+      h("div", { class: "card fin-tile" }, h("span", { class: "l" }, "Offen"), h("b", { class: "gold-text" }, euro(o.openTotalCents)), h("span", { class: "muted small" }, `${o.openCount} Rechnung${o.openCount === 1 ? "" : "en"}`)),
+      h("div", { class: `card fin-tile ${o.overdue.length ? "warn" : ""}` }, h("span", { class: "l" }, "Fällig in 7 Tagen"), h("b", {}, String(o.dueSoon.length)), h("span", { class: "muted small" }, o.overdue.length ? `${o.overdue.length} überfällig` : "nichts überfällig")),
+      h("div", { class: "card fin-tile" }, h("span", { class: "l" }, "Abos & Fixkosten"), h("b", {}, euro(o.subscriptionsMonthlyCents)), h("span", { class: "muted small" }, "pro Monat")),
+      h("div", { class: "card fin-tile" }, h("span", { class: "l" }, "Diesen Monat"), h("b", {}, euro(o.thisMonthCents)), h("span", { class: "muted small" }, "Rechnungen"))),
+    h("div", { class: "section-title" }, icon("euro"), "Offene Rechnungen"),
+    h("div", { class: "card" }, h("div", { class: "card-body" }, o.open.length ? o.open.map(invoiceRow) : h("div", { class: "empty" }, "Keine offenen Rechnungen. ", h("button", { class: "btn sm", onclick: () => scanBtn.click() }, "Postfach durchsuchen")))),
+    h("div", { class: "section-title" }, icon("refresh"), "Abos & Fixkosten"),
+    h("div", { class: "card" }, h("div", { class: "card-body" }, o.subscriptions.length ? o.subscriptions.map((sub) =>
+      h("div", { class: "fin-row" }, avatar(sub.vendor), h("div", { class: "main" }, h("div", { class: "title" }, sub.vendor), h("div", { class: "sub" }, INTERVAL_LABEL[sub.interval] ?? "")),
+        h("div", { class: "fin-amt" }, h("b", {}, sub.amountCents !== null ? euro(sub.amountCents) : "–"), sub.monthlyCents !== null && sub.interval !== "monthly" ? h("span", { class: "muted small" }, `≈ ${euro(sub.monthlyCents)} / Monat`) : null),
+        h("div", { class: "fin-actions" }, h("button", { class: "btn ghost icon sm", "aria-label": "Ausblenden", onclick: () => setStatus(sub.id, "ignored") }, icon("x")))))
+      : h("div", { class: "empty" }, "Keine Abos erkannt."))),
+    h("div", { class: "section-title" }, icon("plus"), "Manuell erfassen"),
+    h("div", { class: "card" }, h("div", { class: "card-body fin-form" }, kind, vendor, amount, due,
+      h("button", { class: "btn primary", onclick: async () => {
+        if (!vendor.value.trim()) return toast("Bitte angeben, an wen.", "err");
+        await api("/api/finance", { method: "POST", body: { kind: kind.value, vendor: vendor.value.trim(), amountEur: amount.value ? Number(amount.value) : undefined, dueDate: due.value || undefined, interval: kind.value === "subscription" ? "monthly" : undefined } }).catch(fail);
+        reload();
+      } }, icon("plus"), "Hinzufügen"))),
+    paid.length ? h("details", { class: "fold" }, h("summary", { class: "section-title" }, icon("check"), `Bezahlt (${paid.length})`),
+      h("div", { class: "card" }, h("div", { class: "card-body" }, paid.map((i) => h("div", { class: "fin-row paid" }, avatar(i.vendor), h("div", { class: "main" }, h("div", { class: "title" }, i.vendor), h("div", { class: "sub" }, i.title)), h("div", { class: "fin-amt" }, h("b", {}, i.amountCents !== null ? euro(i.amountCents) : "–")),
+        h("div", { class: "fin-actions" }, h("button", { class: "btn ghost sm", onclick: () => setStatus(i.id, "open") }, "Wieder offen"))))))) : null,
+    h("p", { class: "muted small", style: "margin-top:18px" }, "JARVIS erkennt Rechnungen per Mustererkennung in Betreff und Vorschau (ohne KI, kostenlos) und erinnert 2 Tage vor Fälligkeit. Er überweist nie selbst.")));
+}
+
+const VIEWS = { notes: viewNotes, finance: viewFinance, jarvis: viewJarvis, today: viewToday, chat: viewChat, activity: viewActivity, calendar: viewCalendar, email: viewEmail, tasks: viewTasks, contacts: viewContacts, files: viewFiles, automations: viewAutomations, review: viewReview, memory: viewMemory, settings: viewSettings };
 
 let routerBound = false;
 async function boot() {
@@ -2403,8 +2660,7 @@ async function boot() {
   if (!routerBound) { window.addEventListener("hashchange", route); routerBound = true; }
   push.register();
   await route();
-  refreshCounts();
-  state.poll ??= setInterval(() => state.csrf && refreshCounts(), 30_000);
+  poller.start();
 }
 
 document.addEventListener("keydown", (e) => {

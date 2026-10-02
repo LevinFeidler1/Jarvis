@@ -47,7 +47,7 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 let shared: Promise<Db> | undefined;
 const TABLES = [
   "messages", "conversations", "pending_actions", "activity", "audit_log", "memory", "tasks",
-  "reminders", "notifications", "oauth_tokens", "oauth_states", "settings", "sessions", "email_accounts", "contacts", "push_subscriptions", "automations", "llm_usage", "files", "file_blobs", "upload_sessions", "upload_chunks", "triage_seen", "suggestions", "suggestion_feedback", "browser_tasks", "telegram_updates",
+  "reminders", "notifications", "oauth_tokens", "oauth_states", "settings", "sessions", "email_accounts", "contacts", "push_subscriptions", "automations", "llm_usage", "files", "file_blobs", "upload_sessions", "upload_chunks", "triage_seen", "suggestions", "suggestion_feedback", "browser_tasks", "telegram_updates", "list_items", "lists", "notes", "finance_items",
 ];
 
 /** One in-process Postgres (PGlite) per test worker, emptied for every test. */

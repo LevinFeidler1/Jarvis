@@ -6,6 +6,9 @@
   "outputDirectory": "public",
   "functions": {
     "api/index.ts": {
+      "maxDuration": 60
+    },
+    "api/agent.ts": {
       "maxDuration": 300
     },
     "api/browser.ts": {
@@ -17,6 +20,42 @@
     {
       "source": "/api/browser",
       "destination": "/api/browser"
+    },
+    {
+      "source": "/api/chat",
+      "destination": "/api/agent?path=chat"
+    },
+    {
+      "source": "/api/chat/stream",
+      "destination": "/api/agent?path=chat/stream"
+    },
+    {
+      "source": "/api/confirmations/:id",
+      "destination": "/api/agent?path=confirmations/:id"
+    },
+    {
+      "source": "/api/cron/tick",
+      "destination": "/api/agent?path=cron/tick"
+    },
+    {
+      "source": "/api/telegram",
+      "destination": "/api/agent?path=telegram"
+    },
+    {
+      "source": "/api/activity/:id/undo",
+      "destination": "/api/agent?path=activity/:id/undo"
+    },
+    {
+      "source": "/api/automations/:id/run",
+      "destination": "/api/agent?path=automations/:id/run"
+    },
+    {
+      "source": "/api/suggestions/:id/accept",
+      "destination": "/api/agent?path=suggestions/:id/accept"
+    },
+    {
+      "source": "/api/suggestions/check",
+      "destination": "/api/agent?path=suggestions/check"
     },
     {
       "source": "/api/:path*",

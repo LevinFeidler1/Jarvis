@@ -13,7 +13,7 @@ import { DEFAULT_PERMISSION_SETTINGS, loadPermissionSettings, savePermissionSett
 import type { Scheduler } from "./core/scheduler.js";
 import { addDaysYmd, localDate, zonedToUtc } from "./core/time.js";
 import { RISK_LABELS, ToolError } from "./core/types.js";
-import type { Db } from "./db/database.js";
+import { type Db, isTransientDbError, withTimeout } from "./db/database.js";
 import { MEMORY_CATEGORIES, type MemoryStore } from "./memory/memory.js";
 import { AUTOMATION_TEMPLATES, type Automation, type AutomationInput, AutomationRunner, describeTrigger } from "./core/automations.js";
 import { buildWeekReview } from "./core/review.js";
@@ -35,6 +35,8 @@ import { type TelegramBot, checkTelegramSecret, telegramWebhookSecret } from "./
 import type { TgUpdate } from "./telegram/api.js";
 import { OpenAiCompatibleTranscriber, type Transcriber } from "./telegram/transcribe.js";
 import { ElevenLabsSynth, type SpeechSynth, TtsQuotaError } from "./voice/tts.js";
+import { NEWS_FEEDS } from "./life/news.js";
+import { loadLifeSettings, saveLifeSettings } from "./life/settings.js";
 
 const SESSION_COOKIE = "jarvis_session";
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
@@ -57,13 +59,34 @@ export interface ServerDeps {
   synth?: SpeechSynth;
   /** Serve public/ from Fastify (local). On Vercel the CDN serves it. */
   serveStatic?: boolean;
+  /** Overrides of the request time limits (tests). */
+  timeouts?: Partial<typeof REQUEST_TIMEOUTS>;
 }
 
 declare module "fastify" {
   interface FastifyRequest {
     session?: { csrfToken: string };
   }
+  interface FastifyContextConfig {
+    /** Time limit for this route in ms (default REQUEST_TIMEOUTS.default). */
+    timeoutMs?: number;
+  }
 }
+
+/**
+ * No request may hang until Vercel kills it (504 after maxDuration). Normal API
+ * routes answer 503 after 25 s; calls to external voice services get 45 s; only
+ * agent/LLM routes and cron run long — and even they stop cleanly before the
+ * 300 s function limit of api/agent.ts.
+ */
+export const REQUEST_TIMEOUTS = {
+  default: 25_000,
+  external: 45_000,
+  agent: 270_000,
+  /** Reminders fired opportunistically in the background (Vercel). */
+  backgroundTick: 10_000,
+};
+const TIMEOUT_MESSAGE = "Zeitüberschreitung — der Server war zu langsam. Bitte gleich noch einmal versuchen.";
 
 const CSP =
   "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self'; " +
@@ -74,6 +97,9 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   const sessions = new SessionStore(db);
   const secureCookie = config.publicUrl.startsWith("https://");
   const allowedOrigin = new URL(config.publicUrl).origin;
+  const limits = { ...REQUEST_TIMEOUTS, ...deps.timeouts };
+  const AGENT_ROUTE = { timeoutMs: limits.agent };
+  const EXTERNAL_ROUTE = { timeoutMs: limits.external };
 
   const app = Fastify({
     logger: { level: process.env.LOG_LEVEL ?? "info", redact: ["req.headers.cookie", "req.headers['x-jarvis-csrf']", "req.headers.authorization"] },
@@ -83,6 +109,22 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   await app.register(cookie);
   await app.register(rateLimit, { global: true, max: 300, timeWindow: "1 minute" });
+
+  // ─── Request time limit ───────────────────────────────────────────────
+  // Answer 503 instead of hanging; the handler's late result is discarded.
+  app.addHook("onRequest", async (req, reply) => {
+    const ms = req.routeOptions.config?.timeoutMs ?? limits.default;
+    if (!ms || !req.url.startsWith("/api/")) return;
+    const timer = setTimeout(() => {
+      if (reply.sent || reply.raw.headersSent) return;
+      app.log.warn({ url: req.url.split("?")[0], ms }, "request timed out");
+      reply.code(503).header("retry-after", "5").send({ error: TIMEOUT_MESSAGE, code: "TIMEOUT" });
+    }, ms);
+    timer.unref?.();
+    const clear = () => clearTimeout(timer);
+    reply.raw.once("finish", clear);
+    reply.raw.once("close", clear);
+  });
 
   app.addHook("onSend", async (_req, reply, payload) => {
     if (!reply.hasHeader("Content-Security-Policy")) reply.header("Content-Security-Policy", CSP);
@@ -124,6 +166,10 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
       return reply.code(code).send({ error: err.message, code: err.code });
     }
     if (err.statusCode && err.statusCode < 500) return reply.code(err.statusCode).send({ error: err.message });
+    if (isTransientDbError(err)) {
+      app.log.warn({ err: err.message }, "transient database error");
+      return reply.code(503).header("retry-after", "5").send({ error: "Die Datenbank antwortet gerade nicht. Bitte gleich noch einmal versuchen.", code: "DB_UNAVAILABLE" });
+    }
     app.log.error(err);
     return reply.code(500).send({ error: "Interner Fehler" });
   });
@@ -148,14 +194,23 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
       "x-content-type-options": "nosniff",
       "x-accel-buffering": "no",
     });
-    const write = (obj: unknown) => raw.write(`${JSON.stringify(obj)}\n`);
+    let ended = false;
+    const write = (obj: unknown) => { if (!ended && !raw.writableEnded) raw.write(`${JSON.stringify(obj)}\n`); };
     try {
-      const result = await work((e) => write(e));
+      // Stop cleanly before the platform kills the function (otherwise: 504 without a message).
+      const result = await withTimeout(work((e) => write(e)), limits.agent, "Die Anfrage hat zu lange gedauert.");
       write({ type: "reply", reply: result });
     } catch (err) {
-      app.log.error(err);
-      write({ type: "error", error: "Bei der Verarbeitung ist ein Fehler aufgetreten. Es wurde nichts Unbestätigtes ausgeführt." });
+      if (isTransientDbError(err)) app.log.warn({ err: (err as Error).message }, "agent stream aborted");
+      else app.log.error(err);
+      write({
+        type: "error",
+        error: isTransientDbError(err)
+          ? "Das hat zu lange gedauert oder die Datenbank war nicht erreichbar. Bereits erledigte Schritte siehst du unter Aktivität; Unbestätigtes wurde nicht ausgeführt."
+          : "Bei der Verarbeitung ist ein Fehler aufgetreten. Es wurde nichts Unbestätigtes ausgeführt.",
+      });
     }
+    ended = true;
     raw.end();
   }
 
@@ -237,12 +292,12 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
     ...(b.voice ? { voice: true } : {}),
   });
 
-  app.post("/api/chat", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req) => {
+  app.post("/api/chat", { config: { rateLimit: { max: 30, timeWindow: "1 minute" }, ...AGENT_ROUTE } }, async (req) => {
     const body = chatBody.parse(req.body);
     return agent.handleUserMessage(body.conversationId, body.message, undefined, await chatOpts(body));
   });
 
-  app.post("/api/chat/stream", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req, reply) => {
+  app.post("/api/chat/stream", { config: { rateLimit: { max: 30, timeWindow: "1 minute" }, ...AGENT_ROUTE } }, async (req, reply) => {
     const body = chatBody.parse(req.body);
     const opts = await chatOpts(body);
     await streamAgent(reply, (emit) => agent.handleUserMessage(body.conversationId, body.message, emit, opts));
@@ -264,7 +319,7 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
     const f = await files.get(idParam.parse(req.params).id);
     return { file: f, versions: await files.versions(f.rootId) };
   });
-  app.get("/api/files/:id/preview", async (req) => {
+  app.get("/api/files/:id/preview", { config: EXTERNAL_ROUTE }, async (req) => {
     const { id } = idParam.parse(req.params);
     const f = await files.get(id);
     if (f.format === "png" || f.format === "jpg") return { file: f, text: null };
@@ -301,7 +356,7 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
     await files.addChunk(p.id, p.index, req.body);
     return { ok: true };
   });
-  app.post("/api/files/uploads/:id/complete", async (req) => {
+  app.post("/api/files/uploads/:id/complete", { config: EXTERNAL_ROUTE }, async (req) => {
     const { id } = idParam.parse(req.params);
     const b = z.object({ conversationId: z.uuid().optional() }).parse(req.body ?? {});
     return files.completeUpload(id, { conversationId: b.conversationId ?? null });
@@ -335,7 +390,7 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
     (await agent.confirmations.listPending()).map((p) => ({ ...toView(p), conversationId: p.conversationId, input: p.input })),
   );
 
-  app.post("/api/confirmations/:id", async (req, reply) => {
+  app.post("/api/confirmations/:id", { config: AGENT_ROUTE }, async (req, reply) => {
     const { id } = z.object({ id: z.uuid() }).parse(req.params);
     const { approve, stream } = z.object({ approve: z.boolean(), stream: z.boolean().optional() }).parse(req.body);
     if (!(await agent.confirmations.get(id))) return reply.code(404).send({ error: "Nicht gefunden" });
@@ -427,10 +482,18 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get("/api/reminders", async () => providers.reminders.list("all"));
   app.delete("/api/reminders/:id", async (req) => ({ ok: await providers.reminders.cancel(idParam.parse(req.params).id) }));
 
+  // Serverless has no background loop. Due reminders are fired by /api/cron/tick and,
+  // opportunistically, in the background after a UI poll — never inside the request.
+  let lastBackgroundTick = 0;
+  const backgroundTick = () => {
+    if (!process.env.VERCEL || Date.now() - lastBackgroundTick < 60_000) return;
+    lastBackgroundTick = Date.now();
+    waitUntil(withTimeout(scheduler.tick(), limits.backgroundTick, "reminder tick timed out").catch((err) => app.log.warn({ err: (err as Error).message }, "reminder tick failed")));
+  };
   app.get("/api/notifications", async () => {
-    // Serverless has no background loop: fire due reminders opportunistically.
-    await scheduler.tick().catch((err) => app.log.warn({ err }, "reminder tick failed")); // reminders only; automations run via cron
-    return providers.notifications.list(false);
+    const list = await providers.notifications.list(false);
+    backgroundTick();
+    return list;
   });
   app.post("/api/notifications/:id/read", async (req) => {
     await providers.notifications.markRead(idParam.parse(req.params).id);
@@ -441,12 +504,93 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
     return { ok: true };
   });
 
+  // ─── Alltag: Startseite, Wetter, News, Notizen & Listen, Finanzen ──────
+  const settle = async <T>(work: Promise<T>, ms = 6_000) => {
+    try {
+      return { ok: true as const, data: await withTimeout(work, ms, "zu langsam") };
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err), code: err instanceof ToolError ? err.code : undefined };
+    }
+  };
+
+  /** Everything the home widgets need in one request; each part fails on its own. */
+  app.get("/api/home", async () => {
+    const life = await loadLifeSettings(db);
+    const [weather, news, finance, lists, notes] = await Promise.all([
+      life.home ? settle(providers.weather.forecast(life.home, 3)) : Promise.resolve({ ok: false as const, error: "Kein Heimatort gesetzt", code: "NOT_CONFIGURED" as const }),
+      settle(providers.news.headlines(life.newsFeeds, { max: 4 })),
+      settle(providers.finance.overview()),
+      settle(providers.notes.allLists()),
+      settle(providers.notes.listNotes(undefined, 3)),
+    ]);
+    return { home: life.home, weather, news, finance, lists, notes };
+  });
+
+  app.get("/api/life/settings", async () => ({ ...(await loadLifeSettings(db)), feeds: NEWS_FEEDS.map(({ id, name, topic }) => ({ id, name, topic })) }));
+  app.put("/api/life/settings", async (req) => {
+    const b = z.object({ city: z.string().trim().min(2).max(100).optional(), clearHome: z.boolean().optional(), newsFeeds: z.array(z.string().max(40)).max(NEWS_FEEDS.length).optional() }).parse(req.body);
+    const patch: Parameters<typeof saveLifeSettings>[1] = {};
+    if (b.city) patch.home = await providers.weather.geocode(b.city);
+    if (b.clearHome) patch.home = null;
+    if (b.newsFeeds) patch.newsFeeds = b.newsFeeds.filter((id) => NEWS_FEEDS.some((f) => f.id === id));
+    return saveLifeSettings(db, patch);
+  });
+
+  app.get("/api/weather", async (req) => {
+    const { place } = z.object({ place: z.string().max(100).optional() }).parse(req.query);
+    const life = await loadLifeSettings(db);
+    const where = place ? await providers.weather.geocode(place) : life.home;
+    if (!where) throw new ToolError("Kein Heimatort gesetzt (Einstellungen → Wetter & Ort).", "NOT_CONFIGURED");
+    return providers.weather.forecast(where, 7);
+  });
+
+  // Notes
+  const notes = providers.notes;
+  app.get("/api/notes", async (req) => notes.listNotes(z.object({ q: z.string().max(200).optional() }).parse(req.query).q, 200));
+  app.post("/api/notes", async (req) => {
+    const b = z.object({ title: z.string().max(120).optional(), body: z.string().trim().min(1).max(10_000), pinned: z.boolean().optional() }).parse(req.body);
+    return notes.addNote(b);
+  });
+  app.patch("/api/notes/:id", async (req) => {
+    const b = z.object({ title: z.string().max(120).nullable().optional(), body: z.string().trim().min(1).max(10_000).optional(), pinned: z.boolean().optional() }).parse(req.body);
+    return notes.updateNote(idParam.parse(req.params).id, b);
+  });
+  app.delete("/api/notes/:id", async (req) => ({ ok: await notes.deleteNote(idParam.parse(req.params).id) }));
+
+  // Lists
+  const listName = z.object({ name: z.string().trim().min(1).max(80) });
+  app.get("/api/lists", async () => notes.allLists(true));
+  app.post("/api/lists/:name/items", async (req) => {
+    const { items } = z.object({ items: z.array(z.string().trim().min(1).max(200)).min(1).max(50) }).parse(req.body);
+    return notes.addToList(listName.parse(req.params).name, items);
+  });
+  app.post("/api/lists/:name/clear-done", async (req) => ({ removed: await notes.clearDone(listName.parse(req.params).name) }));
+  app.patch("/api/list-items/:id", async (req) => ({ ok: await notes.toggleItem(idParam.parse(req.params).id, z.object({ done: z.boolean() }).parse(req.body).done) }));
+  app.delete("/api/list-items/:id", async (req) => ({ ok: await notes.removeItem(idParam.parse(req.params).id) }));
+
+  // Finance
+  const finance = providers.finance;
+  app.get("/api/finance", async () => ({ overview: await finance.overview(), items: await finance.list({ status: "all" }) }));
+  app.post("/api/finance", async (req) => {
+    const b = z.object({
+      kind: z.enum(["invoice", "subscription"]), vendor: z.string().trim().min(1).max(80), title: z.string().max(160).optional(),
+      amountEur: z.number().positive().max(1_000_000).optional(), dueDate: z.iso.date().optional(), interval: z.enum(["weekly", "monthly", "quarterly", "yearly"]).optional(),
+    }).parse(req.body);
+    return finance.add({ kind: b.kind, vendor: b.vendor, title: b.title, amountCents: b.amountEur ? Math.round(b.amountEur * 100) : null, dueDate: b.dueDate ?? null, interval: b.interval ?? null, source: "manual" });
+  });
+  app.patch("/api/finance/:id", async (req) => finance.setStatus(idParam.parse(req.params).id, z.object({ status: z.enum(["open", "paid", "autopay", "ignored"]) }).parse(req.body).status));
+  app.delete("/api/finance/:id", async (req) => ({ ok: await finance.remove(idParam.parse(req.params).id) }));
+  app.post("/api/finance/scan", { config: { rateLimit: { max: 6, timeWindow: "1 minute" }, ...EXTERNAL_ROUTE } }, async () => {
+    const r = await finance.scanMailbox(await providers.email(), 90);
+    return { scanned: r.scanned, added: r.added };
+  });
+
   // ─── Cron (Vercel Cron / external scheduler) ──────────────────────────
-  app.get("/api/cron/tick", async (req, reply) => {
+  app.get("/api/cron/tick", { config: AGENT_ROUTE }, async (req, reply) => {
     const auth = req.headers.authorization ?? "";
     if (!config.cronSecret || !safeEqual(auth, `Bearer ${config.cronSecret}`)) return reply.code(401).send({ error: "Unauthorized" });
     const now = new Date();
-    const fired = await scheduler.tick(now);
+    const fired = await withTimeout(scheduler.tick(now), 20_000, "Erinnerungen nicht rechtzeitig verarbeitet.");
     const automations = scheduler.runAutomations(now).catch((err) => {
       app.log.error({ err }, "automations failed");
       return 0;
@@ -471,7 +615,7 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
     tts: synth && Date.now() > ttsBlockedUntil ? "server" : "browser",
   }));
 
-  app.post("/api/voice/transcribe", { config: { rateLimit: { max: 40, timeWindow: "1 minute" } } }, async (req, reply) => {
+  app.post("/api/voice/transcribe", { config: { rateLimit: { max: 40, timeWindow: "1 minute" }, ...EXTERNAL_ROUTE } }, async (req, reply) => {
     if (!transcriber) return reply.code(409).send({ error: "Spracherkennung ist nicht eingerichtet (TRANSCRIBE_API_KEY)." });
     const body = req.body;
     if (!Buffer.isBuffer(body) || body.length < 800) return { text: "" };
@@ -481,7 +625,7 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
     return { text };
   });
 
-  app.post("/api/voice/speak", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (req, reply) => {
+  app.post("/api/voice/speak", { config: { rateLimit: { max: 60, timeWindow: "1 minute" }, ...EXTERNAL_ROUTE } }, async (req, reply) => {
     if (!synth || Date.now() < ttsBlockedUntil) return reply.code(409).send({ error: "Server-Stimme nicht verfügbar." });
     const { text } = z.object({ text: z.string().trim().min(1).max(600) }).parse(req.body);
     try {
@@ -495,7 +639,7 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // ─── Telegram ─────────────────────────────────────────────────────────
   const telegram = deps.telegram;
-  app.post("/api/telegram", { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } }, async (req, reply) => {
+  app.post("/api/telegram", { config: { rateLimit: { max: 120, timeWindow: "1 minute" }, ...AGENT_ROUTE } }, async (req, reply) => {
     if (!telegram) return reply.code(404).send({ error: "Telegram ist nicht eingerichtet" });
     if (!checkTelegramSecret(req.headers["x-telegram-bot-api-secret-token"], config.encryptionKey)) return reply.code(401).send({ error: "Unauthorized" });
     const update = req.body as TgUpdate;
@@ -613,7 +757,7 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
     const { paused } = z.object({ paused: z.boolean() }).parse(req.body);
     return providers.automations.setPaused(paused);
   });
-  app.post("/api/activity/:id/undo", async (req, reply) => {
+  app.post("/api/activity/:id/undo", { config: AGENT_ROUTE }, async (req, reply) => {
     const { id } = idParam.parse(req.params);
     const u = await agent.activity.getUndo(id);
     if (!u) return reply.code(409).send({ error: "Für diese Aktion gibt es kein Rückgängig (mehr)." });
@@ -623,7 +767,7 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
     await agent.activity.markUndone(id);
     return { ok: true, label: u.undo.label };
   });
-  app.post("/api/automations/:id/run", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) =>
+  app.post("/api/automations/:id/run", { config: { rateLimit: { max: 10, timeWindow: "1 minute" }, ...AGENT_ROUTE } }, async (req) =>
     automationRunner.runNow(idParam.parse(req.params).id),
   );
 
@@ -631,10 +775,10 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   const triage = deps.triage ?? new TriageService({ db, config, providers, memory, agent, dailyLimit: config.triage.dailyLimit });
   const kindEnum = z.enum(["meeting", "lead", "invoice", "deadline", "reply", "newsletter"]);
   app.get("/api/suggestions", async () => ({ suggestions: await triage.list(), settings: await triage.settings(), usedToday: await triage.usageToday(), dailyLimit: config.triage.dailyLimit, labels: KIND_LABEL }));
-  app.post("/api/suggestions/:id/accept", async (req) => triage.accept(idParam.parse(req.params).id));
+  app.post("/api/suggestions/:id/accept", { config: AGENT_ROUTE }, async (req) => triage.accept(idParam.parse(req.params).id));
   app.post("/api/suggestions/:id/ignore", async (req) => triage.ignore(idParam.parse(req.params).id));
   app.post("/api/suggestions/:id/undo", async (req) => triage.undo(idParam.parse(req.params).id));
-  app.post("/api/suggestions/check", { config: { rateLimit: { max: 4, timeWindow: "1 minute" } } }, async () => triage.runTick());
+  app.post("/api/suggestions/check", { config: { rateLimit: { max: 4, timeWindow: "1 minute" }, ...AGENT_ROUTE } }, async () => triage.runTick());
   app.put("/api/settings/triage", async (req) => {
     const b = z.object({ enabled: z.boolean().optional(), autoTasks: z.boolean().optional() }).parse(req.body);
     return triage.saveSettings(b);

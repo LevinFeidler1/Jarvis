@@ -12,6 +12,11 @@ const KIND_RE = [
   ["task", /\b(aufgabe|aufgaben|to-?do|erledig|frist|deadline)\b/i],
   ["file", /\b(datei|dokument|pdf|tabelle|präsentation|unterlagen)\b/i],
   ["contact", /\b(kontakt|nummer|telefon|adresse)\b/i],
+  ["weather", /\b(wetter|regen|grad|sonne|schirm|wolken|temperatur|gewitter|schnee)\b/i],
+  ["place", /\b(restaurant|café|cafe|bar|friseur|praxis|arzt|reservier\w*|tisch)\b/i],
+  ["list", /\b(liste|einkauf\w*|abgehakt|eingetragen)\b/i],
+  ["news", /\b(nachrichten|schlagzeile\w*|news|meldung\w*)\b/i],
+  ["note", /\b(notiz\w*|notiert|aufgeschrieben)\b/i],
 ];
 const CARD_META = {
   event: { label: "Kalender", icon: "calendar", cls: "k-event" },
@@ -20,14 +25,23 @@ const CARD_META = {
   contact: { label: "Kontakt", icon: "users", cls: "k-contact" },
   file: { label: "Datei", icon: "file", cls: "k-file" },
   finance: { label: "Finanzen", icon: "euro", cls: "k-finance" },
+  weather: { label: "Wetter", icon: "w-partly", cls: "k-weather" },
+  place: { label: "Ort", icon: "pin", cls: "k-place" },
+  list: { label: "Liste", icon: "list", cls: "k-list" },
+  news: { label: "Nachrichten", icon: "news", cls: "k-news" },
+  note: { label: "Notiz", icon: "note", cls: "k-note" },
 };
 const END_WORDS = /^(stopp?|ende|beenden|danke,? das war'?s|das war'?s|tschüss|nichts)[.! ]*$/i;
 const PROMPTS = [
   ["calendar", "Was steht diese Woche an?"],
+  ["w-partly", "Wie wird das Wetter?"],
+  ["euro", "Was muss ich noch bezahlen?"],
+  ["pin", "Reservier mir einen Tisch"],
   ["mail", "Was ist wichtig in meinen Mails?"],
-  ["memory", "Plane meinen Tag"],
 ];
 
+/** Links from third-party data must be http(s) — never javascript:/data: (defense in depth; the server filters too). */
+const safeUrl = (u) => (typeof u === "string" && /^https?:\/\//i.test(u) ? u : null);
 const initials = (name) => (name ?? "").trim().split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0].toUpperCase()).join("") || "J";
 
 export function mountJarvis(main, ui) {
@@ -36,7 +50,9 @@ export function mountJarvis(main, ui) {
 
   // ─── DOM ──────────────────────────────────────────────────────────────
   const anchor = h("div", { class: "jv-anchor", "aria-hidden": "true" });
+  // Tap targets: one scrolls with the home page, one sits on the small orb while talking.
   const coreBtn = h("button", { class: "jv-core-btn", "aria-label": "Mit JARVIS sprechen", onclick: () => onCore() });
+  const coreBtnTalk = h("button", { class: "jv-core-btn talk-btn", "aria-label": "Zuhören / Unterbrechen", onclick: () => onCore() });
   const status = h("div", { class: "jv-status glass", role: "status", "aria-live": "polite" });
   const leftBtn = h("div", { class: "jv-left" });
   const greet = h("div", { class: "jv-greet" }, `${ui.greeting()}${state.userName ? `, ${state.userName.split(/\s+/)[0]}` : ""}`);
@@ -47,17 +63,24 @@ export function mountJarvis(main, ui) {
   const userBox = h("div", { class: "jv-user" }, h("div", { class: "jv-label mono" }, "DU"), h("div", { class: "jv-user-text" }));
   const thinkBox = h("div", { class: "jv-think" }, h("div", { class: "shim" }, "Einen Moment …"), h("div", { class: "jv-tools" }));
   const caption = h("div", { class: "jv-caption", "aria-live": "polite" });
-  const sheetBody = h("div", { class: "jv-sheet-body" });
-  const sheet = h("div", { class: "jv-sheet glass", role: "region", "aria-label": "Kontext" },
-    h("button", { class: "jv-grip", "aria-label": "Karte schließen", onclick: () => closeCard() }), sheetBody);
-  const root = h("div", { class: "jv st-idle" }, anchor, coreBtn,
-    h("div", { class: "jv-top" }, leftBtn, status, h("button", { class: "jv-avatar glass", "aria-label": "Einstellungen", onclick: () => go("settings") }, initials(state.userName))),
-    bootBox, idleBox, userBox, thinkBox, caption, sheet);
+  const cards = h("div", { class: "jv-cards", role: "region", "aria-label": "Worüber JARVIS spricht" });
+  const widgets = h("div", { class: "jv-widgets" });
+  const stage = h("div", { class: "jv-stage" }, anchor);
+  const scroller = h("div", { class: "jv-scroll" }, h("div", { class: "jv-hero" }, coreBtn), bootBox, idleBox, widgets);
+  const talkCol = h("div", { class: "jv-talkcol" }, userBox, thinkBox, caption, cards);
+  const root = h("div", { class: "jv st-idle" }, stage, scroller, talkCol, coreBtnTalk,
+    h("div", { class: "jv-top" }, leftBtn, status, h("button", { class: "jv-avatar glass", "aria-label": "Einstellungen", onclick: () => go("settings") }, initials(state.userName))));
   set(main, root);
   document.body.classList.add("jv-on");
 
   let core = null;
-  try { core = new Core(root, anchor); } catch { root.classList.add("no-core"); }
+  try { core = new Core(stage, anchor); } catch { root.classList.add("no-core"); }
+  // The orb scrolls away with the home page (the canvas layer follows the scroller).
+  let scrollRaf = 0;
+  scroller.addEventListener("scroll", () => {
+    cancelAnimationFrame(scrollRaf);
+    scrollRaf = requestAnimationFrame(() => { if (S.mode === "idle") stage.style.transform = `translate3d(0, ${-scroller.scrollTop}px, 0)`; });
+  }, { passive: true });
   root.addEventListener("pointermove", (e) => { const r = root.getBoundingClientRect(); core?.pointer(e.clientX - r.left, e.clientY - r.top); });
   root.addEventListener("pointerleave", () => core?.pointerOut());
 
@@ -66,9 +89,15 @@ export function mountJarvis(main, ui) {
     S.mode = mode;
     // "rest": the answer (caption + card) stays on screen, the core calms down.
     const talk = mode !== "idle";
-    root.className = `jv st-${mode}${talk ? " talk" : ""}${S.card ? " compact sheet-open" : ""}${extra.boot ? " booting" : ""}`;
+    root.className = `jv st-${mode}${talk ? " talk" : ""}${cards.childElementCount ? " has-cards" : ""}${extra.boot ? " booting" : ""}`;
     document.body.classList.toggle("jv-talk", talk);
-    core?.set({ orb: mode === "rest" ? "idle" : mode, compact: !!S.card, card: S.card?.kind ?? "" });
+    if (talk) {
+      // Glide the orb from wherever the home page was scrolled to its place at the top.
+      stage.style.transform = "";
+    } else {
+      stage.style.transform = `translate3d(0, ${-scroller.scrollTop}px, 0)`;
+    }
+    core?.set({ orb: mode === "rest" ? "idle" : mode, compact: talk, card: S.card?.kind ?? "" });
     renderStatus();
     set(leftBtn, talk
       ? h("button", { class: "jv-round glass", "aria-label": "Gespräch beenden", onclick: () => endTalk() }, icon("x"))
@@ -377,26 +406,40 @@ export function mountJarvis(main, ui) {
   }
 
   // ─── Cards ────────────────────────────────────────────────────────────
+  /** Shows a card below the caption (newest on top); an already shown card just lights up again. */
   function openCard(it) {
-    const landed = root.classList.contains("sheet-open");
     S.card = it;
-    S.shown.add(`${it.kind}:${it.id}`);
-    set(sheetBody, renderCard(it));
-    root.classList.add("compact");
-    root.classList.add("sheet-open");
+    const key = `${it.kind}:${it.id}`;
+    S.shown.add(key);
+    let el = [...cards.children].find((c) => c.dataset.key === key);
+    if (el) {
+      el.classList.remove("again");
+      void el.offsetWidth;
+      el.classList.add("again");
+      cards.prepend(el);
+    } else {
+      el = h("div", { class: "jc-wrap glass", "data-key": key }, renderCard(it));
+      cards.prepend(el);
+      while (cards.children.length > 4) cards.lastElementChild.remove();
+    }
+    root.classList.add("has-cards");
     core?.set({ compact: true, card: it.kind });
-    // Particles stream from the core to the card once the sheet has landed.
+    linkTo(el);
+  }
+  /** Particles stream from the core to the card once it has landed. */
+  function linkTo(el, delay = 420) {
     setTimeout(() => {
-      if (S.card !== it) return;
-      const r = sheet.getBoundingClientRect();
-      const host = root.getBoundingClientRect();
-      core?.link(r.left - host.left + r.width / 2, r.top - host.top + 20, Math.min(320, r.width * 0.8));
-    }, landed ? 60 : 700);
+      if (!el.isConnected) return;
+      const r = el.getBoundingClientRect();
+      const host = stage.getBoundingClientRect();
+      core?.link(r.left - host.left + r.width / 2, r.top - host.top + 12, Math.min(300, r.width * 0.7));
+    }, delay);
   }
   function closeCard() {
     S.card = null;
-    root.classList.remove("compact", "sheet-open");
-    core?.set({ compact: false, card: "" });
+    cards.replaceChildren();
+    root.classList.remove("has-cards");
+    core?.set({ card: "" });
   }
 
   const cardHead = (kind, chip, chipCls = "") => {
@@ -433,6 +476,18 @@ export function mountJarvis(main, ui) {
           it.attendees?.length ? h("div", {}, icon("users"), it.attendees.slice(0, 3).join(", ") + (it.attendees.length > 3 ? ` +${it.attendees.length - 3}` : "")) : null),
         actions(btn("Im Kalender", () => { state.calendarFocus = it.start; state.calendarFocusId = it.id; go("calendar"); }, true),
           it.location ? h("a", { class: "jc-btn", href: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(it.location)}`, target: "_blank", rel: "noopener" }, "Route") : btn("Schließen", closeCard)));
+    } else if (it.kind === "finance" && it.detail?.kind) {
+      // Item from the finance overview (detected invoice / subscription / manual entry)
+      const sub = it.detail.kind === "subscription";
+      const due = it.due ? new Date(`${it.due}T12:00:00`) : null;
+      const overdue = due && due < new Date() && it.status === "open";
+      append(body,
+        cardHead("finance", sub ? ({ monthly: "monatlich", yearly: "jährlich", quarterly: "vierteljährlich", weekly: "wöchentlich" }[it.detail.interval] ?? "Abo") : due ? `fällig ${due.toLocaleDateString("de-DE", { day: "numeric", month: "short" })}` : null, overdue ? "red" : sub ? "" : "orange"),
+        it.amount ? h("div", { class: "jc-big gold" }, it.amount) : null,
+        h("div", { class: "jc-from" }, ui.avatar(it.from || "?"), h("div", {}, h("div", { class: "jc-name" }, it.from), h("div", { class: "jc-sub" }, { open: "offen", paid: "bezahlt", autopay: "wird abgebucht", ignored: "ausgeblendet" }[it.status] ?? ""))),
+        h("div", { class: "jc-title" }, it.title),
+        actions(it.status === "open" ? btn("Bezahlt", async (e) => { e.currentTarget.disabled = true; await api(`/api/finance/${it.id}`, { method: "PATCH", body: { status: "paid" } }).catch(() => {}); toast("Als bezahlt markiert.", "ok"); }, true) : btn("Finanzen", () => go("finance"), true),
+          btn(it.status === "open" ? "Finanzen" : "Schließen", it.status === "open" ? () => go("finance") : closeCard)));
     } else if (it.kind === "mail" || it.kind === "finance") {
       const fin = it.kind === "finance";
       append(body,
@@ -465,6 +520,65 @@ export function mountJarvis(main, ui) {
         h("div", { class: "jc-title big" }, it.title),
         h("div", { class: "jc-sub" }, it.size ? `${Math.max(1, Math.round(it.size / 1024))} KB` : ""),
         actions(btn("Öffnen", () => go("files", `?preview=${it.id}`), true), btn("Schließen", closeCard)));
+    } else if (it.kind === "weather") {
+      const d = it.detail ?? {};
+      append(body,
+        cardHead("weather", it.title),
+        h("div", { class: "jc-weather" },
+          h("span", { class: "wx-icon" }, icon(`w-${d.icon ?? "partly"}`)),
+          h("span", { class: "jc-big" }, `${d.temperature ?? "–"}°`),
+          h("div", { class: "wx-now" }, h("div", { class: "jc-name" }, d.text ?? ""), h("div", { class: "jc-sub" }, `gefühlt ${d.feelsLike ?? "–"}° · Wind ${d.windKmh ?? "–"} km/h`))),
+        d.hint ? h("div", { class: "jc-hint" }, icon("alert"), d.hint) : null,
+        d.hours?.length ? h("div", { class: "wx-hours" }, d.hours.map((x, i) =>
+          h("div", { class: "wx-h", style: `animation-delay:${0.35 + i * 0.05}s` },
+            h("span", { class: "mono" }, x.time ? new Date(x.time).toLocaleTimeString("de-DE", { hour: "2-digit" }) : ""),
+            icon(`w-${x.icon ?? "partly"}`),
+            h("b", {}, `${x.temperature ?? "–"}°`),
+            h("span", { class: `rain ${x.rain >= 50 ? "hi" : ""}` }, `${x.rain ?? 0}%`)))) : null,
+        d.days?.length ? h("div", { class: "wx-days" }, d.days.slice(1, 4).map((x) =>
+          h("div", { class: "wx-d" }, h("span", {}, new Date(`${x.date}T12:00:00`).toLocaleDateString("de-DE", { weekday: "short" })), icon(`w-${x.icon ?? "partly"}`), h("span", { class: "mono" }, `${x.min}° / ${x.max}°`)))) : null);
+    } else if (it.kind === "place") {
+      const d = { ...(it.detail ?? {}) };
+      d.website = safeUrl(d.website);
+      d.mapsUrl = safeUrl(d.mapsUrl) ?? "https://www.google.com/maps";
+      const dist = d.distanceM >= 1000 ? `${(d.distanceM / 1000).toFixed(1).replace(".", ",")} km` : `${d.distanceM} m`;
+      const resv = { yes: "Reservierung möglich", required: "Reservierung nötig", recommended: "Reservierung empfohlen", no: "Keine Reservierung" }[d.reservation];
+      append(body,
+        cardHead("place", dist),
+        h("div", { class: "jc-title big" }, it.title),
+        d.cuisine ? h("div", { class: "jc-sub cap" }, d.cuisine) : null,
+        h("div", { class: "jc-meta" },
+          it.location ? h("div", {}, icon("pin"), it.location) : null,
+          d.openingHours ? h("div", {}, icon("clock"), d.openingHours) : null,
+          resv ? h("div", {}, icon("calendar"), resv) : null),
+        actions(
+          d.website ? h("a", { class: "jc-btn primary", href: d.website, target: "_blank", rel: "noopener noreferrer" }, "Website") : null,
+          d.phone ? h("a", { class: `jc-btn ${d.website ? "" : "primary"}`, href: `tel:${String(d.phone).replace(/[^+\d]/g, "")}` }, "Anrufen") : null,
+          h("a", { class: "jc-btn", href: d.mapsUrl, target: "_blank", rel: "noopener noreferrer" }, "Route")),
+        h("div", { class: "jc-actions" }, btn("Hier reservieren", () => ask(`Reservier mir bitte einen Tisch bei ${it.title}${it.location ? ` (${it.location})` : ""}.`), true)));
+    } else if (it.kind === "list") {
+      const d = it.detail ?? {};
+      const box = h("div", { class: "jc-list" }, (d.items ?? []).map((x, i) => {
+        const row = h("button", { class: `jc-li ${x.done ? "done" : ""}`, style: `animation-delay:${0.25 + i * 0.06}s`, onclick: async () => {
+          const done = !row.classList.contains("done");
+          row.classList.toggle("done", done);
+          await api(`/api/list-items/${x.id}`, { method: "PATCH", body: { done } }).catch(() => row.classList.toggle("done", !done));
+        } }, h("span", { class: "tick" }, icon("check")), h("span", {}, x.text));
+        return row;
+      }));
+      append(body, cardHead("list", `${d.open ?? 0} offen`), h("div", { class: "jc-title" }, it.title), box,
+        actions(btn("Alle Listen", () => go("notes"), true), btn("Schließen", closeCard)));
+    } else if (it.kind === "news") {
+      const d = { ...(it.detail ?? {}), link: safeUrl(it.detail?.link) };
+      append(body,
+        cardHead("news", d.source ?? null),
+        h("div", { class: "jc-title" }, it.title),
+        it.snippet ? h("div", { class: "jc-snippet" }, it.snippet) : null,
+        it.date ? h("div", { class: "jc-note mono" }, fmt.rel(it.date).toUpperCase()) : null,
+        actions(d.link ? h("a", { class: "jc-btn primary", href: d.link, target: "_blank", rel: "noopener noreferrer" }, "Artikel lesen") : null, btn("Schließen", closeCard)));
+    } else if (it.kind === "note") {
+      append(body, cardHead("note", null), h("div", { class: "jc-title" }, it.title), it.snippet ? h("div", { class: "jc-snippet note" }, it.snippet) : null,
+        actions(btn("Notizen", () => go("notes"), true), btn("Schließen", closeCard)));
     }
     return body;
   }
@@ -474,7 +588,6 @@ export function mountJarvis(main, ui) {
     const crit = p.risk >= 3;
     const [headline, ...rest] = p.description.split("\n");
     S.card = { kind: "task", id: p.id };
-    root.classList.add("compact", "sheet-open");
     core?.set({ compact: true, card: crit ? "finance" : "mail" });
     const holdBtn = h("button", { class: "jc-hold", "aria-label": crit ? "Kritisch: in der App bestätigen" : "Zum Ausführen gedrückt halten" },
       h("span", { class: "base" }, crit ? "Im Chat prüfen" : "Zum Ausführen halten"), h("span", { class: "fill" }, "Weiter halten …"));
@@ -485,7 +598,10 @@ export function mountJarvis(main, ui) {
       holdBtn,
       h("div", { class: "jc-actions" }, btn("Verwerfen", async () => { await api(`/api/confirmations/${p.id}`, { method: "POST", body: { approve: false } }).catch(() => {}); toast("Verworfen."); closeCard(); }), btn("Im Chat ansehen", () => { state.conversationId = S.conv; go("chat"); })),
       h("div", { class: "jc-note" }, icon("shield"), crit ? "Kritische Aktionen bestätigst du nur ausdrücklich im Chat." : "Wird erst ausgeführt, wenn du hältst."));
-    set(sheetBody, card);
+    const wrap = h("div", { class: "jc-wrap glass confirm-wrap", "data-key": `confirm:${p.id}` }, card);
+    cards.prepend(wrap);
+    root.classList.add("has-cards");
+    linkTo(wrap);
     if (crit) { holdBtn.onclick = () => { state.conversationId = S.conv; go("chat"); }; return; }
     let timer = null;
     const down = () => {
@@ -525,24 +641,125 @@ export function mountJarvis(main, ui) {
   const queued = state.jarvisPrompt;
   state.jarvisPrompt = null;
   api("/api/voice/config").then((c) => { S.cfg = c; }).catch(() => {}).finally(() => { if (queued && S.alive) ask(queued); });
-  api("/api/briefing").then((b) => {
-    if (!S.alive) return;
-    const events = b.events?.ok ? b.events.data : [];
-    const upcoming = events.filter((e) => !e.allDay && new Date(e.end) > new Date());
-    const mails = b.emails?.ok ? b.emails.data.length : 0;
-    const pending = b.pending?.ok ? b.pending.data.length : 0;
-    const lines = [];
-    lines.push(upcoming.length ? `${upcoming.length} ${upcoming.length === 1 ? "Termin" : "Termine"} heute, als Nächstes ${upcoming[0].title} um ${fmt.time(upcoming[0].start)}.` : b.events?.ok ? "Heute keine Termine mehr." : "");
-    lines.push(pending ? `${pending} ${pending === 1 ? "Sache wartet" : "Dinge warten"} auf deine Entscheidung.` : mails ? `${mails} ungelesene E-Mail${mails === 1 ? "" : "s"}.` : "Alles erledigt.");
-    summary.textContent = lines.filter(Boolean).join("\n");
-    if (firstOpen) {
-      const ln = (t, i) => h("span", { class: `bl bl${i}` }, h("span", { class: "live" }), t);
-      append(bootBox,
-        b.events?.ok ? ln(`KALENDER · ${events.length} TERMIN${events.length === 1 ? "" : "E"}`, 1) : null,
-        b.emails?.ok ? ln(`POSTFACH · ${mails} UNGELESEN`, 2) : null,
-        ln(`AUFGABEN · ${b.tasks?.ok ? b.tasks.data.length : 0} OFFEN`, 3));
+  // ─── Home widgets ─────────────────────────────────────────────────────
+  const euro = (c) => `${(c / 100).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+  const widget = (cls, glyph, ic, label, onOpen, ...content) =>
+    h("section", { class: `wd ${cls} glass` },
+      h("button", { class: "wd-head", onclick: onOpen }, h("span", { class: `jc-glyph ${glyph}` }, icon(ic)), h("span", { class: "wd-label" }, label), icon("right")),
+      ...content);
+
+  function weatherWidget(home) {
+    const w = home?.weather;
+    if (w?.ok) {
+      const d = w.data;
+      return widget("wd-weather", "k-weather", `w-${d.now.icon}`, d.place.name, () => ask("Wie wird das Wetter heute und morgen?"),
+        h("div", { class: "wd-wx" }, h("span", { class: "wx-icon" }, icon(`w-${d.now.icon}`)), h("span", { class: "wd-big" }, `${d.now.temperature}°`)),
+        h("div", { class: "wd-sub" }, `${d.now.text} · ${d.days[0]?.min ?? "–"}° / ${d.days[0]?.max ?? "–"}°`),
+        d.hint ? h("div", { class: "wd-hint" }, d.hint) : null);
     }
-  }).catch(() => {});
+    const input = h("input", { class: "wd-input", placeholder: "Deine Stadt, z.B. Hamburg", "aria-label": "Heimatort für das Wetter", maxlength: "100" });
+    const save = async () => {
+      const city = input.value.trim();
+      if (city.length < 2) return;
+      try { await api("/api/life/settings", { method: "PUT", body: { city } }); loadHome(); } catch (e) { toast(e.message, "err"); }
+    };
+    input.addEventListener("keydown", (e) => e.key === "Enter" && save());
+    return widget("wd-weather", "k-weather", "w-partly", "Wetter", () => go("settings"),
+      h("div", { class: "wd-sub" }, w?.code === "NOT_CONFIGURED" ? "Wo wohnst du? Dann weiß ich, ob du einen Schirm brauchst." : "Wetter gerade nicht erreichbar."),
+      w?.code === "NOT_CONFIGURED" ? h("div", { class: "wd-row" }, input, h("button", { class: "jc-btn primary sm", onclick: save }, "Speichern")) : null);
+  }
+
+  function listWidget(home) {
+    const lists = home?.lists?.ok ? home.lists.data : [];
+    const list = lists.find((l) => l.open) ?? lists[0] ?? { name: "Einkaufsliste", items: [], open: 0 };
+    const input = h("input", { class: "wd-input", placeholder: `Auf „${list.name}“ setzen …`, "aria-label": `Eintrag für ${list.name}`, maxlength: "200" });
+    const items = h("div", { class: "wd-list" }, list.items.slice(0, 5).map((x) => {
+      const row = h("button", { class: `jc-li ${x.done ? "done" : ""}`, onclick: async () => {
+        const done = !row.classList.contains("done");
+        row.classList.toggle("done", done);
+        await api(`/api/list-items/${x.id}`, { method: "PATCH", body: { done } }).catch(() => row.classList.toggle("done", !done));
+      } }, h("span", { class: "tick" }, icon("check")), h("span", {}, x.text));
+      return row;
+    }));
+    const add = async () => {
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      try { await api(`/api/lists/${encodeURIComponent(list.name)}/items`, { method: "POST", body: { items: [text] } }); loadHome(); } catch (e) { toast(e.message, "err"); }
+    };
+    input.addEventListener("keydown", (e) => e.key === "Enter" && add());
+    return widget("wd-list-w", "k-list", "list", list.open ? `${list.name} · ${list.open}` : list.name, () => go("notes"),
+      list.items.length ? items : h("div", { class: "wd-sub" }, "Leer. Sag einfach: „Schreib Milch auf die Einkaufsliste.“"),
+      h("div", { class: "wd-row" }, input, h("button", { class: "jc-btn sm", "aria-label": "Hinzufügen", onclick: add }, icon("plus"))));
+  }
+
+  function renderWidgets(b, home) {
+    const out = [];
+    const events = b?.events?.ok ? b.events.data : [];
+    const upcoming = events.filter((e) => !e.allDay && new Date(e.end) > new Date());
+    const next = upcoming[0];
+    if (b?.events?.ok) {
+      out.push(widget("wd-next", "k-event", "calendar", next ? "Als Nächstes" : "Kalender", () => { if (next) { state.calendarFocus = next.start; state.calendarFocusId = next.id; } go("calendar"); },
+        next
+          ? [h("div", { class: "wd-time" }, h("span", { class: "wd-big" }, fmt.time(next.start)), h("span", { class: "wd-sub" }, `– ${fmt.time(next.end)}`)),
+             h("div", { class: "wd-title" }, next.title),
+             next.location ? h("div", { class: "wd-sub" }, icon("pin"), next.location) : null,
+             upcoming.length > 1 ? h("div", { class: "wd-more mono" }, `+${upcoming.length - 1} WEITERE HEUTE`) : null]
+          : h("div", { class: "wd-sub" }, "Heute keine Termine mehr. Der Rest des Tages gehört dir.")));
+    }
+    out.push(weatherWidget(home));
+    const mails = b?.emails?.ok ? b.emails.data.length : null;
+    const tasks = b?.tasks?.ok ? b.tasks.data.length : null;
+    const pending = b?.pending?.ok ? b.pending.data.length : 0;
+    out.push(h("div", { class: "wd-tiles" },
+      h("button", { class: "wd-tile glass", onclick: () => go("email") }, h("span", { class: "jc-glyph k-mail" }, icon("mail")), h("b", {}, mails ?? "–"), h("span", {}, "Ungelesen")),
+      h("button", { class: "wd-tile glass", onclick: () => go("tasks") }, h("span", { class: "jc-glyph k-task" }, icon("tasks")), h("b", {}, tasks ?? "–"), h("span", {}, "Aufgaben")),
+      h("button", { class: `wd-tile glass ${pending ? "warn" : ""}`, onclick: () => go("activity") }, h("span", { class: "jc-glyph k-crit" }, icon("shield")), h("b", {}, pending), h("span", {}, "Warten"))));
+    const f = home?.finance?.ok ? home.finance.data : null;
+    if (f) {
+      out.push(widget("wd-fin", "k-finance", "euro", "Finanzen", () => go("finance"),
+        h("div", { class: "wd-fin-row" },
+          h("div", {}, h("div", { class: "wd-big gold" }, euro(f.openTotalCents)), h("div", { class: "wd-sub" }, f.openCount ? `${f.openCount} offene Rechnung${f.openCount === 1 ? "" : "en"}${f.overdue.length ? ` · ${f.overdue.length} überfällig` : ""}` : "Nichts offen")),
+          h("div", { class: "wd-fin-side" }, h("b", {}, euro(f.subscriptionsMonthlyCents)), h("span", {}, "Abos / Monat"))),
+        f.dueSoon[0] ? h("div", { class: "wd-hint" }, `${f.dueSoon[0].vendor}: ${f.dueSoon[0].amountCents !== null ? euro(f.dueSoon[0].amountCents) : ""} fällig am ${new Date(`${f.dueSoon[0].dueDate}T12:00:00`).toLocaleDateString("de-DE", { day: "numeric", month: "short" })}`) : null));
+    }
+    out.push(listWidget(home));
+    const news = home?.news?.ok ? home.news.data.items : [];
+    if (news.length) {
+      out.push(widget("wd-news", "k-news", "news", "Nachrichten", () => ask("Was gibt es Neues?"),
+        h("div", { class: "wd-news-list" }, news.slice(0, 3).map((n) => {
+          const href = safeUrl(n.link);
+          return h(href ? "a" : "div", { class: "wd-news-item", href: href ?? undefined, target: "_blank", rel: "noopener noreferrer" }, h("span", { class: "mono" }, n.source.toUpperCase()), h("span", {}, n.title));
+        }))));
+    }
+    out.forEach((el, i) => { el.style.animationDelay = `${0.08 + i * 0.07}s`; });
+    set(widgets, out);
+  }
+
+  async function loadHome() {
+    const [b, home] = await Promise.all([api("/api/briefing").catch(() => null), api("/api/home").catch(() => null)]);
+    if (!S.alive) return;
+    renderWidgets(b, home);
+    const events = b?.events?.ok ? b.events.data : [];
+    const upcoming = events.filter((e) => !e.allDay && new Date(e.end) > new Date());
+    const w = home?.weather?.ok ? home.weather.data : null;
+    summary.textContent = [
+      w ? `${w.now.temperature}° und ${w.now.text.toLowerCase()}` : "",
+      upcoming.length ? `${upcoming.length} ${upcoming.length === 1 ? "Termin" : "Termine"} heute` : b?.events?.ok ? "keine Termine mehr" : "",
+    ].filter(Boolean).join(" · ").replace(/^./, (c) => c.toUpperCase());
+    return b;
+  }
+  set(widgets, [1, 2, 3].map(() => h("div", { class: "wd glass skeleton" })));
+  loadHome().then((b) => {
+    if (!firstOpen || !b) return;
+    const events = b.events?.ok ? b.events.data : [];
+    const mails = b.emails?.ok ? b.emails.data.length : 0;
+    const ln = (t, i) => h("span", { class: `bl bl${i}` }, h("span", { class: "live" }), t);
+    append(bootBox,
+      b.events?.ok ? ln(`KALENDER · ${events.length} TERMIN${events.length === 1 ? "" : "E"}`, 1) : null,
+      b.emails?.ok ? ln(`POSTFACH · ${mails} UNGELESEN`, 2) : null,
+      ln(`AUFGABEN · ${b.tasks?.ok ? b.tasks.data.length : 0} OFFEN`, 3));
+  });
 
   return () => {
     S.alive = false;

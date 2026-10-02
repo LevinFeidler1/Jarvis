@@ -22,6 +22,8 @@ const EnvSchema = z.object({
   JARVIS_PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   JARVIS_PUBLIC_URL: z.url().default("http://localhost:3000"),
   DATABASE_URL: optionalString,
+  /** Direct (non-pooled) Neon connection for migrations — set automatically by the Vercel/Neon integration. */
+  DATABASE_URL_UNPOOLED: optionalString,
   JARVIS_DB_PATH: z.string().default("./data/pglite"),
   CRON_SECRET: optionalString,
   JARVIS_TIMEZONE: z.string().default("Europe/Berlin"),
@@ -63,6 +65,8 @@ export interface AppConfig {
   publicUrl: string;
   /** Postgres connection string (Neon). If unset, local PGlite is used. */
   databaseUrl?: string;
+  /** Direct connection without PgBouncer, used for migrations (advisory locks). */
+  databaseUrlUnpooled?: string;
   /** PGlite data directory for local development. */
   dbPath: string;
   /** Protects the cron endpoint (Vercel sends it as Bearer token). */
@@ -113,6 +117,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: e.JARVIS_PORT,
     publicUrl: e.JARVIS_PUBLIC_URL.replace(/\/$/, ""),
     databaseUrl: e.DATABASE_URL,
+    databaseUrlUnpooled: e.DATABASE_URL_UNPOOLED,
     dbPath: e.JARVIS_DB_PATH,
     cronSecret: e.CRON_SECRET,
     timezone: e.JARVIS_TIMEZONE,

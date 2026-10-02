@@ -28,6 +28,8 @@ export const DEFAULT_PERMISSION_SETTINGS: PermissionSettings = {
     memory: true,
     files: true,
     web: true,
+    notes: true,
+    finance: true,
   },
   disabledTools: [],
 };

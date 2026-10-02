@@ -73,6 +73,15 @@ Iterativ, jede Phase ist für sich lauffähig und getestet.
 - [x] Versionen, Vorschau, Download; Speicher: Google Drive oder Postgres (mit Quote) — docs/FILES.md
 - [ ] PPTX erzeugen/bearbeiten
 
+## Phase 6 — Alltag & neues Layout ✅
+
+- [x] Startseite rund um JARVIS: Kugel oben, darunter Widgets (Termin, Wetter, Postfach, Aufgaben, Finanzen, Liste, News);
+      Tabs JARVIS · Kalender · Mehr; neues Logo (leuchtender Ring)
+- [x] Gespräch: Kugel schrumpft nach oben, darunter Untertitel und gestapelte Karten zum Thema
+- [x] Wetter & Pendel-Hinweise (Open-Meteo), Orte finden & reservieren (OpenStreetMap + Browser-Agent)
+- [x] Notizen & Listen, Finanzen (Rechnungen/Abos aus Mails, Erinnerungen), Nachrichten (RSS)
+- [ ] Echte Fahrzeiten (braucht einen dauerhaft kostenlosen Routing-Dienst), Bankanbindung (nur kostenpflichtig)
+
 ## Phase 5 — Voice, Proaktivität, fortgeschrittenes Memory
 
 - [x] Sprach-Chat im Browser (Web Speech API): 🎤 Spracheingabe (de-DE), Vorlesen der Antworten,
@@ -85,6 +94,16 @@ Iterativ, jede Phase ist für sich lauffähig und getestet.
 - [ ] Memory: automatische Vorschläge („Soll ich mir merken, dass …?"), Verfallsdaten, Quellenlinks
 - [ ] Mehrbenutzerbetrieb (Mandantentrennung)
 
+## Stabilität auf Vercel ✅
+
+- [x] Kein hängender Migrations-Lock mehr: Versions-Check ohne Lock, sonst `pg_advisory_xact_lock` in
+      einer Transaktion auf eigener Verbindung (`DATABASE_URL_UNPOOLED`), `lock_timeout` 10 s, Gesamtfrist 15 s
+- [x] DB-Pool mit Verbindungs-, Leerlauf- und Abfrage-Timeouts, Keep-Alive, `attachDatabasePool`, TLS `verify-full`
+- [x] Request-Timeouts (25 s → 503), Agent-Routen in eigener 300-s-Funktion mit sauberem Abbruch bei 270 s
+- [x] `/api/notifications` ohne synchronen Scheduler-Lauf; Frontend-Polling ohne Überlappung, mit Backoff,
+      pausiert im Hintergrund-Tab
+- [ ] Beobachten: Kaltstartzeiten und 503-Quote in den Vercel-Logs nach dem Deploy
+
 ## Bekannte Einschränkungen des aktuellen Stands
 
 - Die Google-Integration ist gegen die offiziellen REST-APIs implementiert und mit
@@ -93,3 +112,6 @@ Iterativ, jede Phase ist für sich lauffähig und getestet.
 - Auf Vercel Hobby läuft der eingebaute Cron nur täglich; Erinnerungen und Automationen brauchen den
   externen 5-Minuten-Cron (cron-job.org, siehe DEPLOY_VERCEL.md).
 - Kostenangaben im Wochenrückblick sind Schätzungen nach Listenpreisen.
+- Hängt eine Datenbankabfrage, bricht die HTTP-Antwort nach 25 s mit 503 ab; die Abfrage selbst endet
+  spätestens nach 20 s (`statement_timeout`). Eine bereits gesendete 503 kann also eine Aktion betreffen,
+  die kurz danach doch noch fertig wird — Schreibaktionen laufen deshalb über die Agent-Routen mit langem Limit.
