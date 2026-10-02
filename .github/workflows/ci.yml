@@ -39,6 +39,8 @@ jobs:
         run: npm test
       - name: Vercel-ESM-Check (kein require() von ESM-Paketen)
         run: npm run check:esm
+      - name: Browser-Module (alle Namen importiert/deklariert)
+        run: npm run check:ui
       - name: UI-Smoke-Test (alle Ansichten, Handy + Desktop)
         run: npm run test:ui -- --shots ui-shots
       - name: Screenshots hochladen

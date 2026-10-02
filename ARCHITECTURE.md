@@ -67,7 +67,9 @@ Bestätigung zurückhält.
 | `src/browser/*` | Browser-Agent: Playwright-Engine, Remote-Aufruf, Aufgaben/Schritte, Element-Risiko |
 | `api/browser.ts` | Eigene Vercel-Funktion mit @sparticuz/chromium (hält das Hauptbundle klein) |
 | `src/telegram/*` | Telegram-Bot: API-Client, Webhook-Logik, Transkription |
-| `public/` | Web-UI ohne Build-Schritt: Heute-Dashboard, Chat mit Live-Schritten, Kalender, E-Mail, Aufgaben, Gedächtnis, Einstellungen; PWA-fähig |
+| `public/` | Web-UI ohne Build-Schritt (PWA). `app.js` ist nur der Einstieg: Ansichten registrieren und starten. |
+| `public/app/*.js` | ES-Module pro Bereich: `dom.js` (DOM-Helfer, Icons, Markdown), `api.js` (Zustand, API-Client), `shell.js` (Login, Navigation, Router, Polling), `voice.js`, `view-*.js` (eine Datei pro Ansicht). `npm run check:ui` prüft statisch, dass jeder Name importiert oder deklariert ist. |
+| `public/jarvis.js`, `public/core.js` | Startseite: Sprachmodus, Widgets, Kontextkarten; WebGL-Kern |
 
 ## 3. Agent Loop
 
@@ -219,7 +221,7 @@ darf auf ihrer Grundlage keine externen Aktionen ohne Rückfrage durchführen.
 
 Voice ist nur ein weiterer Client: Speech-to-Text → `POST /api/chat/stream` →
 Antworttext → Text-to-Speech. Umgesetzt im Browser mit der Web Speech API
-(`public/app.js`, Modul `voice`): 🎤-Knopf, Vorlesen, Gesprächsmodus. Der Server
+(`public/app/voice.js` im Chat, `public/jarvis.js` auf der Startseite): 🎤-Knopf, Vorlesen, Gesprächsmodus. Der Server
 merkt nicht, ob Text getippt oder gesprochen wurde. Bestätigungen laufen über
 dieselbe `PendingAction`-Mechanik; es gibt keinen Voice-spezifischen Bypass —
 kritische Aktionen (Stufe 3) lassen sich generell nicht per „Ja" im Chat bestätigen.
