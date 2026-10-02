@@ -8,7 +8,7 @@ const TRIAGE_EVERY_MS = 4.5 * 60_000;
 /**
  * Fires due reminders (as in-app + push notifications) and runs due
  * automations. Locally it runs in-process every 30 s; on Vercel the cron
- * endpoint /api/cron/tick drives it (plus reminders on every UI poll).
+ * endpoint /api/cron/tick drives it (plus, in the background, after a UI poll).
  */
 export class Scheduler {
   private timer?: NodeJS.Timeout;

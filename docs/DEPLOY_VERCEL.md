@@ -56,7 +56,8 @@ Ausgabe notieren — das sind `JARVIS_ACCESS_TOKEN` (dein Login),
 1. Im Vercel-Projekt: **Storage** → **Create Database** → **Neon** (Serverless Postgres) → *Continue*.
 2. Region: **Frankfurt (eu-central-1)** — passt zur Funktionsregion `fra1` in `vercel.json`.
 3. Plan: **Free** → *Create* → mit dem Projekt verbinden (alle Environments).
-   Vercel setzt `DATABASE_URL` automatisch.
+   Vercel setzt `DATABASE_URL` (über den Pooler) und `DATABASE_URL_UNPOOLED` (direkt) automatisch.
+   JARVIS nutzt die direkte Verbindung nur für Migrationen; fehlt sie, geht es auch mit `DATABASE_URL`.
 4. **Deployments** → letztes Deployment → **⋯ → Redeploy**.
 
 Die Tabellen legt JARVIS beim ersten Start selbst an (Migrationen, gegen
@@ -169,11 +170,12 @@ im Text-Chat – das hätte die Qualität gesenkt. Das Modell bestimmt allein `A
 
 | | |
 |---|---|
-| Laufzeit pro Anfrage | max. 300 s (in `vercel.json` gesetzt) — lange Agent-Läufe stoppen vorher am Schritt-Limit |
+| Laufzeit pro Anfrage | normale Routen 25 s (→ 503), Agent/Cron bis 270 s in der 300-s-Funktion `api/agent.ts` — siehe ARCHITECTURE.md §6 „Zeitlimits" |
 | Cron | 1× täglich eingebaut — Takt alle 5 Min. über cron-job.org (Schritt 7) |
 | Neon Free | 0,5 GB Speicher — ohne Google Drive liegen Dateien in der DB (Quote `JARVIS_DB_FILE_QUOTA_MB`, Standard 150 MB) |
 | Request-/Antwortgröße | 4,5 MB — Uploads/Downloads laufen deshalb in Teilen |
 | Funktionsgröße | 250 MB — Chromium liegt nur in `api/browser.ts` |
+| Funktionslaufzeit | `api/index.ts` 60 s, `api/agent.ts` (Chat, Cron, Telegram …) 300 s, `api/browser.ts` 60 s |
 
 ## Fehlerbehebung
 
@@ -183,4 +185,6 @@ im Text-Chat – das hätte die Qualität gesenkt. Das Modell bestimmt allein `A
 | „Auf Vercel ist DATABASE_URL … erforderlich" | Schritt 4 (Neon verbinden) + Redeploy |
 | Anmeldung klappt, aber jede Aktion: „Ungültiger Origin" | `JARVIS_PUBLIC_URL` stimmt nicht exakt mit der aufgerufenen URL überein |
 | Google: `redirect_uri_mismatch` | Weiterleitungs-URI aus Schritt 6 fehlt im OAuth-Client |
+| 503 „Zeitüberschreitung" / „Datenbank antwortet gerade nicht" | Neon wacht nach Leerlauf auf (Kaltstart) — die App versucht es automatisch erneut. Dauerhaft? Neon-Status und Logs prüfen |
+| 503 „JARVIS startet noch" | Kaltstart dauerte > 25 s (DB langsam oder Migration läuft); nächste Anfrage nutzt den laufenden Start |
 | Logs ansehen | Vercel → Projekt → **Logs** (Secrets werden in Logs geschwärzt) |

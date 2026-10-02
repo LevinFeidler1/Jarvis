@@ -212,11 +212,33 @@ const state = {
   counts: { pending: 0, notif: 0 },
 };
 
-async function api(path, { method = "GET", body } = {}) {
+/**
+ * Client-side limits, slightly above the server's (src/server.ts REQUEST_TIMEOUTS):
+ * normal routes 25 s, file processing 45 s, agent work 270 s.
+ */
+const AGENT_ROUTE_RE = /^\/api\/(chat|confirmations\/[^/?]+|automations\/[^/?]+\/run|suggestions\/([^/?]+\/accept|check)|activity\/[^/?]+\/undo)(\?|$)/;
+const FILE_WORK_RE = /^\/api\/files\/(uploads\/[^/?]+\/complete|[^/?]+\/preview)(\?|$)/;
+function defaultTimeout(path, method) {
+  if (method !== "GET" && AGENT_ROUTE_RE.test(path)) return 285_000;
+  if (FILE_WORK_RE.test(path)) return 50_000;
+  return 30_000;
+}
+
+async function api(path, { method = "GET", body, timeoutMs = defaultTimeout(path, method) } = {}) {
   const headers = {};
   if (body !== undefined) headers["content-type"] = "application/json";
   if (method !== "GET") headers["x-jarvis-csrf"] = state.csrf ?? "";
-  const res = await fetch(path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined, credentials: "same-origin" });
+  const ctrl = new AbortController();
+  const timer = timeoutMs ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+  let res;
+  try {
+    res = await fetch(path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined, credentials: "same-origin", signal: ctrl.signal });
+  } catch (err) {
+    if (err?.name === "AbortError") throw Object.assign(new Error("Zeitüberschreitung — bitte gleich noch einmal versuchen."), { status: 0, timeout: true });
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
   if (res.status === 401 && path !== "/api/login") {
     renderLogin();
     throw new Error("Bitte erneut anmelden.");
@@ -432,9 +454,16 @@ function setCounts() {
   });
 }
 
-async function refreshCounts() {
+/** Never two refreshes at once: callers share the running one. Resolves true on success. */
+let countsInFlight = null;
+function refreshCounts() {
+  countsInFlight ??= loadCounts().finally(() => { countsInFlight = null; });
+  return countsInFlight;
+}
+
+async function loadCounts() {
   try {
-    const [pending, notifs] = await Promise.all([api("/api/confirmations"), api("/api/notifications")]);
+    const [pending, notifs] = await Promise.all([api("/api/confirmations", { timeoutMs: 20_000 }), api("/api/notifications", { timeoutMs: 20_000 })]);
     const unread = notifs.filter((n) => !n.read);
     if (unread.length > state.counts.notif && state.counts.notif !== undefined && state.bootedCounts) {
       unread.slice(0, unread.length - state.counts.notif).forEach((n) => toast(`${n.title}: ${n.body ?? ""}`));
@@ -442,8 +471,42 @@ async function refreshCounts() {
     state.bootedCounts = true;
     state.counts = { pending: pending.length, notif: unread.length };
     setCounts();
-  } catch { /* offline */ }
+    return true;
+  } catch {
+    return false; // offline / timeout — the poller backs off
+  }
 }
+
+/**
+ * Background polling: the next poll starts only after the previous one finished
+ * (or timed out), backs off on errors (30 s → 1 → 2 → 4 → max. 5 min) and pauses
+ * while the tab is hidden.
+ */
+const POLL_MS = 30_000;
+const poller = {
+  timer: null,
+  failures: 0,
+  schedule(delay) {
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.run(), delay);
+  },
+  async run() {
+    if (document.hidden) return; // resumed by visibilitychange
+    if (!state.csrf) return this.schedule(POLL_MS);
+    const ok = await refreshCounts();
+    this.failures = ok ? 0 : Math.min(this.failures + 1, 4);
+    this.schedule(this.failures ? Math.min(5 * 60_000, POLL_MS * 2 ** this.failures) : POLL_MS);
+  },
+  start() {
+    if (this.started) return;
+    this.started = true;
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) clearTimeout(this.timer);
+      else this.schedule(400); // fresh numbers right after returning to the tab
+    });
+    this.run();
+  },
+};
 
 function cycleTheme() {
   const next = { system: "dark", dark: "light", light: "system" }[getTheme()];
@@ -2403,8 +2466,7 @@ async function boot() {
   if (!routerBound) { window.addEventListener("hashchange", route); routerBound = true; }
   push.register();
   await route();
-  refreshCounts();
-  state.poll ??= setInterval(() => state.csrf && refreshCounts(), 30_000);
+  poller.start();
 }
 
 document.addEventListener("keydown", (e) => {

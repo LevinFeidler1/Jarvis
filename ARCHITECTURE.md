@@ -141,20 +141,47 @@ stillen Fake-Provider.
 
 | Umgebung | Datenbank | Scheduler |
 |---|---|---|
-| **Vercel (Produktion)** | Neon Serverless Postgres über `DATABASE_URL` (`pg`-Pool, TLS) | Vercel Cron + opportunistisch bei jedem UI-Poll + optional externer Cron (`/api/cron/tick`, `CRON_SECRET`) |
+| **Vercel (Produktion)** | Neon Serverless Postgres über `DATABASE_URL` (`pg`-Pool, TLS `verify-full`) | Vercel Cron + externer 5-Min-Cron (`/api/cron/tick`, `CRON_SECRET`); nach einem UI-Poll zusätzlich im Hintergrund (`waitUntil`, max. 10 s) |
 | **Lokal / Tests** | PGlite (Postgres als WASM im Prozess), Daten in `JARVIS_DB_PATH` bzw. im Speicher | In-Process-Intervall (30 s) |
 
 * Begründung: Vercel-Funktionen haben kein dauerhaftes Dateisystem; Neon ist
   serverless, im Free-Tier ausreichend und direkt in Vercel integrierbar. PGlite
   erspart lokal und in Tests jeden Datenbankserver, ohne einen zweiten Dialekt.
-* Migrationen laufen beim Kaltstart unter einem Postgres-Advisory-Lock auf einer
-  festen Verbindung (sicher bei parallelen Instanzen).
+* Migrationen beim Kaltstart (`src/db/database.ts`):
+  1. Zuerst wird nur `schema_version` gelesen. Ist das Schema aktuell — der Normalfall —, gibt es
+     **keinen Lock** und keine zusätzliche Verbindung.
+  2. Sonst: eigene, kurzlebige Verbindung über `DATABASE_URL_UNPOOLED` (direkt, ohne PgBouncer;
+     Fallback `DATABASE_URL`), `lock_timeout = 10s`, `statement_timeout = 30s`, dann
+     `pg_advisory_xact_lock` und alle fehlenden Migrationen in **einer** Transaktion. Der Lock
+     endet mit COMMIT/ROLLBACK auf genau dieser Verbindung — anders als `pg_advisory_lock/unlock`,
+     die hinter dem Neon-Pooler auf verschiedenen Backends landen können und den Lock dann nie freigeben.
+  3. Gesamtfrist 15 s: danach wird die Verbindung hart geschlossen und der Start schlägt mit 503 fehl
+     (nächste Anfrage versucht es neu) — statt 300 s zu hängen.
+* Pool: `connectionTimeoutMillis` 5 s, `idleTimeoutMillis` 5 s, `keepAlive`, `query_timeout` und
+  `statement_timeout` je 20 s pro Abfrage; `pool.on('error')` verwirft tote Leerlauf-Verbindungen;
+  `attachDatabasePool` (Vercel Fluid Compute) schließt Leerlauf-Verbindungen vor dem Einfrieren.
 * Mehrinstanz-sicher: Bestätigungen (`UPDATE … WHERE status='pending'`),
   Erinnerungen (`UPDATE … RETURNING`) und OAuth-States (`DELETE … RETURNING`)
   werden atomar genau einmal verarbeitet.
 * Tabellen: `conversations`, `messages`, `pending_actions`, `activity`,
   `audit_log`, `memory`, `tasks`, `reminders`, `notifications`,
   `oauth_tokens` (verschlüsselt), `oauth_states`, `settings`, `sessions`.
+
+### Zeitlimits — keine Anfrage hängt
+
+| Ebene | Limit |
+|---|---|
+| Vercel-Funktion `api/index.ts` (alle normalen Routen) | `maxDuration` 60 s |
+| Vercel-Funktion `api/agent.ts` (Chat, Bestätigungen, Cron, Telegram, Automationen/Vorschläge ausführen, Rückgängig) | `maxDuration` 300 s |
+| Kaltstart (DB-Verbindung + Schema-Check) | 25 s → 503 `STARTING` |
+| Normale API-Route | 25 s → 503 `TIMEOUT` (`Retry-After: 5`) |
+| Externe Dienste (Sprache, Datei-Vorschau/-Import) | 45 s |
+| Agent-Routen | 270 s → saubere Fehlermeldung bzw. NDJSON-`error`-Zeile vor dem Plattform-Limit |
+| Einzelne DB-Abfrage / Verbindungsaufbau | 20 s / 5 s; DB-Zeitüberschreitungen und Verbindungsabbrüche → 503 `DB_UNAVAILABLE` statt 500 |
+
+Das Frontend pollt Zähler (`/api/confirmations`, `/api/notifications`) nie überlappend: der nächste
+Abruf startet erst nach Antwort oder Client-Timeout (20 s), bei Fehlern mit Backoff (bis 5 min), im
+Hintergrund-Tab gar nicht. `/api/notifications` liest nur noch — Erinnerungen feuert der Cron.
 
 ### Live-Fortschritt
 
@@ -226,3 +253,5 @@ kritische Aktionen (Stufe 3) lassen sich generell nicht per „Ja" im Chat best�
 | 9 | Tokens AES-256-GCM-verschlüsselt, Schlüssel nur aus Env | kein Klartext-Secret auf Platte |
 | 10 | Hosting auf Vercel (Fastify in einer Serverless Function, UI über CDN) | vom Nutzer gewählt; erreichbar von überall, kostenlos startbar |
 | 11 | NDJSON-Streaming statt WebSockets | funktioniert in Serverless-Funktionen, kein Verbindungszustand |
+| 12 | Migrationen: Versions-Check ohne Lock, sonst `pg_advisory_xact_lock` auf eigener ungepoolter Verbindung mit Gesamtfrist | Session-Advisory-Locks hinter PgBouncer blieben hängen → Kaltstarts liefen in den 300-s-Timeout |
+| 13 | Zwei Vercel-Funktionen (60 s / 300 s) + Request-Timeouts in Fastify | nur Agent/Cron brauchen lange Laufzeit; alles andere antwortet schnell mit 503 statt 504 |
