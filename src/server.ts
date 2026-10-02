@@ -35,6 +35,8 @@ import { type TelegramBot, checkTelegramSecret, telegramWebhookSecret } from "./
 import type { TgUpdate } from "./telegram/api.js";
 import { OpenAiCompatibleTranscriber, type Transcriber } from "./telegram/transcribe.js";
 import { ElevenLabsSynth, type SpeechSynth, TtsQuotaError } from "./voice/tts.js";
+import { NEWS_FEEDS } from "./life/news.js";
+import { loadLifeSettings, saveLifeSettings } from "./life/settings.js";
 
 const SESSION_COOKIE = "jarvis_session";
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
@@ -500,6 +502,87 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.post("/api/notifications/read-all", async () => {
     await providers.notifications.markAllRead();
     return { ok: true };
+  });
+
+  // ─── Alltag: Startseite, Wetter, News, Notizen & Listen, Finanzen ──────
+  const settle = async <T>(work: Promise<T>, ms = 6_000) => {
+    try {
+      return { ok: true as const, data: await withTimeout(work, ms, "zu langsam") };
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err), code: err instanceof ToolError ? err.code : undefined };
+    }
+  };
+
+  /** Everything the home widgets need in one request; each part fails on its own. */
+  app.get("/api/home", async () => {
+    const life = await loadLifeSettings(db);
+    const [weather, news, finance, lists, notes] = await Promise.all([
+      life.home ? settle(providers.weather.forecast(life.home, 3)) : Promise.resolve({ ok: false as const, error: "Kein Heimatort gesetzt", code: "NOT_CONFIGURED" as const }),
+      settle(providers.news.headlines(life.newsFeeds, { max: 4 })),
+      settle(providers.finance.overview()),
+      settle(providers.notes.allLists()),
+      settle(providers.notes.listNotes(undefined, 3)),
+    ]);
+    return { home: life.home, weather, news, finance, lists, notes };
+  });
+
+  app.get("/api/life/settings", async () => ({ ...(await loadLifeSettings(db)), feeds: NEWS_FEEDS.map(({ id, name, topic }) => ({ id, name, topic })) }));
+  app.put("/api/life/settings", async (req) => {
+    const b = z.object({ city: z.string().trim().min(2).max(100).optional(), clearHome: z.boolean().optional(), newsFeeds: z.array(z.string().max(40)).max(NEWS_FEEDS.length).optional() }).parse(req.body);
+    const patch: Parameters<typeof saveLifeSettings>[1] = {};
+    if (b.city) patch.home = await providers.weather.geocode(b.city);
+    if (b.clearHome) patch.home = null;
+    if (b.newsFeeds) patch.newsFeeds = b.newsFeeds.filter((id) => NEWS_FEEDS.some((f) => f.id === id));
+    return saveLifeSettings(db, patch);
+  });
+
+  app.get("/api/weather", async (req) => {
+    const { place } = z.object({ place: z.string().max(100).optional() }).parse(req.query);
+    const life = await loadLifeSettings(db);
+    const where = place ? await providers.weather.geocode(place) : life.home;
+    if (!where) throw new ToolError("Kein Heimatort gesetzt (Einstellungen → Wetter & Ort).", "NOT_CONFIGURED");
+    return providers.weather.forecast(where, 7);
+  });
+
+  // Notes
+  const notes = providers.notes;
+  app.get("/api/notes", async (req) => notes.listNotes(z.object({ q: z.string().max(200).optional() }).parse(req.query).q, 200));
+  app.post("/api/notes", async (req) => {
+    const b = z.object({ title: z.string().max(120).optional(), body: z.string().trim().min(1).max(10_000), pinned: z.boolean().optional() }).parse(req.body);
+    return notes.addNote(b);
+  });
+  app.patch("/api/notes/:id", async (req) => {
+    const b = z.object({ title: z.string().max(120).nullable().optional(), body: z.string().trim().min(1).max(10_000).optional(), pinned: z.boolean().optional() }).parse(req.body);
+    return notes.updateNote(idParam.parse(req.params).id, b);
+  });
+  app.delete("/api/notes/:id", async (req) => ({ ok: await notes.deleteNote(idParam.parse(req.params).id) }));
+
+  // Lists
+  const listName = z.object({ name: z.string().trim().min(1).max(80) });
+  app.get("/api/lists", async () => notes.allLists(true));
+  app.post("/api/lists/:name/items", async (req) => {
+    const { items } = z.object({ items: z.array(z.string().trim().min(1).max(200)).min(1).max(50) }).parse(req.body);
+    return notes.addToList(listName.parse(req.params).name, items);
+  });
+  app.post("/api/lists/:name/clear-done", async (req) => ({ removed: await notes.clearDone(listName.parse(req.params).name) }));
+  app.patch("/api/list-items/:id", async (req) => ({ ok: await notes.toggleItem(idParam.parse(req.params).id, z.object({ done: z.boolean() }).parse(req.body).done) }));
+  app.delete("/api/list-items/:id", async (req) => ({ ok: await notes.removeItem(idParam.parse(req.params).id) }));
+
+  // Finance
+  const finance = providers.finance;
+  app.get("/api/finance", async () => ({ overview: await finance.overview(), items: await finance.list({ status: "all" }) }));
+  app.post("/api/finance", async (req) => {
+    const b = z.object({
+      kind: z.enum(["invoice", "subscription"]), vendor: z.string().trim().min(1).max(80), title: z.string().max(160).optional(),
+      amountEur: z.number().positive().max(1_000_000).optional(), dueDate: z.iso.date().optional(), interval: z.enum(["weekly", "monthly", "quarterly", "yearly"]).optional(),
+    }).parse(req.body);
+    return finance.add({ kind: b.kind, vendor: b.vendor, title: b.title, amountCents: b.amountEur ? Math.round(b.amountEur * 100) : null, dueDate: b.dueDate ?? null, interval: b.interval ?? null, source: "manual" });
+  });
+  app.patch("/api/finance/:id", async (req) => finance.setStatus(idParam.parse(req.params).id, z.object({ status: z.enum(["open", "paid", "autopay", "ignored"]) }).parse(req.body).status));
+  app.delete("/api/finance/:id", async (req) => ({ ok: await finance.remove(idParam.parse(req.params).id) }));
+  app.post("/api/finance/scan", { config: { rateLimit: { max: 6, timeWindow: "1 minute" }, ...EXTERNAL_ROUTE } }, async () => {
+    const r = await finance.scanMailbox(await providers.email(), 90);
+    return { scanned: r.scanned, added: r.added };
   });
 
   // ─── Cron (Vercel Cron / external scheduler) ──────────────────────────

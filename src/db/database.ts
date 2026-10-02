@@ -347,6 +347,51 @@ const MIGRATIONS: string[] = [
     created_at TEXT NOT NULL
   );
   `,
+  // 10 — notes & lists, finance items (invoices / subscriptions detected in mails or added by hand).
+  `
+  CREATE TABLE notes (
+    id TEXT PRIMARY KEY,
+    title TEXT,
+    body TEXT NOT NULL,
+    pinned BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE lists (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    name_key TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE list_items (
+    id TEXT PRIMARY KEY,
+    list_id TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
+    done BOOLEAN NOT NULL DEFAULT FALSE,
+    position INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    done_at TEXT
+  );
+  CREATE INDEX list_items_list_idx ON list_items (list_id, done, position);
+  CREATE TABLE finance_items (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    vendor TEXT NOT NULL,
+    title TEXT NOT NULL,
+    amount_cents INTEGER,
+    currency TEXT NOT NULL DEFAULT 'EUR',
+    due_date TEXT,
+    interval TEXT,
+    status TEXT NOT NULL,
+    source TEXT NOT NULL,
+    email_id TEXT UNIQUE,
+    account TEXT,
+    reminder_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX finance_items_status_idx ON finance_items (status, due_date);
+  `,
 ];
 
 // ─── Timeouts ───────────────────────────────────────────────────────────────

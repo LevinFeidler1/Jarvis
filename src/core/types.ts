@@ -28,7 +28,9 @@ export type ToolCategory =
   | "memory"
   | "system"
   | "web"
-  | "files";
+  | "files"
+  | "notes"
+  | "finance";
 
 /** Lifecycle of every action JARVIS takes (SECURITY.md §7). */
 export type ActionStatus =

@@ -7,6 +7,7 @@ import { driveTools } from "./drive.js";
 import { fileTools } from "./files.js";
 import { calendarTools } from "./calendar.js";
 import { emailTools } from "./email.js";
+import { lifeTools } from "./life.js";
 import { contactTools, memoryTools, reminderTools, systemTools, taskTools } from "./personal.js";
 
 /**
@@ -62,5 +63,5 @@ function stripRedundantPatterns(node: unknown): void {
 }
 
 export function createDefaultRegistry(): ToolRegistry {
-  return new ToolRegistry([...emailTools, ...calendarTools, ...contactTools, ...taskTools, ...reminderTools, ...memoryTools, ...systemTools, ...automationTools, ...fileTools, ...driveTools, ...browserTools]);
+  return new ToolRegistry([...emailTools, ...calendarTools, ...contactTools, ...taskTools, ...reminderTools, ...memoryTools, ...systemTools, ...automationTools, ...fileTools, ...driveTools, ...browserTools, ...lifeTools]);
 }

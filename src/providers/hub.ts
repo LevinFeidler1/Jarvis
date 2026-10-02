@@ -23,6 +23,11 @@ import { RemoteBrowserEngine, browserSecret } from "../browser/remote.js";
 import { BrowserTaskStore } from "../browser/tasks.js";
 import type { BrowserEngine } from "../browser/types.js";
 import type { CalendarProvider, ContactProvider, EmailProvider, FileProvider } from "./types.js";
+import { FinanceStore } from "../life/finance.js";
+import { NewsService } from "../life/news.js";
+import { NotesStore } from "../life/notes.js";
+import { PlacesService } from "../life/places.js";
+import { WeatherService } from "../life/weather.js";
 
 export interface IntegrationStatus {
   id: string;
@@ -61,6 +66,12 @@ export class ProviderHub {
   readonly automations: AutomationStore;
   readonly files: FileService;
   readonly browserTasks: BrowserTaskStore;
+  readonly notes: NotesStore;
+  readonly finance: FinanceStore;
+  /** Free web services (Open-Meteo, RSS, OpenStreetMap). Replaceable in tests. */
+  weather = new WeatherService();
+  news = new NewsService();
+  places = new PlacesService();
   /** Tests only: allow the browser to open 127.0.0.1 test servers. */
   browserAllowPrivate = false;
   private browserEngine?: BrowserEngine | null;
@@ -76,6 +87,8 @@ export class ProviderHub {
   constructor(config: AppConfig, db: Db, tokenStore: TokenStore) {
     this.tasks = new LocalTaskProvider(db);
     this.reminders = new ReminderStore(db);
+    this.notes = new NotesStore(db);
+    this.finance = new FinanceStore(db, { timezone: config.timezone, reminders: this.reminders });
     this.automations = new AutomationStore(db, config.timezone);
     this.files = new FileService(db, config.files);
     this.browserTasks = new BrowserTaskStore(db, config.browser.maxSteps, config.browser.taskMinutes);

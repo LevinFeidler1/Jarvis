@@ -4,6 +4,8 @@ import type { TriageService } from "./triage.js";
 
 /** Mail triage runs at most this often (the local scheduler ticks every 30 s). */
 const TRIAGE_EVERY_MS = 4.5 * 60_000;
+/** Invoices/subscriptions are looked for in the mailbox at most this often (pattern matching, no LLM). */
+const FINANCE_SCAN_EVERY_MS = 12 * 60 * 60_000;
 
 /**
  * Fires due reminders (as in-app + push notifications) and runs due
@@ -15,6 +17,7 @@ export class Scheduler {
   private automations?: AutomationRunner;
   private triage?: TriageService;
   private lastTriage = 0;
+  private lastFinanceCheck = 0;
 
   constructor(
     private readonly providers: ProviderHub,
@@ -47,7 +50,18 @@ export class Scheduler {
       this.lastTriage = now.getTime();
       runs += (await this.triage.runTick().catch((err) => (console.error("[triage]", err), { suggestions: 0 }))).suggestions;
     }
+    if (now.getTime() - this.lastFinanceCheck >= 60 * 60_000) {
+      this.lastFinanceCheck = now.getTime();
+      await this.scanFinancesIfDue(now).catch((err) => console.error("[finance]", (err as Error).message));
+    }
     return runs;
+  }
+
+  private async scanFinancesIfDue(now: Date): Promise<void> {
+    const { lastScanAt } = await this.providers.finance.overview(now);
+    if (lastScanAt && now.getTime() - new Date(lastScanAt).getTime() < FINANCE_SCAN_EVERY_MS) return;
+    const email = await this.providers.email().catch(() => undefined);
+    if (email) await this.providers.finance.scanMailbox(email, lastScanAt ? 14 : 90);
   }
 
   /** Returns the number of reminders fired (and automations run, when enabled). */
