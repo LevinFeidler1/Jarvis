@@ -44,6 +44,7 @@ gesprochen — außer bei kritischen Aktionen, die brauchen immer den Knopf.
 - **Browser-Agent:** „Schau nach, wann die Bäckerei offen hat“ — JARVIS öffnet Webseiten, sucht, liest,
   lädt herunter; Käufe/Logins nur nach deiner ausdrücklichen Bestätigung. → docs/BROWSER.md
 - **Telegram:** JARVIS als Telegram-Bot — Text, Sprachnachrichten, Dateien, Bestätigungen per Knopf. → docs/TELEGRAM.md
+- **Alltag:** Wetter (Open-Meteo), Restaurants & Orte finden und reservieren (OpenStreetMap + Browser-Agent), Notizen & Listen („Schreib Milch auf die Einkaufsliste“), Finanzen (Rechnungen & Abos aus dem Postfach erkannt, Erinnerung vor Fälligkeit), Nachrichten (RSS) — alles kostenlos, ohne API-Key. → docs/ALLTAG.md
 - **Sprachmodus & Kontextkarten:** Startseite mit lebendigem Partikel-Kern. Du sprichst mit JARVIS, und während er redet, gleiten passende Karten herein (Kalender, Finanzen, Mails, Aufgaben …). Realistische Stimme optional über ElevenLabs Free. → docs/VOICE.md
 
 ## Kontakte

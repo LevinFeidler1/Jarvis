@@ -73,6 +73,15 @@ Iterativ, jede Phase ist für sich lauffähig und getestet.
 - [x] Versionen, Vorschau, Download; Speicher: Google Drive oder Postgres (mit Quote) — docs/FILES.md
 - [ ] PPTX erzeugen/bearbeiten
 
+## Phase 6 — Alltag & neues Layout ✅
+
+- [x] Startseite rund um JARVIS: Kugel oben, darunter Widgets (Termin, Wetter, Postfach, Aufgaben, Finanzen, Liste, News);
+      Tabs JARVIS · Kalender · Mehr; neues Logo (leuchtender Ring)
+- [x] Gespräch: Kugel schrumpft nach oben, darunter Untertitel und gestapelte Karten zum Thema
+- [x] Wetter & Pendel-Hinweise (Open-Meteo), Orte finden & reservieren (OpenStreetMap + Browser-Agent)
+- [x] Notizen & Listen, Finanzen (Rechnungen/Abos aus Mails, Erinnerungen), Nachrichten (RSS)
+- [ ] Echte Fahrzeiten (braucht einen dauerhaft kostenlosen Routing-Dienst), Bankanbindung (nur kostenpflichtig)
+
 ## Phase 5 — Voice, Proaktivität, fortgeschrittenes Memory
 
 - [x] Sprach-Chat im Browser (Web Speech API): 🎤 Spracheingabe (de-DE), Vorlesen der Antworten,

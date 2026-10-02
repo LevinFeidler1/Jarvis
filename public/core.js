@@ -10,7 +10,7 @@ const LOOKS = {
   thinking: { amp: 0.035, speed: 0.4, twist: 1, ripple: 0, pulse: 0, glow: 0.65, k: 0.94, c0: "#F0D4FF", c1: "#A07CFF", c2: "#4FA8FF", g: "#7E4DFF" },
   speaking: { amp: 0.05, speed: 0.24, twist: 0, ripple: 0, pulse: 1, glow: 0.9, k: 1.02, c0: "#FFF3D6", c1: "#FFB340", c2: "#4FB7FF", g: "#FF9534" },
 };
-const CARD_COLORS = { event: [255, 138, 31], mail: [47, 91, 255], task: [48, 209, 88], contact: [100, 210, 255], file: [125, 122, 255], finance: [255, 214, 10] };
+const CARD_COLORS = { event: [255, 138, 31], mail: [47, 91, 255], task: [48, 209, 88], contact: [100, 210, 255], file: [125, 122, 255], finance: [255, 214, 10], weather: [90, 200, 250], place: [255, 55, 95], list: [18, 184, 134], news: [174, 174, 178], note: [255, 214, 10] };
 
 const hexCache = {};
 const hex = (h) => (hexCache[h] ??= [(parseInt(h.slice(1), 16) >> 16) & 255, (parseInt(h.slice(1), 16) >> 8) & 255, parseInt(h.slice(1), 16) & 255]);

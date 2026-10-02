@@ -59,6 +59,7 @@ Bestätigung zurückhält.
 | `src/providers/*` | Provider-Interfaces und konkrete Integrationen |
 | `src/memory/*` | Strukturiertes, kontrollierbares Gedächtnis |
 | `src/db/*` | Postgres-Schicht (Neon via `pg`, lokal PGlite), Migrationen |
+| `src/life/*` | Alltag: Wetter (Open-Meteo), Orte (Overpass/OSM), News (RSS), Notizen & Listen, Finanzen (Mustererkennung in Mails) — siehe docs/ALLTAG.md |
 | `src/security/*` | Token-Verschlüsselung (AES-256-GCM), Sessions |
 | `src/files/*` | Dateien: Formaterkennung, Lesen/Erstellen/Bearbeiten/Umwandeln, Versionen, Speicher (Drive oder Postgres), Chunk-Upload |
 | `src/core/triage*.ts` | Mail-Hinweise: Klassifizierung mit kleinem Modell, Vorschläge, Lernen aus Feedback |
