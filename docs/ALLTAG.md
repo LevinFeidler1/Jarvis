@@ -6,7 +6,15 @@ Alle Funktionen sind **kostenlos**: kein API-Key, kein Konto, keine Kreditkarte.
 
 Die Startseite ist JARVIS selbst.
 - **Oben:** die Kugel. Tippst du sie an, schrumpft sie nach oben. Darunter erscheint, was du gesagt hast, was JARVIS antwortet (Wort für Wort) und die Karten zum Thema: Wetter, Restaurant, Liste, Termin, Rechnung, Nachricht …
-- **Darunter** (zum Scrollen): Widgets für den nächsten Termin, Wetter, ungelesene Mails, Aufgaben, Freigaben, Finanzen, die Einkaufsliste zum Abhaken und Schlagzeilen.
+- **Darunter** (zum Scrollen) liegen die Widgets:
+  - **Heute** mit dem 24-Stunden-Tagesring: Termine als Bögen, der „jetzt“-Punkt, was gerade läuft oder als Nächstes kommt.
+  - **Wartet auf dich:** offene Freigaben, direkt halten oder ablehnen.
+  - **Vorschläge** aus deinen Mails.
+  - Wetter, ungelesene Mails, Aufgaben und Finanzen.
+  - **KI-Kosten** des Monats.
+  - Die Einkaufsliste zum Abhaken und die Schlagzeilen.
+
+  Eine eigene Seite „Heute“ gibt es nicht mehr. Alte Links darauf landen auf der Startseite.
 - **Navigation:** Auf dem Handy gibt es drei Tabs: JARVIS · Kalender · Mehr. Am Rechner gruppiert die Seitenleiste alles nach Alltag und JARVIS.
 
 ## Wetter & Pendeln — Open-Meteo
@@ -56,3 +64,31 @@ Die Startseite ist JARVIS selbst.
 - **Quellen:** tagesschau, NDR Hamburg, SPIEGEL, tagesschau Wirtschaft, heise, t3n, Golem und kicker. Auswählen kannst du sie unter *Einstellungen → Wetter, Ort & Nachrichten*.
 - **Briefing:** Am Ende des Morgenbriefings nennt JARVIS 3 Schlagzeilen.
 - **Sicherheit:** Schlagzeilen sind Fremdinhalt. JARVIS fasst sie nur zusammen und befolgt nie Anweisungen darin. Eine verdächtige Schlagzeile markiert das Gespräch, danach braucht jede externe Aktion deine ausdrückliche Bestätigung.
+
+## Hinweise aufs Handy (proaktiv, kostenlos)
+
+JARVIS meldet sich von selbst, ganz ohne KI-Anfrage. Er prüft nur Kalender, Wetter und Finanzen im Cron-Takt (alle 5 Min.).
+
+| Hinweis | Wann |
+| --- | --- |
+| 🚶 „Zahnarzt in 40 Min.“ + Ort, bei Bedarf „Regen erwartet (80 %) — Schirm oder Bahn statt Rad“, Schnee- oder Frost-Hinweis | 20–70 Min. vor einem Termin **mit Ort**; Wetter für genau diese Stunde (Open-Meteo, Heimatort) |
+| 💶 „Rechnung überfällig“ | eine offene Rechnung hat ihr Fälligkeitsdatum überschritten |
+| 💸 „KI-Budget zu 80 % verbraucht“ / „aufgebraucht“ | bei 80 % und 100 % deines Monatsbudgets (Einstellungen → Kosten & Budget) |
+
+- Jeder Hinweis kommt **genau einmal**. Das ist auch dann sicher, wenn zwei Cron-Läufe gleichzeitig laufen
+  (Tabelle `proactive_sent`).
+- Wird ein Termin verschoben, kommt für die neue Zeit ein neuer Hinweis.
+- **Nachts** (21–8 Uhr) kommen nur Termin-Hinweise. Rechnungen und Budget warten bis zum Morgen.
+- **Abschalten:** Einstellungen → Proaktive Hinweise → „Hinweise aufs Handy“.
+- Termintitel und Orte stammen aus Einladungen, also von Dritten. Sie werden nur als einzeiliger, gekürzter Text
+  angezeigt und lösen nie eine Aktion aus.
+
+## Kosten & Budget
+
+Unter *Einstellungen → Kosten & Budget* siehst du den geschätzten Verbrauch des Monats (in US-Dollar, wie
+Anthropic abrechnet) und setzt ein Monatsbudget.
+
+- Ab 80 % wird das Widget auf der Startseite gelb und du bekommst einen Hinweis.
+- Mit der **harten Grenze** stellt JARVIS bei 100 % keine KI-Anfragen mehr (Chat, Sprache, Mail-Vorschläge)
+  und sagt dir, warum. Alles andere funktioniert weiter.
+- Details: docs/DEPLOY_VERCEL.md → „Kosten im Blick“.

@@ -94,6 +94,19 @@ Iterativ, jede Phase ist für sich lauffähig und getestet.
 - [ ] Memory: automatische Vorschläge („Soll ich mir merken, dass …?"), Verfallsdaten, Quellenlinks
 - [ ] Mehrbenutzerbetrieb (Mandantentrennung)
 
+## Phase 7 — Schneller, proaktiver, geprüft ✅
+
+- [x] Antworten streamen: Text erscheint live im Chat, JARVIS spricht ab dem ersten fertigen Satz
+- [x] Dazwischenreden (Barge-in) mit Echo-Unterdrückung, abschaltbar
+- [x] Hinweise aufs Handy ohne KI-Anfrage: losgehen vor Terminen (mit Wetter), überfällige Rechnungen, Budget
+- [x] Schnellstart `#jarvis?listen`, App-Kurzbefehle (Android), Anleitung für iPhone-Kurzbefehle/Aktionstaste
+- [x] Tagesring als Widget, Freigaben und Mail-Vorschläge auf der Startseite; Seite „Heute“ aufgelöst
+- [x] Kosten des Monats, Monatsbudget mit Warnung ab 80 % und optionaler harter Grenze
+- [x] CI auf GitHub Actions: Typecheck, Tests, ESM-Check, statischer UI-Check, Browser-Smoke-Test (Handy + Desktop)
+- [x] Live-Check gegen die echte Installation (`npm run check:live`, optional als GitHub-Workflow)
+- [x] Web-UI in ES-Module aufgeteilt (`public/app/`), weiterhin ohne Build-Schritt
+- [ ] Wake-Word („Hey Jarvis“) — im Browser nur mit dauerhaft offenem Mikrofon möglich, bewusst nicht gebaut
+
 ## Stabilität auf Vercel ✅
 
 - [x] Kein hängender Migrations-Lock mehr: Versions-Check ohne Lock, sonst `pg_advisory_xact_lock` in
