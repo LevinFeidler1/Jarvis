@@ -30,5 +30,56 @@
     }
   ],
   "id": "/",
-  "scope": "/"
+  "scope": "/",
+  "shortcuts": [
+    {
+      "name": "Mit JARVIS sprechen",
+      "short_name": "Sprechen",
+      "description": "Öffnet JARVIS und hört sofort zu",
+      "url": "/#jarvis?listen",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Notizen & Listen",
+      "short_name": "Listen",
+      "url": "/#notes",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Kalender",
+      "short_name": "Kalender",
+      "url": "/#calendar",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Finanzen",
+      "short_name": "Finanzen",
+      "url": "/#finance",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ]
 }

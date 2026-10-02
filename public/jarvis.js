@@ -54,6 +54,7 @@ export function mountJarvis(main, ui) {
   const coreBtn = h("button", { class: "jv-core-btn", "aria-label": "Mit JARVIS sprechen", onclick: () => onCore() });
   const coreBtnTalk = h("button", { class: "jv-core-btn talk-btn", "aria-label": "Zuhören / Unterbrechen", onclick: () => onCore() });
   const status = h("div", { class: "jv-status glass", role: "status", "aria-live": "polite" });
+  status.addEventListener("click", () => { if (S.tapHint) onCore(); });
   const leftBtn = h("div", { class: "jv-left" });
   const greet = h("div", { class: "jv-greet" }, `${ui.greeting()}${state.userName ? `, ${state.userName.split(/\s+/)[0]}` : ""}`);
   const summary = h("div", { class: "jv-summary" }, " ");
@@ -108,7 +109,24 @@ export function mountJarvis(main, ui) {
   function renderStatus() {
     const m = S.mode;
     const wave = (cls) => h("span", { class: `wave ${cls}` }, h("i"), h("i"), h("i"), h("i"), h("i"));
-    set(status, m === "listening" ? [wave("cyan"), "HÖRT ZU"] : m === "thinking" ? [h("span", { class: "spin-v" }), "DENKT NACH"] : m === "speaking" ? [wave("gold"), "SPRICHT"] : [h("span", { class: "live" }), "BEREIT"]);
+    status.classList.toggle("tap", !!S.tapHint && m === "idle");
+    set(status, m === "listening" ? [wave("cyan"), "HÖRT ZU"] : m === "thinking" ? [h("span", { class: "spin-v" }), "DENKT NACH"] : m === "speaking" ? [wave("gold"), "SPRICHT"]
+      : S.tapHint ? [h("span", { class: "live" }), "TIPPEN ZUM SPRECHEN"] : [h("span", { class: "live" }), "BEREIT"]);
+  }
+
+  /**
+   * Quick start from the home screen (#jarvis?listen): listen right away when
+   * the microphone is already allowed; otherwise the browser needs one tap
+   * (autoplay/microphone rules), so the core asks for it.
+   */
+  async function quickStart() {
+    let granted = false;
+    try { granted = (await navigator.permissions?.query({ name: "microphone" }))?.state === "granted"; } catch { /* Safari: unknown */ }
+    if (!S.alive || S.mode !== "idle") return;
+    if (granted) { S.micOk = true; ensureAudioCtx(); listen(); return; }
+    S.tapHint = true;
+    root.classList.add("tap-hint");
+    renderStatus();
   }
 
   function endTalk() {
@@ -122,6 +140,7 @@ export function mountJarvis(main, ui) {
   }
 
   async function onCore() {
+    if (S.tapHint) { S.tapHint = false; root.classList.remove("tap-hint"); }
     ui.unlockAudio?.();
     ensureAudioCtx();
     if (S.mode === "listening") return stopListening(false);
@@ -802,7 +821,11 @@ export function mountJarvis(main, ui) {
   }
   const queued = state.jarvisPrompt;
   state.jarvisPrompt = null;
-  api("/api/voice/config").then((c) => { S.cfg = c; }).catch(() => {}).finally(() => { if (queued && S.alive) ask(queued); });
+  api("/api/voice/config").then((c) => { S.cfg = c; }).catch(() => {}).finally(() => {
+    if (!S.alive) return;
+    if (queued) ask(queued);
+    else if (ui.autoListen) quickStart();
+  });
   // ─── Home widgets ─────────────────────────────────────────────────────
   const euro = (c) => `${(c / 100).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
   const widget = (cls, glyph, ic, label, onOpen, ...content) =>

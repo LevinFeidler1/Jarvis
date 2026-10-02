@@ -204,6 +204,11 @@ async function run() {
         }
       }
 
+      // Quick start (#jarvis?listen) without microphone permission: asks for one tap, hash cleaned up.
+      where = `${vp.name}/quickstart`;
+      await page.goto(`${url}/#jarvis?listen`);
+      await waitFor(page, `/TIPPEN ZUM SPRECHEN/.test(document.querySelector(".jv-status")?.textContent ?? "") && location.hash === "#jarvis"`, 6_000).catch(() => fail(where, "kein „Tippen zum Sprechen“"));
+
       // Voice turn on the home screen: streamed reply → caption + weather card.
       where = `${vp.name}/voice`;
       await page.goto(`${url}/#jarvis`);

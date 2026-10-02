@@ -683,3 +683,9 @@ button.agenda-ev { width: 100%; background: transparent; }
 .cost-big { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .progress.warn > div { background: linear-gradient(90deg, #ff9f0a, #ffd60a); }
 .progress.crit > div { background: linear-gradient(90deg, #ff453a, #ff9f0a); }
+
+/* Quick start (#jarvis?listen) when the browser still needs one tap. */
+.jv-status.tap { cursor: pointer; color: #a6e6ff; animation: jvTapPulse 1.8s ease-out infinite; }
+@keyframes jvTapPulse { 0% { box-shadow: 0 0 0 0 rgba(100, 210, 255, 0.45); } 100% { box-shadow: 0 0 0 16px rgba(100, 210, 255, 0); } }
+.jv.tap-hint .jv-core-btn:not(.talk-btn) { animation: jvTapPulse 1.8s ease-out infinite; border-radius: 50%; }
+@media (prefers-reduced-motion: reduce) { .jv-status.tap, .jv.tap-hint .jv-core-btn { animation: none; } }

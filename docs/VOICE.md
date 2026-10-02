@@ -57,6 +57,52 @@ Inhalte aus Mails, Dateien und Webseiten bleiben dabei reine Anzeige. Sie werden
 
 Deshalb bleibt das Denken bei JARVIS (gleiches Modell, gleiche Regeln wie im Chat). ElevenLabs liefert nur die Stimme.
 
+## Schnell antworten (Streaming)
+
+JARVIS wartet nicht, bis die ganze Antwort fertig ist:
+
+- Der Server reicht die Text-Stücke des Modells sofort weiter (`text`-Events im NDJSON-Stream,
+  `src/core/llm.ts` → `src/core/agent.ts`).
+- Die App schneidet daraus ganze Sätze (`createSplitter` in `public/jarvis.js`). „am 14. Oktober“, „z. B.“
+  oder „Dr. Weber“ werden dabei nicht zerschnitten, sehr kurze Sätze werden zusammengelegt.
+- Jeder fertige Satz kommt sofort in die Sprech-Warteschlange. Mit ElevenLabs wird der nächste Satz schon
+  geladen, während der aktuelle läuft.
+- Im Chat erscheint der Text live, während er entsteht.
+
+Der erste Satz ist dadurch meist nach 1–2 Sekunden zu hören statt erst nach der ganzen Antwort.
+
+## Dazwischenreden
+
+Während JARVIS spricht, kannst du einfach losreden. Er hört dann sofort auf und hört dir zu.
+
+- **Nur, wenn das Mikrofon schon erlaubt ist.** Mitten im Satz kommt nie eine Berechtigungsabfrage.
+- Das Mikrofon läuft mit Echo-Unterdrückung. In den ersten 0,5 s misst die App den Raum und das Echo der
+  eigenen Stimme. Erst eine deutlich lautere Stimme, die länger als ca. ¼ Sekunde anhält, unterbricht.
+- **Abschalten:** Einstellungen → Sprache → „Dazwischenreden“. Das ist sinnvoll, wenn du ohne Kopfhörer
+  in einem lauten Raum bist.
+- Geprüft im Browser mit einem künstlichen Mikrofon (Chromium `--use-fake-device-for-media-stream`):
+  JARVIS bricht ab und wechselt auf „Hört zu“.
+
+## Schnellstart vom Homescreen
+
+Die Adresse **`https://<deine-app>.vercel.app/#jarvis?listen`** öffnet JARVIS und hört sofort zu.
+
+- **Ist das Mikrofon schon erlaubt,** geht es direkt los.
+- **Sonst** verlangt der Browser einen Tipp: Der Status zeigt dann „Tippen zum Sprechen“ und der Kern pulsiert.
+  Das ist eine Browser-Regel für Mikrofon und Ton, kein Fehler.
+
+**Android (Chrome):** App-Symbol lange drücken → „Mit JARVIS sprechen“. Den Eintrag kannst du auch als eigenes
+Symbol auf den Homescreen ziehen. Weitere Kurzbefehle dort: Notizen & Listen, Kalender, Finanzen
+(`shortcuts` im `manifest.webmanifest`).
+
+**iPhone:** iOS kennt für Web-Apps keine solchen Kurzbefehle.
+
+- **Kurzbefehle-App:** neuer Kurzbefehl → „URL öffnen“ → die Adresse oben eintragen.
+- **Ab iPhone 15 Pro:** Den Kurzbefehl legst du unter Einstellungen → Aktionstaste auf die Aktionstaste.
+
+Einschränkung: Kurzbefehle öffnen Safari, nicht die Homescreen-App. iOS trennt beide Anmeldungen, du meldest dich in
+Safari also einmal extra an.
+
 ## Gesprächsmodus
 
 Nach jeder Antwort hört JARVIS automatisch wieder zu. Sagst du nichts, endet das Gespräch nach ca. 7 Sekunden.

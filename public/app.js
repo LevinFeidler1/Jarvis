@@ -865,8 +865,12 @@ function triageSettingsCard() {
 }
 
 // ─── View: JARVIS (voice home) ──────────────────────────────────────────────
-function viewJarvis(main) {
+function viewJarvis(main, params = new URLSearchParams()) {
+  // #jarvis?listen — home-screen shortcut / action button: start listening.
+  const autoListen = params.has("listen");
+  if (autoListen) history.replaceState(null, "", "#jarvis");
   unmountView = mountJarvis(main, {
+    autoListen,
     h, set, append, icon, api, apiStream, go, toast, state, fmt, greeting, avatar,
     toSpeech: (t) => voice.toSpeech(t),
     unlockAudio: () => voice.unlock(),
