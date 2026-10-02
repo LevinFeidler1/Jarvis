@@ -662,3 +662,10 @@ button.agenda-ev { width: 100%; background: transparent; }
 .jc-wrap, .jc { min-width: 0; max-width: 100%; }
 .jv-cards { min-width: 0; }
 .wx-hours { max-width: 100%; }
+
+/* Chat: reply text while it streams */
+.live-text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); animation: jvFadeUp 0.25s var(--spring) both; }
+.live-text::after { content: ""; display: inline-block; width: 7px; height: 1.05em; margin-left: 2px; vertical-align: -0.15em; border-radius: 2px; background: var(--accent); animation: jvCaret 1s steps(2) infinite; }
+.live-text.preamble { color: var(--muted); font-size: 14px; margin-bottom: 8px; }
+.live-text.preamble::after { display: none; }
+@keyframes jvCaret { 50% { opacity: 0; } }

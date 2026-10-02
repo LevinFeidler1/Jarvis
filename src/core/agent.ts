@@ -55,7 +55,11 @@ export interface AgentReply {
 /** Live progress events for the UI (streamed while the agent works). */
 export type AgentEvent =
   | { type: "thinking" }
-  | { type: "action"; action: ActionReport & { risk: RiskLevel } };
+  | { type: "action"; action: ActionReport & { risk: RiskLevel } }
+  /** Reply text while it is generated (each "thinking" event starts a new model step). */
+  | { type: "text"; delta: string }
+  /** Display items found so far (cards can be prepared before the text arrives). */
+  | { type: "context"; items: ContextItem[] };
 
 export type AgentEventListener = (e: AgentEvent) => void;
 
@@ -312,7 +316,8 @@ export class Agent {
       let response;
       state.emit({ type: "thinking" });
       try {
-        response = await llm.create({ system, messages: await this.conversations.history(state.conversationId), tools, effort: state.voice ? "low" : undefined });
+        const live = state.emit !== noop ? { onText: (delta: string) => state.emit({ type: "text", delta }) } : undefined;
+        response = await llm.create({ system, messages: await this.conversations.history(state.conversationId), tools, effort: state.voice ? "low" : undefined }, live);
         await this.usage.record(response, state.conversationId).catch((err) => console.error("[agent] usage", err));
       } catch (err) {
         const msg =
@@ -470,6 +475,7 @@ export class Agent {
     if (res.ok) {
       try {
         state.context = mergeContext(state.context ?? [], extractContext(res.data));
+        if (state.context.length) state.emit({ type: "context", items: state.context });
       } catch {
         /* context cards are decoration — never fail a tool over them */
       }

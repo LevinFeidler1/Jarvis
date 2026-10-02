@@ -99,3 +99,21 @@ describe("usage cost", () => {
     expect(oneHour.costUsd).toBeCloseTo(4);
   });
 });
+
+describe("live text", () => {
+  it("passes generated text to onText while the response streams", async () => {
+    const fakeFetch = (async () => new Response(sse("Hallo Levin"), { status: 200, headers: { "content-type": "text/event-stream" } })) as unknown as typeof fetch;
+    const llm = new AnthropicLlm({ apiKey: "sk-test", model: "claude-sonnet-5-5", enableWebSearch: false, fetch: fakeFetch });
+    const seen: string[] = [];
+    const r = await llm.create({ system: [{ type: "text", text: "sys" }], messages: [{ role: "user", content: "hi" }], tools: [] }, { onText: (d) => seen.push(d) });
+    expect(seen.join("")).toBe("Hallo Levin");
+    expect(r.content[0]).toMatchObject({ text: "Hallo Levin" });
+  });
+
+  it("a throwing listener never breaks the request", async () => {
+    const fakeFetch = (async () => new Response(sse("Ok"), { status: 200, headers: { "content-type": "text/event-stream" } })) as unknown as typeof fetch;
+    const llm = new AnthropicLlm({ apiKey: "sk-test", model: "claude-sonnet-5-5", enableWebSearch: false, fetch: fakeFetch });
+    const r = await llm.create({ system: [{ type: "text", text: "sys" }], messages: [{ role: "user", content: "hi" }], tools: [] }, { onText: () => { throw new Error("boom"); } });
+    expect(r.content[0]).toMatchObject({ text: "Ok" });
+  });
+});

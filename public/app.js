@@ -615,7 +615,7 @@ const voice = {
   speaking: false,
   unlocked: false,
   prefs: (() => {
-    const d = { speak: true, conversation: false, voiceURI: null, rate: 1.05 };
+    const d = { speak: true, conversation: false, voiceURI: null, rate: 1.05, bargeIn: true };
     try { return { ...d, ...JSON.parse(localStorage.getItem("jarvis-voice") || "{}") }; } catch { return d; }
   })(),
   save() { try { localStorage.setItem("jarvis-voice", JSON.stringify(this.prefs)); } catch { /* ignore */ } },
@@ -871,7 +871,7 @@ function viewJarvis(main) {
     toSpeech: (t) => voice.toSpeech(t),
     unlockAudio: () => voice.unlock(),
     pickVoice: () => voice.pickVoice(),
-    voicePrefs: () => ({ speak: voice.prefs.speak, conversation: true }),
+    voicePrefs: () => ({ speak: voice.prefs.speak, conversation: true, bargeIn: voice.prefs.bargeIn !== false }),
     voiceRate: () => voice.prefs.rate,
   });
 }
@@ -1155,8 +1155,27 @@ function addAssistant() {
   $("#thread").append(node);
   scrollDown();
   const map = new Map();
+  let live = null;
   return {
     content,
+    /** Streamed reply text, shown as it is generated (replaced by formatted Markdown at the end). */
+    text(delta) {
+      if (!live) { live = h("div", { class: "live-text" }); typing.before(live); }
+      live.textContent += delta;
+      typing.classList.add("hidden");
+      scrollDown();
+    },
+    /** A new model step: text so far was a preamble before tool use — keep it, faded. */
+    nextStep() {
+      if (live) { live.classList.add("preamble"); live = null; }
+      typing.classList.remove("hidden");
+    },
+    /** Routes NDJSON agent events to this turn. */
+    onEvent(ev) {
+      if (ev.type === "action") this.step(ev.action);
+      else if (ev.type === "text") this.text(ev.delta);
+      else if (ev.type === "thinking") this.nextStep();
+    },
     step(a) {
       const prev = map.get(a.activityId);
       const label = a.description.split("\n")[0];
@@ -1174,6 +1193,8 @@ function addAssistant() {
     finish(text, actions = [], at) {
       orb.classList.remove("busy");
       typing.remove();
+      live?.remove();
+      live = null;
       for (const a of actions) if (!map.has(a.activityId)) this.step(a);
       if (!steps.children.length) steps.remove();
       content.append(markdown(text));
@@ -1236,7 +1257,7 @@ async function sendMessage(text, opts = {}) {
     await Promise.all(pending.map((a) => a.promise));
     const ids = pending.filter((a) => a.file).map((a) => a.file.id);
     if (!text && !ids.length) throw new Error("Upload fehlgeschlagen.");
-    const reply = await apiStream("/api/chat/stream", { conversationId: state.conversationId ?? undefined, message: text, attachments: ids.length ? ids : undefined }, (ev) => ev.type === "action" && turn.step(ev.action));
+    const reply = await apiStream("/api/chat/stream", { conversationId: state.conversationId ?? undefined, message: text, attachments: ids.length ? ids : undefined }, (ev) => turn.onEvent(ev));
     handleReply(reply, turn, opts);
   } catch (err) {
     turn.error(err.message);
@@ -1310,7 +1331,7 @@ function confirmCard(p, onDone, inChat = false) {
       if (inChat && $("#thread")) {
         foot.replaceWith(h("div", { class: "resolved" }, icon(approve ? "check" : "x"), approve ? "Bestätigt — wird ausgeführt" : "Abgelehnt"));
         const turn = addAssistant();
-        const reply = await apiStream(`/api/confirmations/${p.id}`, { approve, stream: true }, (ev) => ev.type === "action" && turn.step(ev.action));
+        const reply = await apiStream(`/api/confirmations/${p.id}`, { approve, stream: true }, (ev) => turn.onEvent(ev));
         handleReply(reply, turn);
       } else {
         const reply = await api(`/api/confirmations/${p.id}`, { method: "POST", body: { approve } });
@@ -2479,6 +2500,9 @@ function voiceSettingsCard() {
       h("div", { class: "grid2" },
         h("div", {}, h("label", { class: "small muted", for: "voice-select" }, "Stimme"), sel),
         h("div", {}, h("label", { class: "small muted", for: "voice-rate" }, "Sprechtempo "), rateLabel, rate)),
+      h("label", { class: "toggle-row" },
+        h("div", { class: "main" }, h("div", { class: "title" }, "Dazwischenreden"), h("div", { class: "sub" }, "Fängst du an zu sprechen, während JARVIS redet, hört er sofort auf und hört dir zu (Startseite).")),
+        (() => { const cb = h("input", { type: "checkbox", checked: voice.prefs.bargeIn !== false, "aria-label": "Dazwischenreden" }); cb.addEventListener("change", () => { voice.prefs.bargeIn = cb.checked; voice.save(); }); return h("span", { class: "switch" }, cb, h("span")); })()),
       h("div", {}, h("button", { class: "btn sm", onclick: () => { voice.unlock(); voice.speak(`Guten Tag${state.userName ? `, ${state.userName}` : ""}. So klinge ich. Was kann ich für dich tun?`); } }, icon("volume"), "Probe anhören")),
       h("div", { class: "muted small" },
         `Spracheingabe: ${voice.canListen ? "verfügbar" : "nicht verfügbar in diesem Browser"} · Sprachausgabe: ${voice.canSpeak ? "verfügbar" : "nicht verfügbar"}. `,

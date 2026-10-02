@@ -138,17 +138,19 @@ export function mountJarvis(main, ui) {
     return actx;
   }
 
-  async function listen() {
+  /** @param {MediaStream} [stream] an already open microphone (barge-in hands its stream over, so no syllable is lost) */
+  async function listen(stream) {
     S.listenAgain = true;
     showWords(userBox.querySelector(".jv-user-text"), "", "u");
     setMode("listening");
-    if (S.cfg.stt === "server" && navigator.mediaDevices?.getUserMedia && window.MediaRecorder) return recordAndTranscribe();
+    if (S.cfg.stt === "server" && navigator.mediaDevices?.getUserMedia && window.MediaRecorder) return recordAndTranscribe(stream);
+    stream?.getTracks().forEach((t) => t.stop());
     return browserRecognition();
   }
 
-  async function recordAndTranscribe() {
-    let stream;
-    try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+  async function recordAndTranscribe(given) {
+    let stream = given;
+    try { stream ??= await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); S.micOk = true; }
     catch { toast("Mikrofon-Zugriff verweigert. Erlaube das Mikrofon für diese Seite.", "err"); return setMode("idle"); }
     const ctx = ensureAudioCtx();
     const analyser = ctx?.createAnalyser();
@@ -207,6 +209,7 @@ export function mountJarvis(main, ui) {
     sr.lang = "de-DE"; sr.interimResults = true; sr.continuous = false;
     let finalText = "";
     sr.onresult = (e) => {
+      S.micOk = true;
       let interim = "";
       for (let i = e.resultIndex; i < e.results.length; i++) { const r = e.results[i]; if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript; }
       showWords(userBox.querySelector(".jv-user-text"), (finalText + interim).trim(), "u", true);
@@ -244,31 +247,59 @@ export function mountJarvis(main, ui) {
     closeCard();
     S.items = [];
     S.shown = new Set();
-    const tools = thinkBox.querySelector(".jv-tools");
-    tools.replaceChildren();
+    thinkBox.querySelector(".jv-tools").replaceChildren();
     setThinkText("Einen Moment …");
     setMode("thinking");
+    await talk("/api/chat/stream", { conversationId: S.conv ?? undefined, message: text, voice: true });
+  }
+
+  /** Tool progress as small chips under „Einen Moment …“. */
+  function makeChips() {
+    const tools = thinkBox.querySelector(".jv-tools");
     const chips = new Map();
+    return (a) => {
+      const label = a.description.split("\n")[0].slice(0, 60);
+      setThinkText(a.status === "executing" ? `${label} …` : "Ich stelle die Antwort zusammen …");
+      const done = a.status === "succeeded" || a.status === "partially_succeeded";
+      const chip = h("div", { class: `jv-tool glass ${done ? "done" : a.status === "executing" ? "run" : "warn"}` },
+        done ? h("span", { class: "ok-dot" }, icon("check")) : a.status === "executing" ? h("span", { class: "spin-v" }) : h("span", { class: "warn-dot" }, icon("alert")), h("span", {}, label));
+      const old = chips.get(a.activityId);
+      if (old) old.replaceWith(chip); else tools.append(chip);
+      chips.set(a.activityId, chip);
+      while (tools.children.length > 3) tools.firstElementChild.remove();
+    };
+  }
+
+  /**
+   * One agent turn, spoken while it streams: every finished sentence goes to the
+   * speech queue at once, so JARVIS starts talking before the reply is complete.
+   */
+  async function talk(path, body) {
+    const token = ++speakToken;
+    const speaker = createSpeaker(token);
+    const splitter = createSplitter((sentence) => speaker.push(sentence));
+    const onAction = makeChips();
+    let streamed = false;
+    let reply;
     try {
-      const reply = await apiStream("/api/chat/stream", { conversationId: S.conv ?? undefined, message: text, voice: true }, (ev) => {
-        if (ev.type !== "action") return;
-        const a = ev.action;
-        const label = a.description.split("\n")[0].slice(0, 60);
-        setThinkText(a.status === "executing" ? `${label} …` : "Ich stelle die Antwort zusammen …");
-        const done = a.status === "succeeded" || a.status === "partially_succeeded";
-        const chip = h("div", { class: `jv-tool glass ${done ? "done" : a.status === "executing" ? "run" : "warn"}` },
-          done ? h("span", { class: "ok-dot" }, icon("check")) : a.status === "executing" ? h("span", { class: "spin-v" }) : h("span", { class: "warn-dot" }, icon("alert")), h("span", {}, label));
-        const old = chips.get(a.activityId);
-        if (old) old.replaceWith(chip); else tools.append(chip);
-        chips.set(a.activityId, chip);
-        while (tools.children.length > 3) tools.firstElementChild.remove();
+      reply = await apiStream(path, body, (ev) => {
+        if (token !== speakToken) return;
+        if (ev.type === "thinking") splitter.step();
+        else if (ev.type === "text") { streamed = true; splitter.feed(ev.delta); }
+        else if (ev.type === "context") S.items = ev.items ?? [];
+        else if (ev.type === "action") onAction(ev.action);
       });
-      S.conv = reply.conversationId;
-      state.voiceConversationId = reply.conversationId;
-      await speakAll(reply);
+      if (reply.conversationId) { S.conv = reply.conversationId; state.voiceConversationId = reply.conversationId; }
+      if (reply.context) S.items = reply.context;
+      if (streamed) splitter.end();
+      else for (const sentence of sentencesOf(reply.text)) speaker.push(sentence);
     } catch (e) {
-      await speakAll({ text: `Das hat nicht geklappt: ${e.message}`, context: [], pendingActions: [] });
+      splitter.end();
+      speaker.push(`Das hat nicht geklappt: ${e.message}`);
+      reply = { text: "", pendingActions: [] };
     }
+    await speaker.finish();
+    afterSpeaking(reply, token);
   }
 
   // ─── Speaking + context cards ─────────────────────────────────────────
@@ -304,22 +335,19 @@ export function mountJarvis(main, ui) {
   }
 
   let speakToken = 0;
+  /** Speaks a complete reply (local answers, no stream). */
   async function speakAll(reply) {
     const token = ++speakToken;
     S.items = reply.context ?? [];
-    const parts = sentencesOf(reply.text);
-    setMode("speaking");
-    let next = parts.length && S.cfg.tts === "server" && voicePrefs().speak ? fetchAudio(parts[0]) : null;
-    for (let i = 0; i < parts.length; i++) {
-      if (token !== speakToken || !S.alive) return;
-      const sentence = parts[i];
-      const audioP = next;
-      next = i + 1 < parts.length && S.cfg.tts === "server" && voicePrefs().speak ? fetchAudio(parts[i + 1]) : null;
-      const it = cardFor(sentence);
-      if (it && S.card?.id !== it.id) setTimeout(() => token === speakToken && openCard(it), 280);
-      await speakSentence(sentence, audioP, token);
-    }
-    if (token !== speakToken) return;
+    const speaker = createSpeaker(token);
+    for (const sentence of sentencesOf(reply.text)) speaker.push(sentence);
+    await speaker.finish();
+    afterSpeaking(reply, token);
+  }
+
+  function afterSpeaking(reply, token) {
+    if (token !== speakToken || !S.alive) return;
+    stopBargeIn();
     core?.setLevel(null);
     const pending = reply.pendingActions ?? [];
     if (pending.length) {
@@ -330,6 +358,84 @@ export function mountJarvis(main, ui) {
     }
     if (S.listenAgain && voicePrefs().conversation !== false) setTimeout(() => token === speakToken && S.alive && listen(), 350);
     else setMode("rest");
+  }
+
+  /**
+   * Speech queue: sentences are spoken in order as they arrive; server audio
+   * for the next sentences is fetched while the current one plays.
+   */
+  function createSpeaker(token) {
+    const queue = [];
+    let busy = false;
+    let finished = false;
+    let resolveDone;
+    const done = new Promise((r) => { resolveDone = r; });
+    const server = () => S.cfg.tts === "server" && voicePrefs().speak;
+    const prefetch = () => { for (const q of queue.slice(0, 2)) if (!q.audio && server()) q.audio = fetchAudio(q.text); };
+    async function pump() {
+      if (busy) return;
+      busy = true;
+      while (queue.length && token === speakToken && S.alive) {
+        const item = queue.shift();
+        prefetch();
+        if (S.mode !== "speaking") { setMode("speaking"); startBargeIn(token); }
+        const it = cardFor(item.text);
+        if (it && S.card?.id !== it.id) setTimeout(() => token === speakToken && openCard(it), 280);
+        await speakSentence(item.text, item.audio ?? (server() ? fetchAudio(item.text) : null), token);
+      }
+      busy = false;
+      if ((finished && !queue.length) || token !== speakToken || !S.alive) resolveDone();
+    }
+    return {
+      push(text) {
+        if (token !== speakToken) return;
+        queue.push({ text, audio: null });
+        prefetch();
+        pump();
+      },
+      finish() {
+        finished = true;
+        if (!busy) resolveDone();
+        return done;
+      },
+    };
+  }
+
+  /**
+   * Cuts streamed text into speakable sentences. Does not split German dates
+   * („am 14. Oktober“) or common abbreviations; merges very short sentences.
+   */
+  function createSplitter(onSentence) {
+    const ABBR = /(?:^|\s)(?:\d{1,2}|[A-Za-zÄÖÜäöü]|bzw|usw|ggf|inkl|evtl|ca|Nr|Str|Dr|Prof|St|Hr|Fr|vgl|Tel|Mio|Mrd|z\.\s?B|d\.\s?h|u\.\s?a)\.$/;
+    let buf = "", pos = 0, held = "", count = 0, capped = false;
+    const out = (raw, final = false) => {
+      if (capped) return;
+      let t = toSpeech(String(raw).replace(/\[([^\]]+)\]\(#file:[0-9a-f-]{36}\)/g, "$1")).trim();
+      if (!t) { if (final && held) { onSentence(held); held = ""; } return; }
+      if (held) { t = `${held} ${t}`; held = ""; }
+      if (t.length < 28 && !final) { held = t; return; }
+      if (++count > 14) { capped = true; onSentence("Den Rest findest du im Chat."); return; }
+      onSentence(t);
+    };
+    const scan = (final) => {
+      const re = /([.!?…]+["“”»)]*)(?=\s)|\n+/g;
+      re.lastIndex = pos;
+      let m;
+      while ((m = re.exec(buf))) {
+        const end = m.index + (m[1] ? m[1].length : 0);
+        const piece = buf.slice(pos, end);
+        if (m[1] === "." && ABBR.test(piece)) continue;
+        out(piece);
+        pos = m.index + m[0].length;
+      }
+      if (final) { out(buf.slice(pos), true); pos = buf.length; }
+    };
+    return {
+      feed(delta) { buf += delta; scan(false); },
+      /** A new model step begins: whatever the previous step said is complete. */
+      step() { if (buf.length > pos) scan(true); buf = ""; pos = 0; },
+      end() { scan(true); buf = ""; pos = 0; },
+    };
   }
 
   function voicePrefs() { return ui.voicePrefs?.() ?? { speak: true, conversation: true }; }
@@ -386,7 +492,64 @@ export function mountJarvis(main, ui) {
     });
   }
 
+  // ─── Barge-in: start talking while JARVIS speaks ──────────────────────
+  // The microphone (with echo cancellation) watches for your voice while JARVIS
+  // talks. Sustained speech above the calibrated level stops the output and
+  // hands the open stream straight to the recorder.
+  let barge = null;
+  async function startBargeIn(token) {
+    if (barge || voicePrefs().bargeIn === false || !navigator.mediaDevices?.getUserMedia) return;
+    // Only when the microphone is already allowed — never a permission prompt mid-sentence.
+    let allowed = !!S.micOk;
+    if (!allowed) { try { allowed = (await navigator.permissions?.query({ name: "microphone" }))?.state === "granted"; } catch { allowed = false; } }
+    if (!allowed || token !== speakToken || S.mode !== "speaking") return;
+    const ctx = ensureAudioCtx();
+    if (!ctx) return;
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
+    catch { return; }
+    if (token !== speakToken || S.mode !== "speaking") { stream.getTracks().forEach((t) => t.stop()); return; }
+    const src = ctx.createMediaStreamSource(stream);
+    const an = ctx.createAnalyser();
+    an.fftSize = 1024;
+    src.connect(an);
+    const buf = new Float32Array(1024);
+    const t0 = performance.now();
+    let floor = 0.01, loud = 0, last = t0, raf = 0;
+    const ctl = { stream, stop: (keepStream) => {
+      cancelAnimationFrame(raf);
+      try { src.disconnect(); } catch { /* ignore */ }
+      if (!keepStream) stream.getTracks().forEach((t) => t.stop());
+      if (barge === ctl) barge = null;
+    } };
+    barge = ctl;
+    const tick = (now) => {
+      if (barge !== ctl) return;
+      if (token !== speakToken || S.mode !== "speaking") return ctl.stop(false);
+      an.getFloatTimeDomainData(buf);
+      const rms = Math.sqrt(buf.reduce((a, v) => a + v * v, 0) / buf.length);
+      // First 500 ms: learn the room + echo residue of JARVIS' own voice.
+      if (now - t0 < 500) floor = Math.max(floor, rms * 1.4);
+      else {
+        const thr = Math.max(0.045, floor * 2.6);
+        loud = rms > thr ? loud + (now - last) : Math.max(0, loud - (now - last) * 0.6);
+        if (loud > 260) {
+          ctl.stop(true);
+          stopSpeaking();
+          S.listenAgain = true;
+          listen(S.cfg.stt === "server" ? stream : (stream.getTracks().forEach((t) => t.stop()), undefined));
+          return;
+        }
+      }
+      last = now;
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+  }
+  function stopBargeIn() { barge?.stop(false); }
+
   function stopSpeaking() {
+    stopBargeIn();
     speakToken++;
     try { S.audio?.pause(); } catch { /* ignore */ }
     S.audio = null;
@@ -613,9 +776,8 @@ export function mountJarvis(main, ui) {
         holdBtn.querySelector(".base").textContent = "Wird ausgeführt …";
         try {
           setMode("thinking");
-          const reply = await apiStream(`/api/confirmations/${p.id}`, { approve: true, stream: true }, () => {});
           closeCard();
-          await speakAll(reply);
+          await talk(`/api/confirmations/${p.id}`, { approve: true, stream: true });
         } catch (e) { toast(e.message, "err"); setMode("idle"); }
       }, 1200);
     };
@@ -763,6 +925,7 @@ export function mountJarvis(main, ui) {
 
   return () => {
     S.alive = false;
+    stopBargeIn();
     stopListening(true);
     stopSpeaking();
     core?.destroy();
