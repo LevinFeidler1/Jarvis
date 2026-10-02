@@ -14,6 +14,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:ui": "tsx scripts/ui-smoke.ts",
+    "check:live": "node scripts/smoke-live.mjs",
     "setup:secrets": "tsx scripts/generate-secrets.ts",
     "vercel-build": "npm run typecheck",
     "check:esm": "node --no-experimental-require-module scripts/check-esm.mjs",
