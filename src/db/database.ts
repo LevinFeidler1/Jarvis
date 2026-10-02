@@ -349,52 +349,219 @@ const MIGRATIONS: string[] = [
   `,
 ];
 
-async function migrate(db: Db): Promise<void> {
-  // Serialise concurrent cold starts (several serverless instances). The lock
-  // is taken before anything else; `db` must be a single connection here.
-  await db.exec("SELECT pg_advisory_lock(424242)");
+// ─── Timeouts ───────────────────────────────────────────────────────────────
+
+/** Thrown when an operation does not finish in time — mapped to HTTP 503. */
+export class TimeoutError extends Error {
+  readonly code = "TIMEOUT";
+  constructor(message: string) {
+    super(message);
+    this.name = "TimeoutError";
+  }
+}
+
+/** Rejects after `ms` (and runs `onTimeout`, e.g. to destroy a stuck connection). */
+export function withTimeout<T>(work: Promise<T>, ms: number, message: string, onTimeout?: () => void): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      try { onTimeout?.(); } catch { /* best effort */ }
+      reject(new TimeoutError(message));
+    }, ms);
+    timer.unref?.();
+  });
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Errors that mean "database briefly unavailable / too slow" rather than a bug:
+ * the API answers 503 (retry later) instead of 500.
+ */
+export function isTransientDbError(err: unknown): boolean {
+  if (err instanceof TimeoutError) return true;
+  const e = err as { code?: string; message?: string } | undefined;
+  // 57014 statement_timeout / query canceled · 55P03 lock_not_available · 57P01-03 admin shutdown / cannot connect now · 08xxx connection exceptions
+  if (e?.code && (/^(57014|55P03|57P0[123]|08\w{3})$/.test(e.code) || ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EPIPE", "ENOTFOUND", "EAI_AGAIN"].includes(e.code))) return true;
+  return /timeout|timed out|Connection terminated|terminating connection|Client has encountered a connection error|connection is closed/i.test(e?.message ?? "");
+}
+
+// ─── Migrations ─────────────────────────────────────────────────────────────
+
+export const SCHEMA_VERSION = MIGRATIONS.length;
+const MIGRATION_LOCK_KEY = 424242;
+
+/** Minimal connection interface for migrations (pg.Client and PGlite both fit). */
+export interface MigrationConn {
+  query(sql: string, params?: unknown[]): Promise<{ rows: unknown[] }>;
+}
+
+/** Current schema version; 0 when the table does not exist yet. */
+export async function readSchemaVersion(q: MigrationConn["query"]): Promise<number> {
   try {
-    await db.exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
-    const row = await db.one<{ version: number }>("SELECT version FROM schema_version");
-    let version = row?.version ?? 0;
-    if (!row) await db.run("INSERT INTO schema_version (version) VALUES (0)");
+    const { rows } = await q("SELECT version FROM schema_version LIMIT 1");
+    return Number((rows[0] as { version?: number } | undefined)?.version ?? 0);
+  } catch (err) {
+    if ((err as { code?: string }).code === "42P01" || /schema_version.*does not exist/i.test((err as Error).message)) return 0;
+    throw err;
+  }
+}
+
+/**
+ * Applies pending migrations in ONE transaction, serialised across concurrent
+ * cold starts with a transaction-scoped advisory lock. pg_advisory_xact_lock is
+ * released by COMMIT/ROLLBACK on the very connection that took it — unlike
+ * pg_advisory_lock/unlock, which can land on different backends behind a pooler
+ * (PgBouncer) and leave the lock held forever. lock_timeout bounds the wait.
+ */
+export async function runMigrations(conn: MigrationConn, opts: { lockTimeout?: string; statementTimeout?: string } = {}): Promise<number> {
+  await conn.query(`SET lock_timeout = '${opts.lockTimeout ?? "10s"}'`);
+  await conn.query(`SET statement_timeout = '${opts.statementTimeout ?? "30s"}'`);
+  await conn.query("BEGIN");
+  try {
+    await conn.query(`SELECT pg_advisory_xact_lock(${MIGRATION_LOCK_KEY})`);
+    await conn.query("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
+    const { rows } = await conn.query("SELECT version FROM schema_version LIMIT 1");
+    const row = rows[0] as { version?: number } | undefined;
+    let version = Number(row?.version ?? 0);
+    if (!row) await conn.query("INSERT INTO schema_version (version) VALUES (0)");
+    const from = version;
+    // Another instance may have migrated while we waited for the lock.
     while (version < MIGRATIONS.length) {
-      await db.exec(`BEGIN; ${MIGRATIONS[version]}; UPDATE schema_version SET version = ${version + 1}; COMMIT;`);
+      for (const stmt of splitStatements(MIGRATIONS[version]!)) await conn.query(stmt);
       version += 1;
     }
+    if (version !== from) await conn.query(`UPDATE schema_version SET version = ${version}`);
+    await conn.query("COMMIT");
+    return version - from;
   } catch (err) {
-    await db.exec("ROLLBACK").catch(() => undefined);
+    await conn.query("ROLLBACK").catch(() => undefined);
     throw err;
-  } finally {
-    await db.exec("SELECT pg_advisory_unlock(424242)");
   }
+}
+
+/** Splits a migration into single statements (our migrations contain no functions or quoted semicolons). */
+function splitStatements(sql: string): string[] {
+  return sql.split(";").map((x) => x.trim()).filter(Boolean);
 }
 
 // ─── Implementations ────────────────────────────────────────────────────────
 
-async function openPostgres(url: string): Promise<Db> {
-  const { default: pg } = await import("pg");
-  const pool = new pg.Pool({
-    connectionString: url,
+/** Per-query limits for the shared pool (ms). */
+export const DB_TIMEOUTS = {
+  connect: 5_000,
+  idle: 5_000,
+  query: 20_000,
+  /** Whole migration run incl. connect + lock wait (lock_timeout 10 s on top of 5 s connect). */
+  migrationTotal: 15_000,
+} as const;
+
+/** Forces certificate verification (sslmode=verify-full) except for local databases. */
+export function normalizeDbUrl(url: string): string {
+  let u: URL;
+  try { u = new URL(url); } catch { return url; }
+  if (/^(localhost|127\.0\.0\.1|::1|\[::1\])$/.test(u.hostname) || u.searchParams.get("sslmode") === "disable") return url;
+  u.searchParams.set("sslmode", "verify-full");
+  return u.toString();
+}
+
+const isLocalUrl = (url: string) => /sslmode=disable/.test(url) || /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+
+/** node-postgres pool options: short connect/idle timeouts, keep-alive, per-query limits. */
+export function poolConfig(url: string) {
+  const connectionString = normalizeDbUrl(url);
+  return {
+    connectionString,
     max: Number(process.env.JARVIS_DB_POOL_MAX ?? 3),
-    idleTimeoutMillis: 10_000,
-    ssl: /sslmode=disable/.test(url) || /localhost|127\.0\.0\.1/.test(url) ? undefined : { rejectUnauthorized: true },
-  });
-  const over = (q: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number | null }>): Omit<Db, "close"> => ({
+    connectionTimeoutMillis: DB_TIMEOUTS.connect,
+    idleTimeoutMillis: DB_TIMEOUTS.idle,
+    keepAlive: true,
+    query_timeout: DB_TIMEOUTS.query,
+    statement_timeout: DB_TIMEOUTS.query,
+    ssl: isLocalUrl(connectionString) ? undefined : { rejectUnauthorized: true },
+  };
+}
+
+interface PgQueryable {
+  query(sql: string, params?: unknown[]): Promise<{ rows: unknown[]; rowCount: number | null }>;
+}
+interface PgPoolLike extends PgQueryable {
+  on(event: "error", listener: (err: Error) => void): unknown;
+  end(): Promise<void>;
+}
+
+/** Wraps a pg pool as Db. Idle-connection errors are logged and the client is discarded by the pool. */
+export function wrapPool(pool: PgPoolLike, log: (msg: string) => void = (m) => console.warn(m)): Db {
+  pool.on("error", (err) => log(`[db] idle connection dropped: ${err.message}`));
+  const q = (sql: string, params: unknown[] = []) => pool.query(sql, params);
+  return {
     query: async <T>(sql: string, params: unknown[] = []) => (await q(sql, params)).rows as T[],
     one: async <T>(sql: string, params: unknown[] = []) => (await q(sql, params)).rows[0] as T | undefined,
     run: async (sql: string, params: unknown[] = []) => (await q(sql, params)).rowCount ?? 0,
     exec: async (sql: string) => void (await q(sql)),
-  });
+    close: () => pool.end(),
+  };
+}
 
-  // Migrations run on one pinned connection (advisory lock + BEGIN/COMMIT).
-  const client = await pool.connect();
+/** A short-lived single connection used only for migrations. */
+export interface MigrationClient extends MigrationConn {
+  connect(): Promise<unknown>;
+  end(): Promise<void>;
+  /** Hard close when it hangs (pg: client.connection.stream.destroy()). */
+  destroy?(): void;
+}
+
+/**
+ * Migrates over its own connection with a hard overall deadline: a stuck lock or
+ * a dead connection fails fast instead of blocking the cold start for 300 s.
+ */
+export async function migrateWithDeadline(makeClient: () => MigrationClient, totalMs: number = DB_TIMEOUTS.migrationTotal): Promise<number> {
+  const client = makeClient();
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    try { client.destroy?.(); } catch { /* ignore */ }
+    client.end().catch(() => undefined);
+  };
   try {
-    await migrate({ ...over((sql, params) => client.query(sql, params)), close: async () => undefined });
+    return await withTimeout((async () => {
+      await client.connect();
+      return runMigrations(client);
+    })(), totalMs, `Datenbank-Migration nicht in ${Math.round(totalMs / 1000)} s abgeschlossen (Lock oder Verbindung hängt).`, close);
   } finally {
-    client.release();
+    close();
   }
-  return { ...over((sql, params) => pool.query(sql, params)), close: () => pool.end() };
+}
+
+async function openPostgres(url: string, migrationUrl?: string): Promise<Db> {
+  const { default: pg } = await import("pg");
+  const pool = new pg.Pool(poolConfig(url));
+  const db = wrapPool(pool);
+  if (process.env.VERCEL) {
+    // Fluid Compute: close idle connections before the instance is frozen.
+    try {
+      const { attachDatabasePool } = await import("@vercel/functions");
+      attachDatabasePool(pool);
+    } catch (err) {
+      console.warn("[db] attachDatabasePool unavailable:", (err as Error).message);
+    }
+  }
+  // Fast path for warm schemas: one cheap read, no lock at all.
+  const version = await readSchemaVersion((sql, params) => pool.query(sql, params));
+  if (version < SCHEMA_VERSION) {
+    const target = poolConfig(migrationUrl ?? url);
+    await migrateWithDeadline(() => {
+      const c = new pg.Client({ ...target, query_timeout: 30_000, statement_timeout: 30_000 });
+      c.on("error", () => undefined); // a broken migration connection must not crash the process
+      return {
+        connect: () => c.connect(),
+        query: (sql: string, params?: unknown[]) => c.query(sql, params),
+        end: () => c.end(),
+        destroy: () => (c as unknown as { connection?: { stream?: { destroy(): void } } }).connection?.stream?.destroy(),
+      };
+    });
+  }
+  return db;
 }
 
 async function openPglite(dataDir: string | undefined): Promise<Db> {
@@ -418,16 +585,18 @@ async function openPglite(dataDir: string | undefined): Promise<Db> {
     exec: (sql: string) => serial(async () => void (await pg.exec(sql))),
     close: () => serial(() => pg.close()),
   };
-  await migrate(db);
+  // Single in-process connection: same migration code path as Postgres.
+  await serial(() => runMigrations({ query: (sql, params) => pg.query(sql, params) }));
   return db;
 }
 
 /**
- * `DATABASE_URL` (postgres://…) → Neon/Postgres.
+ * `DATABASE_URL` (postgres://…) → Neon/Postgres; migrations use `DATABASE_URL_UNPOOLED`
+ * (direct connection, no PgBouncer) when set.
  * Otherwise PGlite: a directory path persists data, ":memory:" does not.
  */
-export async function openDatabase(opts: { url?: string; localPath?: string }): Promise<Db> {
-  if (opts.url) return openPostgres(opts.url);
+export async function openDatabase(opts: { url?: string; unpooledUrl?: string; localPath?: string }): Promise<Db> {
+  if (opts.url) return openPostgres(opts.url, opts.unpooledUrl);
   return openPglite(opts.localPath && opts.localPath !== ":memory:" ? opts.localPath : undefined);
 }
 

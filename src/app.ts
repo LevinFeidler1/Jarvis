@@ -28,7 +28,7 @@ export interface Jarvis {
 /** Wires everything together. Shared by the local server and the Vercel function. */
 export async function buildJarvis(opts: { serveStatic?: boolean } = {}): Promise<Jarvis> {
   const config = loadConfig();
-  const db = await openDatabase({ url: config.databaseUrl, localPath: config.dbPath });
+  const db = await openDatabase({ url: config.databaseUrl, unpooledUrl: config.databaseUrlUnpooled, localPath: config.dbPath });
   const memory = new MemoryStore(db);
   const providers = new ProviderHub(config, db, new TokenStore(db, config.encryptionKey));
   const registry = createDefaultRegistry();
