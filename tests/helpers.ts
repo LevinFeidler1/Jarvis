@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { AppConfig } from "../src/config.js";
 import { Agent } from "../src/core/agent.js";
-import type { LlmClient, LlmRequest, LlmResponse } from "../src/core/llm.js";
+import type { LlmClient, LlmHooks, LlmRequest, LlmResponse } from "../src/core/llm.js";
 import { openDatabase, type Db } from "../src/db/database.js";
 import { Scheduler } from "../src/core/scheduler.js";
 import { MemoryStore } from "../src/memory/memory.js";
@@ -47,7 +47,7 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 let shared: Promise<Db> | undefined;
 const TABLES = [
   "messages", "conversations", "pending_actions", "activity", "audit_log", "memory", "tasks",
-  "reminders", "notifications", "oauth_tokens", "oauth_states", "settings", "sessions", "email_accounts", "contacts", "push_subscriptions", "automations", "llm_usage", "files", "file_blobs", "upload_sessions", "upload_chunks", "triage_seen", "suggestions", "suggestion_feedback", "browser_tasks", "telegram_updates", "list_items", "lists", "notes", "finance_items",
+  "reminders", "notifications", "oauth_tokens", "oauth_states", "settings", "sessions", "email_accounts", "contacts", "push_subscriptions", "automations", "llm_usage", "files", "file_blobs", "upload_sessions", "upload_chunks", "triage_seen", "suggestions", "suggestion_feedback", "browser_tasks", "telegram_updates", "list_items", "lists", "notes", "finance_items", "proactive_sent",
 ];
 
 /** One in-process Postgres (PGlite) per test worker, emptied for every test. */
@@ -86,11 +86,14 @@ export class ScriptedLlm implements LlmClient {
   readonly model = "test-model";
   readonly requests: LlmRequest[] = [];
   constructor(private readonly steps: Step[]) {}
-  async create(req: LlmRequest): Promise<LlmResponse> {
+  async create(req: LlmRequest, hooks?: LlmHooks): Promise<LlmResponse> {
     this.requests.push(structuredClone(req));
     const step = this.steps.shift();
     if (!step) throw new Error("ScriptedLlm: script exhausted");
-    return typeof step === "function" ? step(req) : step;
+    const res = typeof step === "function" ? step(req) : step;
+    // Stream text in small pieces, like the real API does.
+    for (const b of res.content) if (b.type === "text") for (const piece of b.text.match(/.{1,12}/gs) ?? []) hooks?.onText?.(piece);
+    return res;
   }
   /** tool_result blocks sent back in the latest request. */
   lastToolResults(): Array<{ tool_use_id: string; content: string; is_error?: boolean }> {

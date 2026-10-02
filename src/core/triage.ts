@@ -9,6 +9,7 @@ import { scanForInjection } from "./injection.js";
 import { formatHuman, localDate } from "./time.js";
 import type { MailCategory, MailClassification, MailClassifier } from "./triage-classifier.js";
 import { UsageStore } from "./usage.js";
+import { budgetStatus } from "../life/budget.js";
 
 export type SuggestionKind = Exclude<MailCategory, "unimportant">;
 export type SuggestionStatus = "open" | "accepted" | "ignored" | "expired" | "failed" | "auto" | "undone" | "needs_confirmation";
@@ -161,6 +162,7 @@ export class TriageService {
     if (!settings.since) settings = await this.saveSettings({ since: this.now().toISOString() });
     await this.expireOld();
 
+    if ((await budgetStatus(this.d.db, this.d.config.timezone).catch(() => null))?.blocked) return { classified: 0, suggestions: 0, skipped: "KI-Budget aufgebraucht" };
     const budget = Math.min(MAX_PER_TICK, this.d.dailyLimit - (await this.usageToday()));
     if (budget <= 0) return { classified: 0, suggestions: 0, skipped: "Tageslimit erreicht" };
 
@@ -237,7 +239,7 @@ export class TriageService {
       await this.d.providers.notifications.notify(
         open.length ? `💡 ${open.length} ${open.length === 1 ? "neuer Vorschlag" : "neue Vorschläge"}` : "✅ Für dich erledigt",
         lines.join("\n"),
-        { url: "/#today", tag: "suggestions", suggestionIds: open.map((x) => x.id) },
+        { url: "/#jarvis", tag: "suggestions", suggestionIds: open.map((x) => x.id) },
       );
     }
     return { classified: results.length, suggestions: created.length };

@@ -392,6 +392,13 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX finance_items_status_idx ON finance_items (status, due_date);
   `,
+  // 11 — proactive push hints: each hint is sent once (key = what + which item).
+  `
+  CREATE TABLE proactive_sent (
+    key TEXT PRIMARY KEY,
+    sent_at TEXT NOT NULL
+  );
+  `,
 ];
 
 // ─── Timeouts ───────────────────────────────────────────────────────────────

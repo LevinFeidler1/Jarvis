@@ -13,10 +13,16 @@ export interface LlmRequest {
   effort?: "low" | "medium" | "high";
 }
 
+/** Optional live callbacks while a response streams in. */
+export interface LlmHooks {
+  /** Text as it is generated (lets the voice UI start speaking before the reply is complete). */
+  onText?: (delta: string) => void;
+}
+
 /** The agent core depends only on this interface (tests use a scripted fake). */
 export interface LlmClient {
   readonly model: string;
-  create(req: LlmRequest): Promise<LlmResponse>;
+  create(req: LlmRequest, hooks?: LlmHooks): Promise<LlmResponse>;
 }
 
 export class LlmUnavailableError extends Error {
@@ -78,7 +84,7 @@ export class AnthropicLlm implements LlmClient {
   /** Set when the API rejected the optional extras once; the process then continues without them. */
   private extrasDisabled = false;
 
-  private async send(req: LlmRequest, tools: LlmTool[], extras: boolean): Promise<LlmResponse> {
+  private async send(req: LlmRequest, tools: LlmTool[], extras: boolean, hooks?: LlmHooks): Promise<LlmResponse> {
     const stream = this.client.beta.messages.stream({
       model: this.model,
       max_tokens: 32_000,
@@ -105,23 +111,29 @@ export class AnthropicLlm implements LlmClient {
       tools,
       messages: req.messages,
     });
+    if (hooks?.onText) {
+      const onText = hooks.onText;
+      stream.on("text", (delta) => {
+        try { onText(delta); } catch { /* a broken listener must not break the request */ }
+      });
+    }
     return stream.finalMessage();
   }
 
-  async create(req: LlmRequest): Promise<LlmResponse> {
+  async create(req: LlmRequest, hooks?: LlmHooks): Promise<LlmResponse> {
     const tools: LlmTool[] = [...req.tools];
     if (this.enableWebSearch) tools.push({ type: "web_search_20260209", name: "web_search", max_uses: 5 });
     try {
-      if (this.extrasDisabled) return await this.send(req, tools, false);
+      if (this.extrasDisabled) return await this.send(req, tools, false, hooks);
       try {
-        return await this.send(req, tools, true);
+        return await this.send(req, tools, true, hooks);
       } catch (err) {
         // Compaction / thinking-binding are optimizations: if this account or model rejects them,
         // continue without instead of failing every request.
         if (err instanceof Anthropic.BadRequestError && /context_management|compact|block_binding|thinking-binding|beta|ttl|cache_control/i.test(err.message)) {
           console.warn("[llm] optional API features rejected, continuing without:", err.message);
           this.extrasDisabled = true;
-          return await this.send(req, tools, false);
+          return await this.send(req, tools, false, hooks);
         }
         throw err;
       }

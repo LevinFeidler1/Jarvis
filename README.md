@@ -15,7 +15,9 @@ JARVIS: ✓ E-Mail gelesen  ✓ Kalender geprüft
 
 ## Sprach-Chat
 
-Im Chat auf 🎤 tippen und sprechen — JARVIS liest die Antwort vor.
+Auf der Startseite die Kugel antippen (oder im Chat auf 🎤) und sprechen. JARVIS antwortet ab dem ersten
+fertigen Satz, und du kannst ihm jederzeit ins Wort fallen. `…/#jarvis?listen` startet direkt mit Zuhören,
+zum Beispiel als Kurzbefehl auf dem Homescreen (docs/VOICE.md).
 **Gespräch** oben im Chat schaltet den Freisprech-Modus ein (hört nach jeder
 Antwort wieder zu; „Stopp" oder „Danke, das war's" beendet ihn).
 Stimme und Tempo: *Einstellungen → Sprache*. Läuft in Chrome, Edge und Safari
@@ -37,7 +39,7 @@ gesprochen — außer bei kritischen Aktionen, die brauchen immer den Knopf.
 - **Dateien:** PDF, Word, Excel, CSV, PowerPoint (lesen), Text, Markdown, Bilder hochladen —
   im Chat (📎) oder auf der Seite *Dateien*. JARVIS liest, bearbeitet (als neue Version),
   erstellt und wandelt um. Mit Google Drive landen Dateien im Ordner „JARVIS“. → docs/FILES.md
-- **Proaktive Hinweise:** neue Mails werden mit einem kleinen Modell sortiert; auf *Heute* erscheinen
+- **Proaktive Hinweise:** neue Mails werden mit einem kleinen Modell sortiert; auf der Startseite erscheinen
   Vorschläge (Termin zusagen, Rechnung → Aufgabe, Lead beantworten …) mit *Annehmen / Bearbeiten / Ignorieren*. → docs/PROACTIVE.md
 - **Selbstständige Automationen:** pro Automation freigeben, welche Aktionen sie ohne Rückfrage darf;
   Protokoll, Rückgängig, Tageslimit, Not-Aus. → docs/AUTONOMY.md
@@ -84,6 +86,9 @@ Websuche; bei E-Mail/Kalender sagt JARVIS ehrlich, dass die Integration fehlt.
 | `npm run dev` | mit Auto-Reload |
 | `npm test` | Testsuite (Vitest, echtes Postgres via PGlite) |
 | `npm run typecheck` | TypeScript prüfen |
+| `npm run test:ui` | Browser-Smoke-Test: alle Ansichten auf Handy- und Desktop-Breite (Chrome nötig, `CHROME_PATH`) |
+| `npm run check:ui` | Browser-Module statisch prüfen (fehlende Importe/Namen) |
+| `npm run check:live` | Live-Check gegen deine Installation (`JARVIS_URL`, `JARVIS_TOKEN`) |
 | `npm run setup:secrets` | Zufallswerte für Secrets erzeugen |
 
 ## Dokumentation
