@@ -440,7 +440,6 @@ const NAV = [
   ["finance", "Finanzen", "euro", "life"],
   ["contacts", "Kontakte", "users", "life"],
   ["files", "Dateien", "folder", "life"],
-  ["today", "Tagesring", "home", "jarvis"],
   ["automations", "Automationen", "bolt", "jarvis"],
   ["activity", "Aktivität", "activity", "jarvis"],
   ["review", "Rückblick", "chart", "jarvis"],
@@ -579,7 +578,9 @@ async function route() {
   if (voice.speaking) voice.stopSpeaking();
   try { unmountView?.(); } catch { /* ignore */ }
   unmountView = null;
-  const [view, query = ""] = location.hash.replace(/^#/, "").split("?");
+  const [raw, query = ""] = location.hash.replace(/^#/, "").split("?");
+  // Old links (notifications, bookmarks) to the former "Heute" page land on the home screen.
+  const view = { today: "jarvis" }[raw] ?? raw;
   state.view = VIEWS[view] ? view : "jarvis";
   document.querySelectorAll("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === state.view));
   $("#more-btn")?.classList.toggle("active", !MOBILE_NAV.includes(state.view));
@@ -850,7 +851,7 @@ function triageSettingsCard() {
         h("div", { class: "sub" }, `Terminanfragen, Kundenanfragen, Rechnungen, Fristen. Kleines Modell, nur neue Mails · heute ${d.usedToday} von ${d.dailyLimit}.`)),
         sw(d.settings.enabled, (v) => save({ enabled: v }), "Proaktive Hinweise")),
       h("label", { class: "toggle-row" }, h("div", { class: "main" }, h("div", { class: "title" }, "Aufgaben für Rechnungen & Fristen automatisch anlegen"),
-        h("div", { class: "sub" }, "Mit „Rückgängig“ auf der Heute-Seite.")),
+        h("div", { class: "sub" }, "Mit „Rückgängig“ auf der Startseite.")),
         sw(d.settings.autoTasks, (v) => save({ autoTasks: v }), "Aufgaben automatisch")),
       d.settings.mutedKinds.length || d.settings.mutedSenders.length
         ? h("div", { class: "card-body", style: "padding:12px 18px" }, h("div", { class: "small muted", style: "margin-bottom:6px" }, "Stummgeschaltet (weil mehrfach ignoriert):"),
@@ -871,6 +872,15 @@ function viewJarvis(main, params = new URLSearchParams()) {
   if (autoListen) history.replaceState(null, "", "#jarvis");
   unmountView = mountJarvis(main, {
     autoListen,
+    dayRing,
+    ringColors: RING_COLORS,
+    inHours,
+    openEventSheet,
+    confirmCard,
+    suggestionItems: async (onChange) => {
+      const data = await api("/api/suggestions").catch(() => null);
+      return data?.suggestions?.map((x) => suggestionCard(x, onChange)) ?? [];
+    },
     h, set, append, icon, api, apiStream, go, toast, state, fmt, greeting, avatar,
     toSpeech: (t) => voice.toSpeech(t),
     unlockAudio: () => voice.unlock(),
@@ -896,7 +906,7 @@ function inHours(ms) {
   return m < 60 ? `in ${m} Min.` : `in ${Math.floor(m / 60)} Std.${m % 60 ? ` ${m % 60} Min.` : ""}`;
 }
 
-/** 24-hour ring: midnight at the top, today's events as glowing arcs, a pulsing "now". */
+/** 24-hour ring for the home widget: midnight at the top, today's events as glowing arcs, a pulsing "now". */
 function dayRing(events, ok) {
   const R = 112, C = 2 * Math.PI * R, now = new Date(), nowMin = minutesOfDay(now);
   const timed = events.filter((e) => !e.allDay).sort((a, b) => new Date(a.start) - new Date(b.start));
@@ -933,118 +943,17 @@ function dayRing(events, ok) {
     svg("circle", { class: "ring-now", cx: nx.toFixed(2), cy: ny.toFixed(2), r: 6, fill: "none", stroke: "#fff", "stroke-width": 1.5 }),
     svg("circle", { cx: nx.toFixed(2), cy: ny.toFixed(2), r: 5.5, fill: "#fff" }));
 
-  const current = timed.find((e) => new Date(e.start) <= now && new Date(e.end) > now);
-  const next = timed.find((e) => new Date(e.start) > now);
-  const center = !ok
-    ? [h("span", { class: "mono ring-kicker" }, "KALENDER"), h("span", { class: "ring-title" }, "Nicht verbunden"), h("button", { class: "ring-sub link", onclick: () => go("settings") }, "Jetzt verbinden")]
-    : current
-      ? [h("span", { class: "mono ring-kicker live-k" }, `JETZT · BIS ${fmt.time(current.end)}`), h("span", { class: "ring-title" }, current.title), h("span", { class: "ring-sub" }, next ? `danach ${next.title} · ${fmt.time(next.start)}` : "danach frei")]
-      : next
-        ? [h("span", { class: "mono ring-kicker" }, `ALS NÄCHSTES · ${fmt.time(next.start)}`), h("span", { class: "ring-title" }, next.title), h("span", { class: "ring-sub" }, inHours(new Date(next.start) - now))]
-        : [h("span", { class: "mono ring-kicker" }, "HEUTE"), h("span", { class: "ring-title" }, timed.length ? "Alles erledigt" : "Kein Termin"), h("span", { class: "ring-sub" }, "Der Rest des Tages gehört dir.")];
-  const legend = arcs.filter((a) => !a.past).slice(0, 4).map((a) =>
-    h("button", { class: "ring-leg", onclick: () => openEventSheet(a.e, timed) }, h("span", { class: "dot", style: `background:${a.color}` }), h("span", { class: "mono" }, fmt.time(a.e.start)), h("span", { class: "t" }, a.e.title)));
-  return h("div", { class: "ring-wrap" },
-    h("div", { class: "ring" }, ringSvg, h("div", { class: "ring-center" }, center)),
-    legend.length ? h("div", { class: "ring-legend" }, legend) : null);
+  // The ring plus how many events are still ahead (home widget).
+  const left = timed.filter((e) => new Date(e.end) > now).length;
+  return h("div", { class: "ring-wrap compact" },
+    h("div", { class: "ring" }, ringSvg, h("div", { class: "ring-center" },
+      ok ? [h("span", { class: "ring-count" }, left), h("span", { class: "mono ring-kicker" }, left === 1 ? "TERMIN" : "TERMINE")] : h("span", { class: "mono ring-kicker" }, "–"))));
 }
 
-// ─── View: Heute ────────────────────────────────────────────────────────────
+// ─── Greeting ───────────────────────────────────────────────────────────────
 function greeting() {
   const hr = new Date().getHours();
   return hr < 5 ? "Gute Nacht" : hr < 11 ? "Guten Morgen" : hr < 17 ? "Guten Tag" : hr < 22 ? "Guten Abend" : "Gute Nacht";
-}
-
-async function viewToday(main) {
-  set(main, h("div", { class: "view today" }, h("div", { class: "today-top" }, h("div", { class: "today-hello" }, h("div", { class: "today-date" }, fmt.long(new Date()).toUpperCase()), h("h1", {}, `${greeting()}.`), h("p", { class: "today-sum shim" }, "Einen Moment, ich sehe mir deinen Tag an …")))));
-  const [b, setup, sugg] = await Promise.all([api("/api/briefing"), api("/api/setup"), suggestionsCard(() => viewToday(main))]);
-  const now = Date.now();
-
-  const events = b.events.ok ? b.events.data : [];
-  const emails = b.emails.ok ? b.emails.data : [];
-  const tasks = b.tasks.ok ? b.tasks.data : [];
-  const today = ymd(new Date());
-  const dueTasks = tasks.filter((t) => t.due && t.due.slice(0, 10) <= today);
-  const pending = b.pending.ok ? b.pending.data : [];
-  const upcoming = events.filter((e) => e.allDay || new Date(e.end).getTime() > now);
-
-  const summary = [];
-  if (b.events.ok) summary.push(events.length ? `${events.length} ${events.length === 1 ? "Termin" : "Termine"} heute` : "keine Termine heute");
-  if (b.emails.ok) summary.push(`${emails.length} ungelesene E-Mail${emails.length === 1 ? "" : "s"}`);
-  summary.push(`${tasks.length} offene Aufgabe${tasks.length === 1 ? "" : "n"}`);
-  const name = state.userName ? `, ${state.userName.split(/\s+/)[0]}` : "";
-
-  const stat = (n, l, ic, cls, view) => h("div", { class: "card stat", onclick: () => go(view) }, h("div", { class: `ic ${cls}` }, icon(ic)), h("div", {}, h("div", { class: "n" }, n), h("div", { class: "l" }, l)));
-
-  const agenda = !b.events.ok
-    ? notConfigured(b.events.code === "NOT_CONFIGURED" ? "Kalender ist noch nicht verbunden." : b.events.error)
-    : events.length === 0
-      ? h("div", { class: "empty" }, "Heute ist dein Kalender frei.")
-      : h("div", { class: "agenda" }, events.map((e) => {
-          const past = !e.allDay && new Date(e.end).getTime() < now;
-          const isNow = !e.allDay && new Date(e.start).getTime() <= now && !past;
-          return h("div", { class: `agenda-item ${past ? "past" : ""} ${isNow ? "now" : ""}` },
-            h("div", { class: "t" }, e.allDay ? "ganztags" : fmt.time(e.start), e.allDay ? null : h("small", {}, fmt.time(e.end))),
-            h("div", { class: "bar" }),
-            h("div", {}, h("div", { class: "what" }, e.title), h("div", { class: "where" }, [e.location, e.attendees?.length ? `${e.attendees.length} Teilnehmer` : null].filter(Boolean).join(" · "))));
-        }));
-
-  const mailList = !b.emails.ok
-    ? notConfigured(b.emails.code === "NOT_CONFIGURED" ? "E-Mail ist noch nicht verbunden." : b.emails.error)
-    : emails.length === 0
-      ? h("div", { class: "empty" }, "Posteingang ist gelesen. Sehr ordentlich.")
-      : h("div", {}, emails.slice(0, 6).map((m) =>
-          h("div", { class: "row clickable", onclick: () => { state.mailSelected = m.id; go("email"); } },
-            avatar(m.from.name ?? m.from.email),
-            h("div", { class: "main" }, h("div", { class: "title" }, m.from.name ?? m.from.email), h("div", { class: "sub" }, m.subject)),
-            h("span", { class: "muted small" }, fmt.rel(m.date)))));
-
-  const taskList = tasks.length === 0
-    ? h("div", { class: "empty" }, "Keine offenen Aufgaben.")
-    : h("div", {}, tasks.slice(0, 6).map((t) =>
-        h("div", { class: "row" },
-          h("button", { class: "check", title: "Erledigt", onclick: async (e) => { e.currentTarget.classList.add("done"); await api(`/api/tasks/${t.id}/complete`, { method: "POST" }).catch(fail); viewToday(main); } }, icon("check")),
-          h("div", { class: "main" }, h("div", { class: "title" }, t.title), t.due ? h("div", { class: "sub" }, `fällig ${new Date(t.due).toLocaleDateString("de-DE")}`) : null),
-          h("span", { class: `prio ${t.priority}` }))));
-
-  const setupDone = setup.steps.filter((s) => s.done).length;
-
-  set(main, h("div", { class: "view today" },
-    h("div", { class: "today-top" },
-      h("div", { class: "today-hello" },
-        h("div", { class: "today-date" }, fmt.long(new Date()).toUpperCase()),
-        h("h1", {}, `${greeting()}${name}.`),
-        h("p", { class: "today-sum" }, `${summary.join(", ")}.`)),
-      h("button", { class: "orb-btn", "aria-label": "Mit JARVIS sprechen", onclick: () => go("jarvis") }, h("span", { class: "orb breathe" }))),
-    h("div", { class: "today-hero" },
-      dayRing(events, b.events.ok),
-      h("div", { class: "brief glass" },
-        h("button", { class: "brief-play", "aria-label": "Briefing von JARVIS vorlesen lassen", onclick: () => { voice.unlock(); state.jarvisPrompt = "Guten Morgen, JARVIS. Bereite mir meinen Tag vor."; go("jarvis"); } },
-          icon("play")),
-        h("div", { class: "brief-text" }, h("b", {}, greeting() === "Guten Morgen" ? "Morgenbriefing" : "Tagesbriefing"), h("span", {}, "Termine, Mails, Entscheidungen — gesprochen")),
-        h("span", { class: "eq" }, h("i"), h("i"), h("i"), h("i"), h("i"), h("i"), h("i")),
-        h("button", { class: "btn sm ghost", onclick: () => startChat("Guten Morgen, JARVIS. Bereite mir meinen Tag vor.") }, "Als Text"))),
-    !setup.complete
-      ? h("div", { class: "banner info", style: "max-width:none" }, icon("plug"),
-          h("div", { style: "flex:1" }, h("b", {}, `Einrichtung: ${setupDone} von ${setup.steps.length} Schritten erledigt. `), h("span", { class: "muted" }, setup.steps.find((s) => !s.done)?.title ?? "")),
-          h("button", { class: "btn sm", onclick: () => go("settings") }, "Fortsetzen"))
-      : null,
-    h("div", { class: "stat-row" },
-      stat(b.events.ok ? upcoming.length : "–", "Termine noch heute", "calendar", "", "calendar"),
-      stat(b.emails.ok ? emails.length : "–", "Ungelesene E-Mails", "mail", "", "email"),
-      stat(dueTasks.length, "Heute fällige Aufgaben", "tasks", "ok", "tasks"),
-      stat(pending.length, "Warten auf dich", "shield", pending.length ? "warn" : "", "activity")),
-    sugg,
-    pending.length
-      ? h("div", { class: "card", style: "margin-bottom:16px" }, cardHead("Wartet auf deine Bestätigung", "shield"),
-          h("div", { class: "card-body" }, pending.map((p) => confirmCard(p, () => viewToday(main)))))
-      : null,
-    h("div", { class: "grid" },
-      h("div", { class: "card col-7" }, cardHead("Heute", "calendar", h("button", { class: "btn ghost sm", onclick: () => go("calendar") }, "Woche")), h("div", { class: "card-body" }, agenda)),
-      h("div", { class: "card col-5" }, cardHead("Aufgaben", "tasks", h("button", { class: "btn ghost sm", onclick: () => go("tasks") }, "Alle")), h("div", { class: "card-body" }, taskList)),
-      h("div", { class: "card col-12" }, cardHead("Ungelesen", "inbox",
-        b.emails.ok && emails.length ? h("button", { class: "btn sm", onclick: () => startChat("Was muss ich heute beantworten? Priorisiere kurz.") }, icon("bolt"), "Was ist wichtig?") : null,
-        h("button", { class: "btn ghost sm", onclick: () => go("email") }, "Posteingang")), h("div", { class: "card-body" }, mailList)))));
 }
 
 // ─── View: Chat ─────────────────────────────────────────────────────────────
@@ -2728,7 +2637,7 @@ async function viewFinance(main) {
     h("p", { class: "muted small", style: "margin-top:18px" }, "JARVIS erkennt Rechnungen per Mustererkennung in Betreff und Vorschau (ohne KI, kostenlos) und erinnert 2 Tage vor Fälligkeit. Er überweist nie selbst.")));
 }
 
-const VIEWS = { notes: viewNotes, finance: viewFinance, jarvis: viewJarvis, today: viewToday, chat: viewChat, activity: viewActivity, calendar: viewCalendar, email: viewEmail, tasks: viewTasks, contacts: viewContacts, files: viewFiles, automations: viewAutomations, review: viewReview, memory: viewMemory, settings: viewSettings };
+const VIEWS = { notes: viewNotes, finance: viewFinance, jarvis: viewJarvis, chat: viewChat, activity: viewActivity, calendar: viewCalendar, email: viewEmail, tasks: viewTasks, contacts: viewContacts, files: viewFiles, automations: viewAutomations, review: viewReview, memory: viewMemory, settings: viewSettings };
 
 let routerBound = false;
 async function boot() {

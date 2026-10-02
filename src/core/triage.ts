@@ -239,7 +239,7 @@ export class TriageService {
       await this.d.providers.notifications.notify(
         open.length ? `💡 ${open.length} ${open.length === 1 ? "neuer Vorschlag" : "neue Vorschläge"}` : "✅ Für dich erledigt",
         lines.join("\n"),
-        { url: "/#today", tag: "suggestions", suggestionIds: open.map((x) => x.id) },
+        { url: "/#jarvis", tag: "suggestions", suggestionIds: open.map((x) => x.id) },
       );
     }
     return { classified: results.length, suggestions: created.length };

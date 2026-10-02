@@ -854,6 +854,43 @@ export function mountJarvis(main, ui) {
       w?.code === "NOT_CONFIGURED" ? h("div", { class: "wd-row" }, input, h("button", { class: "jc-btn primary sm", onclick: save }, "Speichern")) : null);
   }
 
+  /** Today as a compact 24-hour ring plus what is happening now / next. */
+  function dayWidget(b) {
+    const ok = !!b?.events?.ok;
+    const events = ok ? b.events.data : [];
+    const now = new Date();
+    const timed = events.filter((e) => !e.allDay).sort((a, z) => new Date(a.start) - new Date(z.start));
+    const current = timed.find((e) => new Date(e.start) <= now && new Date(e.end) > now);
+    const upcoming = timed.filter((e) => new Date(e.start) > now);
+    const focus = current ?? upcoming[0];
+    const allDay = events.filter((e) => e.allDay);
+    const openCal = () => { if (focus) { state.calendarFocus = focus.start; state.calendarFocusId = focus.id; } go("calendar"); };
+    const info = !ok
+      ? [h("div", { class: "wd-title" }, "Kalender"), h("div", { class: "wd-sub" }, b?.events?.code === "NOT_CONFIGURED" ? "Noch nicht verbunden." : "Gerade nicht erreichbar."),
+         b?.events?.code === "NOT_CONFIGURED" ? h("button", { class: "jc-btn sm", onclick: () => go("settings") }, "Verbinden") : null]
+      : focus
+        ? [h("div", { class: `wd-kicker mono ${current ? "live" : ""}` }, current ? `JETZT · BIS ${fmt.time(current.end)}` : `ALS NÄCHSTES · ${fmt.time(focus.start)}`),
+           h("div", { class: "wd-title" }, focus.title),
+           focus.location ? h("div", { class: "wd-sub" }, icon("pin"), focus.location) : h("div", { class: "wd-sub" }, current ? "läuft gerade" : ui.inHours(new Date(focus.start) - now))]
+        : [h("div", { class: "wd-kicker mono" }, "HEUTE"), h("div", { class: "wd-title" }, timed.length ? "Alles erledigt" : "Kein Termin"), h("div", { class: "wd-sub" }, "Der Rest des Tages gehört dir.")];
+    const rest = upcoming.filter((e) => e !== focus).slice(0, 3);
+    const color = (e) => ui.ringColors[timed.indexOf(e) % ui.ringColors.length];
+    return widget("wd-day", "k-event", "calendar", ok && events.length ? `Heute · ${events.length} ${events.length === 1 ? "Termin" : "Termine"}` : "Heute", openCal,
+      h("div", { class: "wd-day-row" }, h("div", { class: "wd-ring" }, ui.dayRing(events, ok)), h("div", { class: "wd-day-info" }, info)),
+      allDay.length ? h("div", { class: "wd-sub wd-allday" }, `Ganztägig: ${allDay.map((e) => e.title).join(", ")}`) : null,
+      rest.length ? h("div", { class: "wd-day-list" }, rest.map((e) =>
+        h("button", { class: "wd-day-item", onclick: () => ui.openEventSheet(e, timed) }, h("span", { class: "dot", style: `background:${color(e)}` }), h("span", { class: "mono" }, fmt.time(e.start)), h("span", { class: "t" }, e.title)))) : null);
+  }
+
+  /** Actions waiting for a decision — approve right on the home screen. */
+  function pendingWidget(b) {
+    const pending = b?.pending?.ok ? b.pending.data : [];
+    if (!pending.length) return null;
+    return widget("wd-pending", "k-crit", "shield", `Wartet auf dich · ${pending.length}`, () => go("activity"),
+      h("div", { class: "wd-confirms" }, pending.slice(0, 3).map((p) => ui.confirmCard(p, () => loadHome()))),
+      pending.length > 3 ? h("div", { class: "wd-more mono" }, `+${pending.length - 3} WEITERE IN „AKTIVITÄT“`) : null);
+  }
+
   const usd = (v) => v.toLocaleString("de-DE", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
   /** AI spend this month vs. budget — only once there is something to show. */
   function costWidget(home) {
@@ -897,18 +934,15 @@ export function mountJarvis(main, ui) {
 
   function renderWidgets(b, home) {
     const out = [];
-    const events = b?.events?.ok ? b.events.data : [];
-    const upcoming = events.filter((e) => !e.allDay && new Date(e.end) > new Date());
-    const next = upcoming[0];
-    if (b?.events?.ok) {
-      out.push(widget("wd-next", "k-event", "calendar", next ? "Als Nächstes" : "Kalender", () => { if (next) { state.calendarFocus = next.start; state.calendarFocusId = next.id; } go("calendar"); },
-        next
-          ? [h("div", { class: "wd-time" }, h("span", { class: "wd-big" }, fmt.time(next.start)), h("span", { class: "wd-sub" }, `– ${fmt.time(next.end)}`)),
-             h("div", { class: "wd-title" }, next.title),
-             next.location ? h("div", { class: "wd-sub" }, icon("pin"), next.location) : null,
-             upcoming.length > 1 ? h("div", { class: "wd-more mono" }, `+${upcoming.length - 1} WEITERE HEUTE`) : null]
-          : h("div", { class: "wd-sub" }, "Heute keine Termine mehr. Der Rest des Tages gehört dir.")));
-    }
+    out.push(dayWidget(b));
+    const confirms = pendingWidget(b);
+    if (confirms) out.push(confirms);
+    const suggSlot = h("div", { class: "wd-slot" });
+    out.push(suggSlot);
+    ui.suggestionItems?.(() => loadHome()).then((items) => {
+      if (!S.alive || !items?.length) return;
+      set(suggSlot, widget("wd-sugg", "k-mail", "bolt", `Vorschläge aus deinen Mails · ${items.length}`, () => go("settings", "?focus=triage"), h("div", { class: "sugg-list" }, items)));
+    }).catch(() => {});
     out.push(weatherWidget(home));
     const mails = b?.emails?.ok ? b.emails.data.length : null;
     const tasks = b?.tasks?.ok ? b.tasks.data.length : null;

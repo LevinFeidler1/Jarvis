@@ -15,6 +15,7 @@
  */
 process.env.LOG_LEVEL ??= "warn";
 
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { join } from "node:path";
@@ -28,7 +29,7 @@ import { createServer } from "../src/server.js";
 import { createDefaultRegistry } from "../src/tools/registry.js";
 import { harness, makeEmail, message, text, toolUse } from "../tests/helpers.js";
 
-const VIEWS = ["jarvis", "chat", "calendar", "email", "tasks", "notes", "finance", "contacts", "files", "automations", "activity", "review", "memory", "settings"];
+const VIEWS = ["jarvis", "today", "chat", "calendar", "email", "tasks", "notes", "finance", "contacts", "files", "automations", "activity", "review", "memory", "settings"];
 const VIEWPORTS = [
   { name: "phone", width: 390, height: 844, mobile: true },
   { name: "desktop", width: 1366, height: 860, mobile: false },
@@ -119,6 +120,16 @@ async function start() {
   await h.providers.finance.add({ kind: "invoice", vendor: "Vodafone", amountCents: 4999, dueDate: at(12, 0, 3).slice(0, 10) });
   await h.providers.finance.add({ kind: "subscription", vendor: "Spotify", amountCents: 1099, interval: "monthly" });
 
+  // Something to decide on the home screen: one suggestion from a mail, one action waiting for approval.
+  await h.db.run(
+    `INSERT INTO suggestions (id, kind, title, body, email_id, account, sender, actions_json, accept_label, edit_prompt, warning, status, created_at)
+     VALUES ($1, 'meeting', 'Anna fragt nach einem Termin am Donnerstag', 'Vorschlag: Donnerstag 14:00–15:00 ist frei.', 'm1', NULL, 'anna@example.com', '[]', NULL, 'Antworte Anna wegen Donnerstag.', NULL, 'open', $2)`,
+    [randomUUID(), nowIso()],
+  );
+  const conv = await h.agent.conversations.create("Smoke");
+  const act = await h.agent.activity.create({ conversationId: conv.id, toolName: "send_email", description: "E-Mail an anna@example.com senden\nBetreff: Angebot", risk: 2, status: "awaiting_confirmation" });
+  await h.agent.confirmations.create({ conversationId: conv.id, activityId: act.id, toolName: "send_email", input: { to: ["anna@example.com"], subject: "Angebot", body: "Hallo Anna, anbei das Angebot." }, description: "E-Mail an anna@example.com senden\nBetreff: Angebot", risk: 2, reasons: ["Externe Kommunikation"] }, now);
+
   const app = await createServer({ config: h.config, db: h.db, agent: h.agent, providers: h.providers, memory: h.memory, registry: createDefaultRegistry(), scheduler: h.scheduler, llmConfigured: true });
   await app.listen({ port, host: "127.0.0.1" });
   return { app, url, token: h.config.accessToken };
@@ -191,6 +202,11 @@ async function run() {
         await page.waitForTimeout(view === "jarvis" ? 1500 : 700);
         await waitFor(page, `!document.querySelector("#main .spinner")`, 8_000).catch(() => fail(where, "lädt nach 8 s immer noch"));
         await checkView(page, where);
+        if (view === "jarvis") {
+          for (const [sel, what] of [[".wd-day .ring-svg", "Tagesring-Widget"], [".wd-pending .confirm", "offene Bestätigung"], [".wd-sugg", "Mail-Vorschlag"], [".wd-cost", "Kosten-Widget"]]) {
+            await waitFor(page, `!!document.querySelector(${JSON.stringify(sel)})`, 6_000).catch(() => fail(where, `${what} fehlt`));
+          }
+        }
         if (shotsDir) {
           mkdirSync(shotsDir, { recursive: true });
           await page.screenshot({ path: join(shotsDir, `${vp.name}-${view}.png`) });
