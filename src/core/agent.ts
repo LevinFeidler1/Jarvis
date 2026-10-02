@@ -10,6 +10,7 @@ import { AuditLog, type AuditStatus } from "./audit.js";
 import { ConfirmationStore, type PendingAction } from "./confirmations.js";
 import { ConversationStore } from "./conversation.js";
 import { scanForInjection, wrapExternal } from "./injection.js";
+import { type ContextItem, extractContext, mergeContext } from "./context-cards.js";
 import { type LlmClient, type LlmMessage, LlmUnavailableError } from "./llm.js";
 import { decidePermission, loadPermissionSettings } from "./permissions.js";
 import { createHash } from "node:crypto";
@@ -47,6 +48,8 @@ export interface AgentReply {
   pendingActions: PendingActionView[];
   /** Suspicious external content was detected in this conversation. */
   securityWarning: boolean;
+  /** Events, mails, tasks … this reply is about (for the voice UI's context cards). */
+  context?: ContextItem[];
 }
 
 /** Live progress events for the UI (streamed while the agent works). */
@@ -73,6 +76,8 @@ interface RunState {
   emit: AgentEventListener;
   /** Set while an automation runs unattended (Phase D). */
   automation?: AutomationContext;
+  /** Display items collected from this turn's tool results. */
+  context?: ContextItem[];
 }
 
 export interface AutomationContext {
@@ -313,7 +318,7 @@ export class Agent {
         const suffix = state.actions.some((a) => a.status === "succeeded")
           ? " Bereits ausgeführte Schritte siehe Aktivität."
           : " Es wurde nichts ausgeführt.";
-        return this.reply(state.conversationId, `${msg}${suffix}`, state.actions);
+        return this.reply(state.conversationId, `${msg}${suffix}`, state.actions, state.context);
       }
 
       if (response.stop_reason === "refusal") {
@@ -325,12 +330,12 @@ export class Agent {
 
       if (response.stop_reason === "pause_turn") continue;
       if (response.stop_reason === "max_tokens") {
-        return this.reply(state.conversationId, `${extractText(response.content)}\n\n(Antwort wurde wegen Längenbegrenzung gekürzt.)`, state.actions);
+        return this.reply(state.conversationId, `${extractText(response.content)}\n\n(Antwort wurde wegen Längenbegrenzung gekürzt.)`, state.actions, state.context);
       }
 
       const toolUses = response.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use");
       if (toolUses.length === 0 || response.stop_reason !== "tool_use") {
-        return this.reply(state.conversationId, extractText(response.content), state.actions);
+        return this.reply(state.conversationId, extractText(response.content), state.actions, state.context);
       }
 
       // Independent tool calls run concurrently; all results go back in ONE user message.
@@ -339,7 +344,7 @@ export class Agent {
     }
 
     const text = `Ich habe die Bearbeitung nach ${config.maxAgentSteps} Schritten gestoppt, um keine Endlosschleife zu riskieren. Bisherige Ergebnisse siehe Aktivität.`;
-    return this.reply(state.conversationId, text, state.actions);
+    return this.reply(state.conversationId, text, state.actions, state.context);
   }
 
   private async handleToolUse(tu: Anthropic.Beta.BetaToolUseBlock, state: RunState): Promise<Anthropic.Beta.BetaToolResultBlockParam> {
@@ -459,6 +464,13 @@ export class Agent {
       res = { ok: false, error: message, code };
     }
 
+    if (res.ok) {
+      try {
+        state.context = mergeContext(state.context ?? [], extractContext(res.data));
+      } catch {
+        /* context cards are decoration — never fail a tool over them */
+      }
+    }
     const status: ActionStatus = !res.ok ? "failed" : res.partial ? "partially_succeeded" : "succeeded";
     await this.activity.update(activityId, status, res.ok ? undefined : res.error);
     if (res.ok && tool.undo) {
@@ -553,8 +565,9 @@ export class Agent {
     }
   }
 
-  private async reply(conversationId: string, text: string, actions: ActionReport[]): Promise<AgentReply> {
+  private async reply(conversationId: string, text: string, actions: ActionReport[], context?: ContextItem[]): Promise<AgentReply> {
     return {
+      context: context?.length ? context : undefined,
       conversationId,
       text: text.trim() || "Erledigt.",
       actions,

@@ -33,6 +33,8 @@ import { SessionStore } from "./security/sessions.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import { type TelegramBot, checkTelegramSecret, telegramWebhookSecret } from "./telegram/bot.js";
 import type { TgUpdate } from "./telegram/api.js";
+import { OpenAiCompatibleTranscriber, type Transcriber } from "./telegram/transcribe.js";
+import { ElevenLabsSynth, type SpeechSynth, TtsQuotaError } from "./voice/tts.js";
 
 const SESSION_COOKIE = "jarvis_session";
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
@@ -50,6 +52,9 @@ export interface ServerDeps {
   triage?: TriageService;
   /** Telegram bot (only when TELEGRAM_BOT_TOKEN is set). */
   telegram?: TelegramBot;
+  /** Voice mode overrides (tests). Default: from config. */
+  transcriber?: Transcriber;
+  synth?: SpeechSynth;
   /** Serve public/ from Fastify (local). On Vercel the CDN serves it. */
   serveStatic?: boolean;
 }
@@ -61,7 +66,7 @@ declare module "fastify" {
 }
 
 const CSP =
-  "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; " +
+  "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self'; " +
   "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
@@ -449,6 +454,39 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
       return { fired, automations: "started" };
     }
     return { fired, automations: await automations };
+  });
+
+  // ─── Voice mode ───────────────────────────────────────────────────────
+  const transcriber = deps.transcriber ?? (config.transcribe ? new OpenAiCompatibleTranscriber(config.transcribe) : undefined);
+  const synth = deps.synth ?? (config.elevenlabs ? new ElevenLabsSynth(config.elevenlabs) : undefined);
+  let ttsBlockedUntil = 0;
+  app.addContentTypeParser(/^audio\//, { parseAs: "buffer", bodyLimit: 4 * 1024 * 1024 }, (_req, body, done) => done(null, body));
+
+  app.get("/api/voice/config", async () => ({
+    stt: transcriber ? "server" : "browser",
+    tts: synth && Date.now() > ttsBlockedUntil ? "server" : "browser",
+  }));
+
+  app.post("/api/voice/transcribe", { config: { rateLimit: { max: 40, timeWindow: "1 minute" } } }, async (req, reply) => {
+    if (!transcriber) return reply.code(409).send({ error: "Spracherkennung ist nicht eingerichtet (TRANSCRIBE_API_KEY)." });
+    const body = req.body;
+    if (!Buffer.isBuffer(body) || body.length < 800) return { text: "" };
+    const mime = String(req.headers["content-type"] ?? "audio/webm").split(";")[0]!;
+    const ext = mime.includes("mp4") || mime.includes("m4a") || mime.includes("aac") ? "m4a" : mime.includes("ogg") ? "ogg" : mime.includes("wav") ? "wav" : "webm";
+    const text = await transcriber.transcribe(body, `sprache.${ext}`, mime);
+    return { text };
+  });
+
+  app.post("/api/voice/speak", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (req, reply) => {
+    if (!synth || Date.now() < ttsBlockedUntil) return reply.code(409).send({ error: "Server-Stimme nicht verfügbar." });
+    const { text } = z.object({ text: z.string().trim().min(1).max(600) }).parse(req.body);
+    try {
+      const { audio, mime } = await synth.speak(text);
+      return reply.header("content-type", mime).header("cache-control", "no-store").send(audio);
+    } catch (err) {
+      if (err instanceof TtsQuotaError) ttsBlockedUntil = Date.now() + 30 * 60_000;
+      return reply.code(409).send({ error: (err as Error).message });
+    }
   });
 
   // ─── Telegram ─────────────────────────────────────────────────────────

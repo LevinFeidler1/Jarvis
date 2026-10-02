@@ -47,6 +47,9 @@ const EnvSchema = z.object({
   TRANSCRIBE_API_KEY: optionalString,
   TRANSCRIBE_API_URL: optionalString.transform((v) => v ?? "https://api.groq.com/openai/v1/audio/transcriptions"),
   TRANSCRIBE_MODEL: optionalString.transform((v) => v ?? "whisper-large-v3-turbo"),
+  ELEVENLABS_API_KEY: optionalString,
+  ELEVENLABS_VOICE_ID: optionalString.transform((v) => v ?? "JBFqnCBsd6RMkjVDRZzb"),
+  ELEVENLABS_MODEL: optionalString.transform((v) => v ?? "eleven_flash_v2_5"),
 });
 
 export interface AppConfig {
@@ -81,6 +84,8 @@ export interface AppConfig {
   telegram: { botToken?: string; chatId?: string };
   /** Speech-to-text for Telegram voice messages (OpenAI-compatible endpoint, default Groq free tier). */
   transcribe?: { apiKey: string; url: string; model: string };
+  /** Optional realistic voice for voice mode (ElevenLabs free tier). */
+  elevenlabs?: { apiKey: string; voiceId: string; model: string };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -124,6 +129,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
         ? { clientId: e.GOOGLE_CLIENT_ID, clientSecret: e.GOOGLE_CLIENT_SECRET, driveReadAll: e.JARVIS_DRIVE_READ_ALL }
         : undefined,
     telegram: { botToken: e.TELEGRAM_BOT_TOKEN, chatId: e.TELEGRAM_CHAT_ID },
+    elevenlabs: e.ELEVENLABS_API_KEY ? { apiKey: e.ELEVENLABS_API_KEY, voiceId: e.ELEVENLABS_VOICE_ID, model: e.ELEVENLABS_MODEL } : undefined,
     transcribe: e.TRANSCRIBE_API_KEY ? { apiKey: e.TRANSCRIBE_API_KEY, url: e.TRANSCRIBE_API_URL, model: e.TRANSCRIBE_MODEL } : undefined,
   };
 }

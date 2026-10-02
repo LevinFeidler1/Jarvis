@@ -119,7 +119,11 @@ Keine zusätzlichen Variablen nötig — der Schlüssel wird beim ersten Aufruf 
 - **Android / Desktop (Chrome, Edge, Firefox):** *Einstellungen → Push-Benachrichtigungen → Aktivieren*.
 - **Test senden** prüft die Zustellung. Jedes Gerät einzeln aktivieren.
 
-## 8b. Telegram, Browser, Google Drive (optional)
+## 8b. Telegram, Sprachmodus, Browser, Google Drive (optional)
+
+- **Sprachmodus:** funktioniert ohne Einstellungen (Browser-Spracherkennung + Gerätestimme). Besser:
+  `TRANSCRIBE_API_KEY` (Groq, kostenlos) für Whisper-Erkennung und `ELEVENLABS_API_KEY` (ElevenLabs Free)
+  für eine realistische Stimme. → docs/VOICE.md
 
 - **Telegram-Bot:** docs/TELEGRAM.md — `TELEGRAM_BOT_TOKEN` (BotFather), dann *Einstellungen → Telegram →
   Webhook einrichten*, `/start` an den Bot, `TELEGRAM_CHAT_ID` eintragen, Redeploy. Sprachnachrichten
