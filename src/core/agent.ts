@@ -16,6 +16,7 @@ import { decidePermission, loadPermissionSettings } from "./permissions.js";
 import { createHash } from "node:crypto";
 import { buildSystem, buildTurnContext, renderAutomationBlock, renderMemoryBlock, renderVoiceBlock } from "./prompt.js";
 import { UsageStore } from "./usage.js";
+import { budgetStatus, usd } from "../life/budget.js";
 import { autonomyBlock } from "./autonomy.js";
 import { localDate, zonedToUtc } from "./time.js";
 import { type ActionStatus, RiskLevel, type ToolContext, type ToolDefinition, ToolError, type ToolResult } from "./types.js";
@@ -150,6 +151,16 @@ export class Agent {
       if (pending.length === 1) return this.resolveConfirmation(only.id, APPROVE_RE.test(text), text, emit);
       const reply = `Es warten ${pending.length} Aktionen auf deine Bestätigung. Bitte bestätige oder verwirf sie einzeln in der Übersicht, damit nichts Falsches passiert.`;
       await this.conversations.append(conv.id, { role: "user", content: [{ type: "text", text }] }, text);
+      await this.conversations.append(conv.id, { role: "assistant", content: [{ type: "text", text: reply }] }, reply);
+      return this.reply(conv.id, reply, []);
+    }
+
+    // Hard budget stop: no model call once the monthly AI budget is used up.
+    // Usage rows carry wall-clock timestamps, so the month window does too.
+    const budget = await budgetStatus(this.deps.db, this.deps.config.timezone).catch(() => null);
+    if (budget?.blocked) {
+      const reply = `Dein KI-Budget für diesen Monat ist aufgebraucht (${usd(budget.spentUsd)} von ${usd(budget.budgetUsd ?? 0)}). Ich schicke deshalb keine neuen Anfragen an Claude. Du kannst das Limit unter Einstellungen → Kosten & Budget erhöhen oder die harte Grenze abschalten. Kalender, Listen, Notizen und offene Bestätigungen funktionieren in der App weiter.`;
+      await this.conversations.append(conv.id, { role: "user", content: [{ type: "text", text: text || "(siehe Anhang)" }] }, text);
       await this.conversations.append(conv.id, { role: "assistant", content: [{ type: "text", text: reply }] }, reply);
       return this.reply(conv.id, reply, []);
     }

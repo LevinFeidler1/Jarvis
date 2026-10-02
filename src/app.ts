@@ -4,6 +4,7 @@ import { Agent } from "./core/agent.js";
 import { AnthropicLlm, UnconfiguredLlm } from "./core/llm.js";
 import { AutomationRunner } from "./core/automations.js";
 import { Scheduler } from "./core/scheduler.js";
+import { ProactiveService } from "./life/proactive.js";
 import { TriageService } from "./core/triage.js";
 import { AnthropicMailClassifier } from "./core/triage-classifier.js";
 import { type Db, openDatabase } from "./db/database.js";
@@ -52,6 +53,7 @@ export async function buildJarvis(opts: { serveStatic?: boolean } = {}): Promise
       : undefined,
   });
   scheduler.setTriage(triage);
+  scheduler.setProactive(new ProactiveService(db, providers, config));
   const telegram = config.telegram.botToken
     ? new TelegramBot({
         config,

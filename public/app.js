@@ -2316,6 +2316,60 @@ function lifeSettingsCard() {
   return card;
 }
 
+function proactiveCard() {
+  const card = h("div", { class: "card" }, h("div", { class: "card-body", style: "padding:18px" }, h("div", { class: "spinner" })));
+  const render = (life) => {
+    const i = h("input", { type: "checkbox", checked: life.proactive, "aria-label": "Hinweise aufs Handy" });
+    i.addEventListener("change", async () => {
+      try { render(await api("/api/life/settings", { method: "PUT", body: { proactive: i.checked } })); } catch (e) { i.checked = !i.checked; fail(e); }
+    });
+    set(card, h("label", { class: "toggle-row" },
+      h("div", { class: "main" }, h("div", { class: "title" }, "Hinweise aufs Handy"),
+        h("div", { class: "sub" }, "Losgehen-Erinnerung 20–70 Min. vor Terminen mit Ort (mit Regen-/Frost-Hinweis), überfällige Rechnungen, KI-Budget bei 80 % und 100 %. Jeder Hinweis nur einmal, nachts nur Termine. Kostenlos — ohne KI-Anfrage.")),
+      h("span", { class: "switch" }, i, h("span"))));
+  };
+  api("/api/life/settings").then(render).catch((e) => set(card, h("div", { class: "card-body empty" }, e.message)));
+  return card;
+}
+
+const usd = (v) => v.toLocaleString("de-DE", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function costCard() {
+  const card = h("div", { class: "card" }, h("div", { class: "card-body" }, h("div", { class: "spinner" })));
+  const render = async () => {
+    const [u, life] = await Promise.all([api("/api/usage"), api("/api/life/settings")]);
+    const pct = u.budgetUsd ? Math.round(u.ratio * 100) : 0;
+    const level = !u.budgetUsd ? "" : u.ratio >= 1 ? "crit" : u.ratio >= 0.8 ? "warn" : "";
+    const input = h("input", { class: "field", type: "number", min: "0", max: "10000", step: "1", inputmode: "decimal", placeholder: "z.B. 20", value: life.budgetUsd ?? "", "aria-label": "Monatsbudget in US-Dollar" });
+    const save = async (patch) => {
+      try { await api("/api/life/settings", { method: "PUT", body: patch }); toast("Gespeichert.", "ok"); render(); } catch (e) { fail(e); }
+    };
+    const saveBudget = () => {
+      const v = input.value.trim() === "" ? null : Number(input.value.replace(",", "."));
+      if (v !== null && (!Number.isFinite(v) || v < 0)) return toast("Bitte einen Betrag in Dollar eingeben.", "err");
+      save({ budgetUsd: v });
+    };
+    input.addEventListener("keydown", (e) => e.key === "Enter" && saveBudget());
+    const stop = h("input", { type: "checkbox", checked: life.budgetHardStop, disabled: !life.budgetUsd, "aria-label": "Harte Grenze" });
+    stop.addEventListener("change", () => save({ budgetHardStop: stop.checked }));
+    set(card,
+      h("div", { class: `card-body cost-body ${level}` },
+        h("div", { class: "cost-now" }, h("span", { class: "cost-big" }, usd(u.spentUsd)),
+          h("span", { class: "muted" }, u.budgetUsd ? ` von ${usd(u.budgetUsd)} · ${pct} %` : " diesen Monat")),
+        u.budgetUsd ? h("div", { class: `progress ${level}` }, h("div", { style: `width:${Math.min(100, pct)}%` })) : null,
+        h("div", { class: "muted small" }, `${u.requests} Anfrage${u.requests === 1 ? "" : "n"} ans Modell seit dem 1. · Schätzung nach Anthropic-Listenpreisen (in US-Dollar)`),
+        u.blocked ? h("div", { class: "banner warn", style: "margin:10px 0 0" }, "Budget aufgebraucht: JARVIS schickt bis Monatsende keine neuen Anfragen an Claude. Erhöhe das Limit oder schalte die harte Grenze ab.") : null,
+        h("label", { class: "muted small", style: "margin-top:14px;display:block" }, "Monatsbudget in US-Dollar (leer = kein Limit). Ab 80 % kommt ein Hinweis aufs Handy."),
+        h("div", { class: "list-add" }, input, h("button", { class: "btn primary", onclick: saveBudget }, "Speichern"))),
+      h("label", { class: "toggle-row" },
+        h("div", { class: "main" }, h("div", { class: "title" }, "Harte Grenze"),
+          h("div", { class: "sub" }, life.budgetUsd ? "Bei 100 % keine neuen KI-Anfragen mehr (Chat, Sprache, Mail-Vorschläge). Kalender, Listen und Bestätigungen gehen weiter." : "Erst ein Monatsbudget eintragen.")),
+        h("span", { class: "switch" }, stop, h("span"))),
+      h("div", { class: "card-body muted small", style: "padding-top:0" }, "Tipp: Setze zusätzlich in der Anthropic Console unter Settings → Limits ein Ausgabenlimit — das greift auch dann, wenn JARVIS sich verschätzt."));
+  };
+  render().catch((e) => set(card, h("div", { class: "card-body empty" }, e.message)));
+  return card;
+}
+
 const CAT_LABELS = {
   email: ["E-Mail organisieren", "Labels, gelesen/ungelesen, archivieren, Entwürfe"],
   calendar: ["Private Termine", "Termine ohne Gäste anlegen und ändern"],
@@ -2360,6 +2414,7 @@ async function viewSettings(main, params) {
 
     h("div", { class: "section-title", id: "triage-section" }, icon("bolt"), "Proaktive Hinweise"),
     triageSettingsCard(),
+    proactiveCard(),
     h("div", { class: "section-title", id: "push-section" }, icon("bell"), "Push-Benachrichtigungen"),
     pushCard(),
     h("div", { class: "section-title", id: "telegram-section" }, icon("send"), "Telegram"),
@@ -2368,6 +2423,8 @@ async function viewSettings(main, params) {
     mailAccountsCard(main),
     h("div", { class: "section-title" }, icon("w-partly"), "Wetter, Ort & Nachrichten"),
     lifeSettingsCard(),
+    h("div", { class: "section-title", id: "cost-section" }, icon("bolt"), "Kosten & Budget"),
+    costCard(),
     h("div", { class: "section-title" }, icon("shield"), "Berechtigungen"),
     h("div", { class: "levels" },
       [["0", "Lesen", "", "E-Mails, Kalender, Kontakte lesen und suchen. Immer erlaubt."],

@@ -8,6 +8,12 @@ export interface LifeSettings {
   home: Place | null;
   /** Selected news feed ids (see NEWS_FEEDS). */
   newsFeeds: string[];
+  /** Push hints: leave-soon for events with a place (+ weather), overdue invoices, budget warnings. */
+  proactive: boolean;
+  /** Monthly AI budget in USD (Anthropic bills in USD); null = no budget. */
+  budgetUsd: number | null;
+  /** Refuse new AI requests once the budget is used up (confirmations and reading still work). */
+  budgetHardStop: boolean;
 }
 
 const KEY = "life";
@@ -16,7 +22,8 @@ export async function loadLifeSettings(db: Db): Promise<LifeSettings> {
   const row = await db.one<{ value_json: string }>("SELECT value_json FROM settings WHERE key = $1", [KEY]);
   const stored = row ? (JSON.parse(row.value_json) as Partial<LifeSettings>) : {};
   const feeds = (stored.newsFeeds ?? DEFAULT_NEWS_FEEDS).filter((id) => NEWS_FEEDS.some((f) => f.id === id));
-  return { home: stored.home ?? null, newsFeeds: feeds };
+  const budget = typeof stored.budgetUsd === "number" && stored.budgetUsd > 0 ? stored.budgetUsd : null;
+  return { home: stored.home ?? null, newsFeeds: feeds, proactive: stored.proactive !== false, budgetUsd: budget, budgetHardStop: stored.budgetHardStop === true && budget !== null };
 }
 
 export async function saveLifeSettings(db: Db, patch: Partial<LifeSettings>): Promise<LifeSettings> {

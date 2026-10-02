@@ -99,7 +99,7 @@ svg.i { stroke-width: 1.8; }
 .count { background: var(--err); color: #fff; }
 .empty { border: 0; background: var(--surface-2); border-radius: var(--radius-sm); }
 .view { padding: 34px 40px 120px; }
-.view.chat { padding: 0; }
+.view.chat { padding: 0; grid-template-columns: minmax(0, 1fr); }
 .view-head h1 { font-size: 34px; font-weight: 700; letter-spacing: -0.03em; }
 .section-title { font-family: var(--mono); font-weight: 500; letter-spacing: 0.16em; font-size: 11px; }
 .card-head h3 { font-size: 15px; color: var(--text); }
@@ -293,6 +293,14 @@ body.jv-on .mobile-bar button.active { color: #f5f5f7; }
 .wd-tile b { font-size: 24px; line-height: 28px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .wd-tile span:last-child { font-size: 12px; color: #a1a1a6; }
 .wd-tile.warn b { color: #ff9f0a; }
+.k-cost { background: linear-gradient(180deg, #7ee0ff, #2fa8ff); color: #002338 !important; box-shadow: 0 4px 14px rgba(47, 168, 255, 0.4); }
+.wd-cost-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.wd-bar { height: 6px; margin-top: 10px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.wd-bar > div { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #2fa8ff, #7ee0ff); transition: width .6s cubic-bezier(.2, .8, .2, 1); }
+.wd-cost.warn .wd-bar > div { background: linear-gradient(90deg, #ff9f0a, #ffd60a); }
+.wd-cost.crit .wd-bar > div { background: linear-gradient(90deg, #ff453a, #ff9f0a); }
+.wd-cost.warn .wd-hint { background: rgba(255, 159, 10, 0.12); color: #ffc46b; }
+.wd-cost.crit .wd-hint { background: rgba(255, 69, 58, 0.14); color: #ff9a92; }
 .wd-fin-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
 .wd-fin-side { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; text-align: right; }
 .wd-fin-side b { font-size: 17px; font-variant-numeric: tabular-nums; }
@@ -669,3 +677,9 @@ button.agenda-ev { width: 100%; background: transparent; }
 .live-text.preamble { color: var(--muted); font-size: 14px; margin-bottom: 8px; }
 .live-text.preamble::after { display: none; }
 @keyframes jvCaret { 50% { opacity: 0; } }
+
+/* ─── Kosten & Budget ─────────────────────────────────────────── */
+.cost-now { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.cost-big { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.progress.warn > div { background: linear-gradient(90deg, #ff9f0a, #ffd60a); }
+.progress.crit > div { background: linear-gradient(90deg, #ff453a, #ff9f0a); }

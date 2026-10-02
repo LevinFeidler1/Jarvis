@@ -831,6 +831,23 @@ export function mountJarvis(main, ui) {
       w?.code === "NOT_CONFIGURED" ? h("div", { class: "wd-row" }, input, h("button", { class: "jc-btn primary sm", onclick: save }, "Speichern")) : null);
   }
 
+  const usd = (v) => v.toLocaleString("de-DE", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  /** AI spend this month vs. budget — only once there is something to show. */
+  function costWidget(home) {
+    const u = home?.usage?.ok ? home.usage.data : null;
+    if (!u || (!u.budgetUsd && u.spentUsd < 0.01)) return null;
+    const pct = u.budgetUsd ? Math.round(u.ratio * 100) : null;
+    const level = !u.budgetUsd ? "" : u.ratio >= 1 ? "crit" : u.ratio >= 0.8 ? "warn" : "";
+    const note = u.blocked ? "Budget aufgebraucht — neue KI-Anfragen sind bis Monatsende pausiert."
+      : u.budgetUsd && u.ratio >= 1 ? "Budget überschritten (harte Grenze ist aus)."
+      : level === "warn" ? `Über 80 % deines Monatsbudgets.` : null;
+    return widget(`wd-cost ${level}`, "k-cost", "bolt", "KI-Kosten diesen Monat", () => go("settings", "?focus=cost"),
+      h("div", { class: "wd-cost-row" }, h("span", { class: "wd-big" }, usd(u.spentUsd)),
+        h("span", { class: "wd-sub" }, u.budgetUsd ? `von ${usd(u.budgetUsd)} · ${pct} %` : `${u.requests} Anfrage${u.requests === 1 ? "" : "n"} · kein Limit`)),
+      u.budgetUsd ? h("div", { class: "wd-bar", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.min(100, pct)) }, h("div", { style: `width:${Math.min(100, pct)}%` })) : null,
+      note ? h("div", { class: "wd-hint" }, note) : null);
+  }
+
   function listWidget(home) {
     const lists = home?.lists?.ok ? home.lists.data : [];
     const list = lists.find((l) => l.open) ?? lists[0] ?? { name: "Einkaufsliste", items: [], open: 0 };
@@ -885,6 +902,8 @@ export function mountJarvis(main, ui) {
           h("div", { class: "wd-fin-side" }, h("b", {}, euro(f.subscriptionsMonthlyCents)), h("span", {}, "Abos / Monat"))),
         f.dueSoon[0] ? h("div", { class: "wd-hint" }, `${f.dueSoon[0].vendor}: ${f.dueSoon[0].amountCents !== null ? euro(f.dueSoon[0].amountCents) : ""} fällig am ${new Date(`${f.dueSoon[0].dueDate}T12:00:00`).toLocaleDateString("de-DE", { day: "numeric", month: "short" })}`) : null));
     }
+    const cost = costWidget(home);
+    if (cost) out.push(cost);
     out.push(listWidget(home));
     const news = home?.news?.ok ? home.news.data.items : [];
     if (news.length) {
