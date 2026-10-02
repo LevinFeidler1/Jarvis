@@ -1,13 +1,34 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <defs>
-    <radialGradient id="g" cx="38%" cy="32%" r="70%">
-      <stop offset="0" stop-color="#e0fcff"/>
-      <stop offset=".3" stop-color="#38d6f5"/>
-      <stop offset=".68" stop-color="#0a6c86"/>
-      <stop offset="1" stop-color="#04222c"/>
+    <radialGradient id="bg" cx="50%" cy="46%" r="70%">
+      <stop offset="0" stop-color="#0b1633"/>
+      <stop offset=".55" stop-color="#05070f"/>
+      <stop offset="1" stop-color="#000"/>
     </radialGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9ff0ff"/>
+      <stop offset=".45" stop-color="#3d8bff"/>
+      <stop offset="1" stop-color="#7a4dff"/>
+    </linearGradient>
+    <radialGradient id="core" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset=".35" stop-color="#bfe6ff"/>
+      <stop offset="1" stop-color="#3d8bff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="14"/></filter>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="5"/></filter>
   </defs>
-  <rect width="512" height="512" rx="112" fill="#07090d"/>
-  <circle cx="256" cy="256" r="150" fill="url(#g)"/>
-  <circle cx="256" cy="256" r="176" fill="none" stroke="#38d6f5" stroke-opacity=".45" stroke-width="8"/>
+  <rect width="512" height="512" rx="114" fill="url(#bg)"/>
+  <!-- glow under the ring -->
+  <circle cx="256" cy="256" r="148" fill="none" stroke="url(#ring)" stroke-width="30" opacity=".75" filter="url(#glow)"/>
+  <!-- main ring -->
+  <circle cx="256" cy="256" r="148" fill="none" stroke="url(#ring)" stroke-width="18"/>
+  <!-- inner tick ring -->
+  <circle cx="256" cy="256" r="112" fill="none" stroke="#cfe6ff" stroke-opacity=".32" stroke-width="3" stroke-dasharray="2 9.73"/>
+  <!-- core -->
+  <circle cx="256" cy="256" r="58" fill="url(#core)" opacity=".55"/>
+  <circle cx="256" cy="256" r="14" fill="#fff"/>
+  <!-- light point travelling on the ring -->
+  <circle cx="360.7" cy="151.3" r="26" fill="#bdf4ff" filter="url(#soft)"/>
+  <circle cx="360.7" cy="151.3" r="12" fill="#fff"/>
 </svg>
