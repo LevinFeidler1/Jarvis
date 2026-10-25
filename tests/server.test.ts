@@ -44,6 +44,21 @@ describe("HTTP API security", () => {
     expect(res.statusCode).toBe(401);
   });
 
+  it("accepts the token with stray whitespace from copy & paste, but nothing else", async () => {
+    const { app } = await start();
+    expect((await login(app, `  ${"t".repeat(40)}\n`)).res.statusCode).toBe(200);
+    expect((await login(app, `${"t".repeat(39)}T`)).res.statusCode).toBe(401);
+    expect((await login(app, `${"t".repeat(20)} ${"t".repeat(20)}`)).res.statusCode).toBe(401);
+  });
+
+  it("too many login attempts: German message with the wait time", async () => {
+    const { app } = await start();
+    for (let i = 0; i < 10; i++) await login(app, "wrong");
+    const { res } = await login(app);
+    expect(res.statusCode).toBe(429);
+    expect(res.json().error).toMatch(/^Zu viele Anmeldeversuche\. Bitte in \d+ Sekunden erneut versuchen\.$/);
+  });
+
   it("sets a hardened session cookie", async () => {
     const { app } = await start();
     const { res } = await login(app);

@@ -109,7 +109,22 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   await app.register(cookie);
-  await app.register(rateLimit, { global: true, max: 300, timeWindow: "1 minute" });
+  await app.register(rateLimit, {
+    global: true,
+    max: 300,
+    timeWindow: "1 minute",
+    // Shown as-is in the app (the login page prints the error text).
+    errorResponseBuilder: (req, ctx) => {
+      const wait = Math.max(1, Math.ceil(ctx.ttl / 1000));
+      return {
+        statusCode: 429,
+        error: "Too Many Requests",
+        message: req.url.startsWith("/api/login")
+          ? `Zu viele Anmeldeversuche. Bitte in ${wait} Sekunden erneut versuchen.`
+          : `Zu viele Anfragen. Bitte in ${wait} Sekunden erneut versuchen.`,
+      };
+    },
+  });
 
   // ─── Request time limit ───────────────────────────────────────────────
   // Answer 503 instead of hanging; the handler's late result is discarded.
@@ -219,7 +234,8 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get("/api/health", async () => ({ ok: true }));
 
   app.post("/api/login", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
-    const { token } = z.object({ token: z.string().min(1).max(512) }).parse(req.body);
+    // Copy & paste from notes/password managers often adds spaces or a newline.
+    const { token } = z.object({ token: z.string().trim().min(1).max(512) }).parse(req.body);
     if (!safeEqual(token, config.accessToken)) return reply.code(401).send({ error: "Ungültiges Zugangstoken" });
     const s = await sessions.create();
     reply.setCookie(SESSION_COOKIE, s.sessionId, { httpOnly: true, sameSite: "strict", secure: secureCookie, path: "/", maxAge: SessionStore.ttlSeconds });
