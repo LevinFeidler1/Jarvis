@@ -73,6 +73,35 @@ parallele Kaltstarts per Advisory Lock abgesichert).
 4. **Auf dem Handy:** Seite öffnen → Teilen → „Zum Home-Bildschirm" — JARVIS
    läuft dann wie eine App (Vollbild, eigenes Icon).
 
+### 5b. Live-Check (optional, kostenlos)
+
+Ein Skript prüft deine echte Installation von außen: Startseite, Login, Sitzung, Status, Briefing,
+Startseiten-Widgets, Benachrichtigungen, Bestätigungen, Kosten und Sprache, jeweils mit Antwortzeit.
+
+```bash
+JARVIS_URL=https://jarvis-levin.vercel.app JARVIS_TOKEN=<dein Zugangstoken> npm run check:live
+# zusätzlich eine kurze Chat-Anfrage (1 Modell-Aufruf, ca. 1–2 US-Cent): … npm run check:live -- --chat
+# zusätzlich den Cron-Takt (mit CRON_SECRET=…):                            … npm run check:live -- --cron
+```
+
+Die Ausgabe sieht so aus:
+
+```
+✓ Login                   212 ms  Cookie HttpOnly
+✓ Startseite (Widgets)    840 ms  weather ✓ · news ✓ · finance ✓ · lists ✓ · notes ✓ · usage ✓
+✗ Status                   95 ms  ANTHROPIC_API_KEY fehlt
+```
+
+- Antworten über 5 s werden als „langsam“ markiert.
+- Token, Cookie und CSRF-Token druckt das Skript nie.
+- Die Test-Unterhaltung von `--chat` löscht es danach wieder.
+
+**Ohne eigenen Rechner:** Den Check gibt es auch auf GitHub, unter *Actions → Live-Check → Run workflow*.
+
+- Vorher unter *Settings → Secrets and variables → Actions* die Secrets `JARVIS_URL` und `JARVIS_TOKEN` anlegen
+  (optional auch `CRON_SECRET`).
+- Ohne diese Secrets wird der Lauf übersprungen.
+
 ## 6. Google verbinden
 
 Wie in [SETUP_GOOGLE.md](SETUP_GOOGLE.md), mit einem Unterschied: Als
@@ -136,8 +165,18 @@ Keine zusätzlichen Variablen nötig — der Schlüssel wird beim ersten Aufruf 
 
 ## 9. Kosten im Blick
 
-*Rückblick* zeigt die geschätzten Claude-Kosten der Woche. Zusätzlich in der
-Anthropic Console unter *Settings → Limits* ein **monatliches Ausgabenlimit** setzen.
+**In der App:** *Einstellungen → Kosten & Budget*.
+
+- Dort siehst du den geschätzten Verbrauch des laufenden Monats und trägst ein **Monatsbudget in US-Dollar** ein.
+- Die Startseite zeigt das Widget „KI-Kosten diesen Monat“: ab 80 % gelb, ab 100 % rot.
+- Bei 80 % und bei 100 % kommt je ein Hinweis aufs Handy.
+
+Mit der **harten Grenze** schickt JARVIS bei 100 % bis Monatsende keine neuen Anfragen mehr an Claude. Das gilt für
+Chat, Sprache und Mail-Vorschläge. JARVIS sagt dir dann, warum. Kalender, Listen, Notizen und Bestätigungen
+funktionieren weiter. *Rückblick* zeigt zusätzlich die Kosten der Woche.
+
+Die Werte sind eine Schätzung nach Listenpreis. Setze deshalb zusätzlich in der Anthropic Console unter
+*Settings → Limits* ein **monatliches Ausgabenlimit**. Das greift auch dann, wenn die Schätzung danebenliegt.
 Lange Unterhaltungen fasst JARVIS ab 60 000 Tokens automatisch zusammen
 (`JARVIS_COMPACT_AT_TOKENS`, optional).
 

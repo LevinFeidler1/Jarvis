@@ -1,0 +1,50 @@
+# Manual live check of your deployed JARVIS (Actions → "Live-Check" → Run workflow).
+# Needs two repository secrets (Settings → Secrets and variables → Actions):
+#   JARVIS_URL    e.g. https://meine-app.vercel.app
+#   JARVIS_TOKEN  your access token (JARVIS_ACCESS_TOKEN)
+# Optional: CRON_SECRET for the cron check. Secrets are masked in the log and
+# the script never prints them. Without secrets the job is skipped.
+name: Live-Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      chat:
+        description: "Auch eine kurze Chat-Anfrage senden (1 Modell-Anfrage, ca. 1–2 US-Cent)"
+        type: boolean
+        default: false
+      cron:
+        description: "Auch /api/cron/tick aufrufen (braucht CRON_SECRET)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      JARVIS_URL: ${{ secrets.JARVIS_URL }}
+      JARVIS_TOKEN: ${{ secrets.JARVIS_TOKEN }}
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+    steps:
+      - name: Secrets vorhanden?
+        id: have
+        run: |
+          if [ -z "$JARVIS_URL" ] || [ -z "$JARVIS_TOKEN" ]; then
+            echo "::notice::JARVIS_URL / JARVIS_TOKEN sind nicht als Repository-Secrets gesetzt — Live-Check übersprungen."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.have.outputs.ok == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.have.outputs.ok == 'true'
+        with:
+          node-version: 22
+      - name: Live-Check
+        if: steps.have.outputs.ok == 'true'
+        run: node scripts/smoke-live.mjs ${{ inputs.chat && '--chat' || '' }} ${{ inputs.cron && '--cron' || '' }}

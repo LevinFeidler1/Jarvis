@@ -12,6 +12,8 @@ const EnvSchema = z.object({
   ANTHROPIC_WORKSPACE_ID: optionalString,
   JARVIS_ACCESS_TOKEN: z
     .string({ error: "JARVIS_ACCESS_TOKEN fehlt (npm run setup:secrets)" })
+    // Pasted into Vercel with a trailing space/newline is a classic — never part of the token.
+    .trim()
     .min(32, "JARVIS_ACCESS_TOKEN muss mindestens 32 Zeichen lang sein"),
   JARVIS_ENCRYPTION_KEY: z
     .string({ error: "JARVIS_ENCRYPTION_KEY fehlt (npm run setup:secrets)" })

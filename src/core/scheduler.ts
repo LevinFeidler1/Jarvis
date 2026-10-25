@@ -1,6 +1,7 @@
 import type { ProviderHub } from "../providers/hub.js";
 import type { AutomationRunner } from "./automations.js";
 import type { TriageService } from "./triage.js";
+import type { ProactiveService } from "../life/proactive.js";
 
 /** Mail triage runs at most this often (the local scheduler ticks every 30 s). */
 const TRIAGE_EVERY_MS = 4.5 * 60_000;
@@ -18,6 +19,8 @@ export class Scheduler {
   private triage?: TriageService;
   private lastTriage = 0;
   private lastFinanceCheck = 0;
+  private proactive?: ProactiveService;
+  private lastProactive = 0;
 
   constructor(
     private readonly providers: ProviderHub,
@@ -30,6 +33,10 @@ export class Scheduler {
 
   setTriage(triage: TriageService): void {
     this.triage = triage;
+  }
+
+  setProactive(p: ProactiveService): void {
+    this.proactive = p;
   }
 
   start(): void {
@@ -49,6 +56,10 @@ export class Scheduler {
     if (this.triage && now.getTime() - this.lastTriage >= TRIAGE_EVERY_MS) {
       this.lastTriage = now.getTime();
       runs += (await this.triage.runTick().catch((err) => (console.error("[triage]", err), { suggestions: 0 }))).suggestions;
+    }
+    if (this.proactive && now.getTime() - this.lastProactive >= 4 * 60_000) {
+      this.lastProactive = now.getTime();
+      await this.proactive.run(now).catch((err) => console.error("[proactive]", (err as Error).message));
     }
     if (now.getTime() - this.lastFinanceCheck >= 60 * 60_000) {
       this.lastFinanceCheck = now.getTime();

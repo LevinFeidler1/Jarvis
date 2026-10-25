@@ -35,6 +35,7 @@ import { type TelegramBot, checkTelegramSecret, telegramWebhookSecret } from "./
 import type { TgUpdate } from "./telegram/api.js";
 import { OpenAiCompatibleTranscriber, type Transcriber } from "./telegram/transcribe.js";
 import { ElevenLabsSynth, type SpeechSynth, TtsQuotaError } from "./voice/tts.js";
+import { budgetStatus } from "./life/budget.js";
 import { NEWS_FEEDS } from "./life/news.js";
 import { loadLifeSettings, saveLifeSettings } from "./life/settings.js";
 
@@ -108,7 +109,22 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   await app.register(cookie);
-  await app.register(rateLimit, { global: true, max: 300, timeWindow: "1 minute" });
+  await app.register(rateLimit, {
+    global: true,
+    max: 300,
+    timeWindow: "1 minute",
+    // Shown as-is in the app (the login page prints the error text).
+    errorResponseBuilder: (req, ctx) => {
+      const wait = Math.max(1, Math.ceil(ctx.ttl / 1000));
+      return {
+        statusCode: 429,
+        error: "Too Many Requests",
+        message: req.url.startsWith("/api/login")
+          ? `Zu viele Anmeldeversuche. Bitte in ${wait} Sekunden erneut versuchen.`
+          : `Zu viele Anfragen. Bitte in ${wait} Sekunden erneut versuchen.`,
+      };
+    },
+  });
 
   // ─── Request time limit ───────────────────────────────────────────────
   // Answer 503 instead of hanging; the handler's late result is discarded.
@@ -218,7 +234,8 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get("/api/health", async () => ({ ok: true }));
 
   app.post("/api/login", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
-    const { token } = z.object({ token: z.string().min(1).max(512) }).parse(req.body);
+    // Copy & paste from notes/password managers often adds spaces or a newline.
+    const { token } = z.object({ token: z.string().trim().min(1).max(512) }).parse(req.body);
     if (!safeEqual(token, config.accessToken)) return reply.code(401).send({ error: "Ungültiges Zugangstoken" });
     const s = await sessions.create();
     reply.setCookie(SESSION_COOKIE, s.sessionId, { httpOnly: true, sameSite: "strict", secure: secureCookie, path: "/", maxAge: SessionStore.ttlSeconds });
@@ -516,25 +533,40 @@ export async function createServer(deps: ServerDeps): Promise<FastifyInstance> {
   /** Everything the home widgets need in one request; each part fails on its own. */
   app.get("/api/home", async () => {
     const life = await loadLifeSettings(db);
-    const [weather, news, finance, lists, notes] = await Promise.all([
+    const [weather, news, finance, lists, notes, usage] = await Promise.all([
       life.home ? settle(providers.weather.forecast(life.home, 3)) : Promise.resolve({ ok: false as const, error: "Kein Heimatort gesetzt", code: "NOT_CONFIGURED" as const }),
       settle(providers.news.headlines(life.newsFeeds, { max: 4 })),
       settle(providers.finance.overview()),
       settle(providers.notes.allLists()),
       settle(providers.notes.listNotes(undefined, 3)),
+      settle(budgetStatus(db, config.timezone)),
     ]);
-    return { home: life.home, weather, news, finance, lists, notes };
+    return { home: life.home, weather, news, finance, lists, notes, usage };
   });
 
   app.get("/api/life/settings", async () => ({ ...(await loadLifeSettings(db)), feeds: NEWS_FEEDS.map(({ id, name, topic }) => ({ id, name, topic })) }));
   app.put("/api/life/settings", async (req) => {
-    const b = z.object({ city: z.string().trim().min(2).max(100).optional(), clearHome: z.boolean().optional(), newsFeeds: z.array(z.string().max(40)).max(NEWS_FEEDS.length).optional() }).parse(req.body);
+    const b = z.object({
+      city: z.string().trim().min(2).max(100).optional(),
+      clearHome: z.boolean().optional(),
+      newsFeeds: z.array(z.string().max(40)).max(NEWS_FEEDS.length).optional(),
+      proactive: z.boolean().optional(),
+      budgetUsd: z.number().min(0).max(10_000).nullable().optional(),
+      budgetHardStop: z.boolean().optional(),
+    }).parse(req.body);
     const patch: Parameters<typeof saveLifeSettings>[1] = {};
     if (b.city) patch.home = await providers.weather.geocode(b.city);
     if (b.clearHome) patch.home = null;
     if (b.newsFeeds) patch.newsFeeds = b.newsFeeds.filter((id) => NEWS_FEEDS.some((f) => f.id === id));
-    return saveLifeSettings(db, patch);
+    if (b.proactive !== undefined) patch.proactive = b.proactive;
+    if (b.budgetUsd !== undefined) patch.budgetUsd = b.budgetUsd || null;
+    if (b.budgetHardStop !== undefined) patch.budgetHardStop = b.budgetHardStop;
+    await saveLifeSettings(db, patch);
+    return loadLifeSettings(db);
   });
+
+  /** AI spend this month against the budget (estimate from list prices). */
+  app.get("/api/usage", async () => budgetStatus(db, config.timezone));
 
   app.get("/api/weather", async (req) => {
     const { place } = z.object({ place: z.string().max(100).optional() }).parse(req.query);

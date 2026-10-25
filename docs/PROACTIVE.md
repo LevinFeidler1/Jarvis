@@ -15,7 +15,7 @@ prüft JARVIS **neue** E-Mails aller Postfächer (Gmail + IMAP) und macht daraus
   wie im Chat (der Klick ist die Bestätigung). Kritische Aktionen (Stufe 3) werden nur vorbereitet
   und müssen im Chat ausdrücklich bestätigt werden. **Bearbeiten** öffnet den Chat mit Kontext,
   **Ignorieren** verwirft.
-- Vorschläge erscheinen auf der Seite **Heute** und als **Push** („💡 3 neue Vorschläge“).
+- Vorschläge erscheinen auf der **Startseite** (Widget „Vorschläge aus deinen Mails“) und als **Push** („💡 3 neue Vorschläge“).
 
 ## Kosten
 
